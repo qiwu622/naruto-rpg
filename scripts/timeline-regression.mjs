@@ -1366,6 +1366,7 @@ await test('timeline navigator safely renders untrusted node and branch fields',
     navigator._branches = [{
       ...mainBranch,
       id: branchId,
+      name: '<img src=x onerror=alert(4)>',
       color: 'red;position:fixed;inset:0',
       head_node_id: 'another-node'
     }];
@@ -1376,7 +1377,9 @@ await test('timeline navigator safely renders untrusted node and branch fields',
       /data-id="[^"]*"\s+(?:onmouseover|onfocus)=/i
     );
     assert.match(navigator.shadowRoot.innerHTML, /data-id="node&quot; onmouseover=&quot;alert\(1\)"/);
-    assert.match(navigator.shadowRoot.innerHTML, /data-id="branch&quot; onfocus=&quot;alert\(2\)"/);
+    // Branch management now lives in the unified library, so the navigator
+    // renders an escaped branch label without a branch-action data attribute.
+    assert.match(navigator.shadowRoot.innerHTML, /&lt;img src=x onerror=alert\(4\)&gt;/);
     assert.doesNotMatch(navigator.shadowRoot.innerHTML, /<img\s+src=x|color:red;position:fixed;inset:0/i);
     // The compact timeline deliberately truncates untrusted turn labels
     // before escaping them; assert the escaped prefix rather than requiring
@@ -2133,6 +2136,165 @@ await test('createNode hydrates a compressed current parent before appending', a
     assert.equal(created.state_snapshot.marker, 'child');
     assert.ok(Array.isArray(created.continuity_delta));
   });
+});
+
+await test('prepareReroll replace removes the rerolled turn and later turns', async () => {
+  const turn1 = {
+    ...rootNode,
+    id: 'node_t1',
+    parent_id: 'node_root',
+    children_ids: ['node_t2'],
+    turn_number: 1,
+    player_input: '向前走',
+    state_snapshot: snapshot('t1')
+  };
+  const turn2 = {
+    ...rootNode,
+    id: 'node_t2',
+    parent_id: 'node_t1',
+    children_ids: [],
+    turn_number: 2,
+    player_input: '再走',
+    state_snapshot: snapshot('t2')
+  };
+  const parent = { ...rootNode, children_ids: ['node_t1'] };
+  const branch = { ...mainBranch, head_node_id: 'node_t2', node_count: 3 };
+  const meta = {
+    ...rootMeta,
+    value: { ...rootMeta.value, current_id: 'node_t2', total_nodes: 3 }
+  };
+  await withTimelineDb({ nodes: [parent, turn1, turn2], branches: [branch], meta: [meta] }, async stores => {
+    stateManager.restore(snapshot('t2'));
+    stateManager.setSub('_meta', { current_node_id: 'node_t2', active_branch: 'branch_main' });
+    const prepared = await timelineSystem.prepareReroll('node_t1', { mode: 'replace' });
+    assert.equal(prepared.parentNodeId, 'node_root');
+    assert.equal(prepared.playerInput, '向前走');
+    assert.equal(prepared.pruned, 2);
+    assert.deepEqual([...stores.timeline_nodes.keys()].sort(), ['node_root']);
+    assert.deepEqual(stores.timeline_nodes.get('node_root').children_ids, []);
+    assert.equal(stores.timeline_branches.get('branch_main').head_node_id, 'node_root');
+    assert.equal(stores.timeline_meta.get('root').value.total_nodes, 1);
+    assert.equal(timelineSystem._pendingBranchFrom, null);
+    assert.equal(stateManager.getSub('_meta').current_node_id, 'node_root');
+  });
+});
+
+await test('pruneForward deletes subsequent turns missing from children_ids', async () => {
+  const orphan = {
+    ...rootNode,
+    id: 'node_orphan',
+    parent_id: 'node_root',
+    children_ids: ['node_orphan_child'],
+    turn_number: 1,
+    state_snapshot: snapshot('orphan')
+  };
+  const orphanChild = {
+    ...rootNode,
+    id: 'node_orphan_child',
+    parent_id: 'node_orphan',
+    children_ids: [],
+    turn_number: 2,
+    state_snapshot: snapshot('orphan-child')
+  };
+  const parent = { ...rootNode, children_ids: ['node_missing'] };
+  const branch = { ...mainBranch, head_node_id: 'node_orphan_child', node_count: 3 };
+  const meta = {
+    ...rootMeta,
+    value: { ...rootMeta.value, current_id: 'node_orphan_child', total_nodes: 3 }
+  };
+  await withTimelineDb({ nodes: [parent, orphan, orphanChild], branches: [branch], meta: [meta] }, async stores => {
+    stateManager.restore(snapshot('orphan-child'));
+    stateManager.setSub('_meta', { current_node_id: 'node_orphan_child', active_branch: 'branch_main' });
+    const result = await timelineSystem.pruneForward('node_root');
+    assert.equal(result.pruned, 2);
+    assert.deepEqual([...stores.timeline_nodes.keys()].sort(), ['node_root']);
+    assert.deepEqual(stores.timeline_nodes.get('node_root').children_ids, []);
+    assert.equal(stores.timeline_branches.get('branch_main').head_node_id, 'node_root');
+    assert.equal(stores.timeline_meta.get('root').value.total_nodes, 1);
+  });
+});
+
+await test('in-flight archive cannot resurrect turns deleted by pruneForward', async () => {
+  const child = {
+    ...rootNode,
+    id: 'node_child',
+    parent_id: 'node_root',
+    children_ids: ['node_grandchild'],
+    turn_number: 1,
+    archived: true,
+    state_snapshot: snapshot('child')
+  };
+  const grandchild = {
+    ...rootNode,
+    id: 'node_grandchild',
+    parent_id: 'node_child',
+    children_ids: [],
+    turn_number: 2,
+    archived: true,
+    state_snapshot: snapshot('grandchild')
+  };
+  const parent = { ...rootNode, children_ids: ['node_child'], archived: true };
+  const branch = { ...mainBranch, head_node_id: 'node_grandchild', node_count: 3 };
+  const meta = {
+    ...rootMeta,
+    value: { ...rootMeta.value, current_id: 'node_grandchild', total_nodes: 3 }
+  };
+  await withTimelineDb({
+    nodes: [parent, child, grandchild],
+    branches: [branch],
+    meta: [meta]
+  }, async stores => {
+    stateManager.restore(snapshot('grandchild'));
+    stateManager.setSub('_meta', { current_node_id: 'node_grandchild', active_branch: 'branch_main' });
+
+    const originalGetAll = stateManager.dbGetAll;
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    let held = false;
+    stateManager.dbGetAll = async name => {
+      const result = await originalGetAll(name);
+      if (name === 'timeline_nodes' && !held) {
+        held = true;
+        await gate;
+      }
+      return result;
+    };
+    try {
+      const archivePromise = timelineSystem._compressColdNodes();
+      while (!held) await new Promise(resolve => setTimeout(resolve, 0));
+      const result = await timelineSystem.pruneForward('node_root');
+      assert.equal(result.pruned, 2);
+      assert.deepEqual([...stores.timeline_nodes.keys()].sort(), ['node_root']);
+      release();
+      await archivePromise;
+      assert.deepEqual([...stores.timeline_nodes.keys()].sort(), ['node_root']);
+      assert.deepEqual(stores.timeline_nodes.get('node_root').children_ids, []);
+      await timelineSystem.createNode({
+        turnNumber: 1,
+        playerInput: '重新推衍',
+        aiResponse: '新的可能性展开。',
+        stateSnapshot: snapshot('reroll'),
+        chatHistory: []
+      });
+      assert.equal(stores.timeline_nodes.size, 2);
+      assert.equal(stores.timeline_nodes.has('node_child'), false);
+      assert.equal(stores.timeline_nodes.has('node_grandchild'), false);
+      assert.equal(stores.timeline_nodes.get('node_root').children_ids.length, 1);
+      await timelineSystem._archiveQueue;
+    } finally {
+      stateManager.dbGetAll = originalGetAll;
+    }
+  }, { archive: true });
+});
+
+await test('timeline reroll replace goes through prepareReroll so prune cannot drift', async () => {
+  const source = await readFile(new URL('../js/app.js', import.meta.url), 'utf8');
+  const rerollAt = source.indexOf("eventBus.on('timeline:reroll-request'");
+  const nextHandler = source.indexOf("eventBus.on('timeline:jump-request'", rerollAt);
+  const handler = source.slice(rerollAt, nextHandler === -1 ? undefined : nextHandler);
+  assert.ok(rerollAt >= 0);
+  assert.match(handler, /prepareReroll/);
+  assert.equal(handler.includes('pruneForward'), false);
 });
 
 await test('pipeline clears a stale timeline error after node creation succeeds', async () => {

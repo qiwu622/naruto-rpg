@@ -5,16 +5,21 @@ import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { config } from './config.js';
-import { initDb } from './db/index.js';
-import authRouter from './auth/discord.js';
+import { getUser, initDb } from './db/index.js';
+import authRouter, { ensureCsrfCookie } from './auth/discord.js';
 import savesRouter from './api/saves.js';
-import aiProxyRouter, { aiProxyAdmission } from './api/ai-proxy.js';
+import aiProxyRouter, { aiProxyAdmission, getProxyAgent } from './api/ai-proxy.js';
 import musicFavoritesRouter from './api/music-favorites.js';
 import adminRouter from './api/admin.js';
 import imageAssetsRouter from './api/image-assets.js';
 import { requireAuth, requireHtmlAuth } from './middleware/auth.js';
 import { asyncRoute } from './middleware/async-route.js';
 import { createResponseCompression } from './middleware/response-compression.js';
+import { createMultiplayerRuntime } from './multiplayer/application/runtime.js';
+import {
+  MULTIPLAYER_HTTP_MOUNT_PATH,
+  createRepositoryBackedMultiplayerHttpRouter
+} from './multiplayer/http/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HTTP_HEADERS_TIMEOUT_MS = 70_000;
@@ -24,11 +29,32 @@ const SHUTDOWN_DRAIN_TIMEOUT_MS = 30_000;
 
 function errorFields(error) {
   if (error instanceof Error) {
-    return {
+    const fields = {
       name: error.name,
       code: typeof error.code === 'string' ? error.code : undefined,
       message: String(error.message || error.name).slice(0, 2000)
     };
+    if (error.details && typeof error.details === 'object' && !Array.isArray(error.details)) {
+      const details = {};
+      for (const field of [
+        'provider_request_id',
+        'upstream_error_code',
+        'upstream_error_type',
+        'upstream_error_summary'
+      ]) {
+        if (typeof error.details[field] === 'string' && error.details[field]) {
+          details[field] = error.details[field].slice(
+            0,
+            field === 'upstream_error_summary' ? 500 : 200
+          );
+        }
+      }
+      if (Number.isSafeInteger(error.details.upstream_status)) {
+        details.upstream_status = error.details.upstream_status;
+      }
+      if (Object.keys(details).length > 0) fields.details = details;
+    }
+    return fields;
   }
   return { message: String(error).slice(0, 2000) };
 }
@@ -45,11 +71,37 @@ function logRuntimeEvent(level, event, details = {}) {
   else console.log(line);
 }
 
+async function authorizeLiveMultiplayerSession(req) {
+  const userId = typeof req.user?.id === 'string' ? req.user.id : '';
+  if (!userId) return false;
+  if (Number.isFinite(req.authExpiresAt) && Date.now() >= req.authExpiresAt) return false;
+  if (config.auth.bypass && req.authSource === 'bypass') return userId === 'dev_user';
+  const currentUser = await getUser(userId);
+  return Boolean(currentUser && !currentUser.banned);
+}
+
+let multiplayerRuntime = null;
+
 // 1. 初始化数据库（ESM 顶层 await：持久层就绪前不接收任何请求）
 try {
   await initDb();
+  if (config.multiplayer.enabled) {
+    multiplayerRuntime = await createMultiplayerRuntime(config.multiplayer, {
+      sessionAuthorizer: authorizeLiveMultiplayerSession,
+      modelHttpGatewayOptions: {
+        forward_proxy_agent: getProxyAgent('https:', config.proxy),
+        allow_fake_ip_dns: config.proxy.allowFakeIpDns
+      },
+      onBackgroundError(error, context = {}) {
+        logRuntimeEvent('error', 'multiplayer_background_error', {
+          context,
+          error: errorFields(error)
+        });
+      }
+    });
+  }
 } catch (error) {
-  logRuntimeEvent('error', 'fatal', { source: 'database_init', error: errorFields(error) });
+  logRuntimeEvent('error', 'fatal', { source: 'runtime_init', error: errorFields(error) });
   process.exit(1);
 }
 
@@ -131,6 +183,40 @@ const staticLimiter = rateLimit({
 const defaultJsonParser = express.json({ limit: '2mb' });
 
 app.use('/auth', authLimiter, defaultJsonParser, authRouter);
+if (multiplayerRuntime) {
+  const multiplayerRouter = createRepositoryBackedMultiplayerHttpRouter({
+    core_repositories: multiplayerRuntime.repositories.core,
+    billing_repository: multiplayerRuntime.repositories.billing,
+    lineage_repository: multiplayerRuntime.repositories.lineage,
+    application_services: multiplayerRuntime.services,
+    event_hub: multiplayerRuntime.eventHub,
+    room_event_stream_handler: multiplayerRuntime.sseHandler,
+    chat_rate_limiter: multiplayerRuntime.chatRateLimiter,
+    error_logger(error, context = {}) {
+      logRuntimeEvent('error', 'multiplayer_request_error', {
+        context,
+        error: errorFields(error)
+      });
+    }
+  });
+  app.use(
+    MULTIPLAYER_HTTP_MOUNT_PATH,
+    apiLimiter,
+    (req, res, next) => {
+      if (!shuttingDown && multiplayerRuntime.isAcceptingWork()) return next();
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(503).json({
+        error: {
+          code: 'MULTIPLAYER_RUNTIME_QUIESCING',
+          message: '联机服务正在安全停止，请在服务恢复后重试',
+          details: {}
+        }
+      });
+    },
+    asyncRoute(requireAuth),
+    multiplayerRouter
+  );
+}
 app.use('/api/saves', apiLimiter, savesRouter);
 // Authenticate and reject excess concurrency before spending memory on JSON parsing.
 app.use(
@@ -149,10 +235,12 @@ app.use('/api/image-assets', apiLimiter, imageAssetsRouter);
 // 5. 网页认证入口拦截
 // 玩家在请求根路径 / 或 index.html 时，必须通过身份验证，否则重定向到登录页面
 app.get('/', asyncRoute(requireHtmlAuth), (req, res) => {
+  ensureCsrfCookie(req, res);
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
 app.get('/index.html', asyncRoute(requireHtmlAuth), (req, res) => {
+  ensureCsrfCookie(req, res);
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
@@ -202,6 +290,7 @@ server.on('connection', (socket) => {
 
 let shutdownFinished = false;
 let requestedExitCode = 0;
+let shutdownPromise = null;
 
 function completeShutdown(reason, error) {
   if (shutdownFinished) return;
@@ -213,9 +302,37 @@ function completeShutdown(reason, error) {
   process.exit(error ? 1 : requestedExitCode);
 }
 
+function drainHttpServer(reason) {
+  return new Promise(resolve => {
+    let finished = false;
+    let forceTimer = null;
+    const finish = error => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(forceTimer);
+      resolve(error?.code === 'ERR_SERVER_NOT_RUNNING' ? null : error ?? null);
+    };
+    forceTimer = setTimeout(() => {
+      logRuntimeEvent('warn', 'shutdown_forced', {
+        reason,
+        activeConnections: sockets.size
+      });
+      server.closeAllConnections?.();
+      for (const socket of sockets) socket.destroy();
+      finish(requestedExitCode === 0
+        ? null
+        : new Error('Forced shutdown after drain timeout'));
+    }, SHUTDOWN_DRAIN_TIMEOUT_MS);
+    forceTimer.unref?.();
+
+    server.close(finish);
+    server.closeIdleConnections?.();
+  });
+}
+
 function beginShutdown(reason, exitCode = 0) {
   requestedExitCode = Math.max(requestedExitCode, exitCode);
-  if (shuttingDown) return;
+  if (shutdownPromise) return shutdownPromise;
   shuttingDown = true;
   serviceReady = false;
   logRuntimeEvent('info', 'shutdown_started', {
@@ -224,28 +341,30 @@ function beginShutdown(reason, exitCode = 0) {
     activeConnections: sockets.size
   });
 
-  const forceTimer = setTimeout(() => {
-    logRuntimeEvent('warn', 'shutdown_forced', {
-      reason,
-      activeConnections: sockets.size
-    });
-    server.closeAllConnections?.();
-    for (const socket of sockets) socket.destroy();
-    completeShutdown(reason, requestedExitCode === 0
-      ? undefined
-      : new Error('Forced shutdown after drain timeout'));
-  }, SHUTDOWN_DRAIN_TIMEOUT_MS);
-  forceTimer.unref?.();
-
-  server.close((error) => {
-    clearTimeout(forceTimer);
-    if (error?.code === 'ERR_SERVER_NOT_RUNNING') {
-      completeShutdown(reason);
-      return;
+  shutdownPromise = (async () => {
+    let shutdownError = null;
+    try {
+      await multiplayerRuntime?.quiesce();
+    } catch (error) {
+      shutdownError = error;
+      requestedExitCode = Math.max(requestedExitCode, 1);
+      logRuntimeEvent('error', 'multiplayer_quiesce_failed', { error: errorFields(error) });
     }
-    completeShutdown(reason, error);
-  });
-  server.closeIdleConnections?.();
+    const drainError = await drainHttpServer(reason);
+    if (drainError) {
+      shutdownError ??= drainError;
+      requestedExitCode = Math.max(requestedExitCode, 1);
+    }
+    try {
+      await multiplayerRuntime?.close();
+    } catch (error) {
+      shutdownError ??= error;
+      requestedExitCode = Math.max(requestedExitCode, 1);
+      logRuntimeEvent('error', 'multiplayer_close_failed', { error: errorFields(error) });
+    }
+    completeShutdown(reason, shutdownError);
+  })();
+  return shutdownPromise;
 }
 
 server.on('error', (error) => {

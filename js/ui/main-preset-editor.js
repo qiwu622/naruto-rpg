@@ -39,7 +39,7 @@ class MainPresetEditor extends HTMLElement {
     const entries = this._preset.entries || [];
     this.shadowRoot.innerHTML = `
       <style>
-        :host { display: flex; position: fixed; inset: 0; background: rgba(7,10,14,0.95); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 100001; font-family: 'Noto Sans SC',system-ui,sans-serif; color: #e8e4d9; justify-content: center; align-items: center; padding: 20px; }
+        :host { display: flex; position: fixed; inset: 0; background: rgba(7,10,14,0.95); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: calc(var(--z-fullscreen) + 1); font-family: 'Noto Sans SC',system-ui,sans-serif; color: #e8e4d9; justify-content: center; align-items: center; padding: 20px; }
         :host([embedded]) { position: relative; inset: auto; z-index: auto; width: 100%; height: 100%; padding: 0; background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; }
         :host([embedded]) .mpe-container { max-width: none; max-height: none; border: 0; border-radius: 0; }
         .mpe-container { width: 100%; max-width: 1000px; height: 100%; max-height: 85vh; background: #111418; border: 1px solid rgba(198,156,109,0.2); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }

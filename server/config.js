@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,6 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '../.env') });
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const AUTH_BYPASS_REQUESTED = process.env.AUTH_BYPASS === 'true';
+const MULTIPLAYER_ENABLED = process.env.MULTIPLAYER_ENABLED !== 'false';
 
 /** 开发兜底密钥：生产环境使用它意味着 JWT 可被任何人伪造，配置校验会点名告警 */
 const DEV_FALLBACK_JWT_SECRET = 'naruto-rpg-dev-only-not-for-production';
@@ -20,6 +22,14 @@ const DEV_FALLBACK_JWT_SECRET = 'naruto-rpg-dev-only-not-for-production';
 function toPositiveInt(value, fallback) {
   const parsed = Number.parseInt(value ?? '', 10);
   return Number.isNaN(parsed) || parsed <= 0 ? fallback : parsed;
+}
+
+/** 首次请求以外的重试次数；0 明确关闭重试。 */
+export function resolveAiProxyRetryMaxAttempts(env = process.env) {
+  const raw = String(env.AI_PROXY_RETRY_MAX_ATTEMPTS ?? '').trim();
+  if (!/^\d+$/.test(raw)) return 2;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : 2;
 }
 
 /**
@@ -43,6 +53,18 @@ function parseOriginList(value) {
       return ['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol) ? url.origin : '';
     } catch { return ''; }
   }).filter(Boolean))];
+}
+
+function developmentSecret(label) {
+  return createHash('sha256')
+    .update(`${process.env.JWT_SECRET || DEV_FALLBACK_JWT_SECRET}\u0000${label}`, 'utf8')
+    .digest('base64');
+}
+
+function multiplayerSecret(name, label) {
+  const configured = String(process.env[name] || '').trim();
+  if (configured) return configured;
+  return NODE_ENV === 'production' ? '' : developmentSecret(label);
 }
 
 /**
@@ -119,6 +141,46 @@ export const config = deepFreeze({
   storage: {
     dataDir: path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'))
   },
+  multiplayer: {
+    enabled: MULTIPLAYER_ENABLED,
+    databasePath: path.resolve(
+      process.env.MULTIPLAYER_DATABASE_PATH
+        || path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'multiplayer', 'multiplayer.sqlite')
+    ),
+    backupDir: path.resolve(
+      process.env.MULTIPLAYER_BACKUP_DIR
+        || path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'multiplayer', 'backups')
+    ),
+    backupIntervalMs: toPositiveInt(
+      process.env.MULTIPLAYER_BACKUP_INTERVAL_MINUTES,
+      360
+    ) * 60 * 1000,
+    keyVersion: String(process.env.MULTIPLAYER_KEY_VERSION || 'v1'),
+    contentMasterKey: multiplayerSecret(
+      'MULTIPLAYER_CONTENT_MASTER_KEY',
+      'multiplayer-content-master-key-v1'
+    ),
+    credentialMasterKey: multiplayerSecret(
+      'MULTIPLAYER_CREDENTIAL_MASTER_KEY',
+      'multiplayer-credential-master-key-v1'
+    ),
+    credentialFingerprintKey: multiplayerSecret(
+      'MULTIPLAYER_CREDENTIAL_FINGERPRINT_KEY',
+      'multiplayer-credential-fingerprint-key-v1'
+    ),
+    actionCommitmentSecret: multiplayerSecret(
+      'MULTIPLAYER_ACTION_COMMITMENT_SECRET',
+      'multiplayer-action-commitment-secret-v1'
+    ),
+    lineageSigningSecret: multiplayerSecret(
+      'MULTIPLAYER_LINEAGE_SIGNING_SECRET',
+      'multiplayer-lineage-signing-secret-v1'
+    ),
+    proposalCommitmentSecret: multiplayerSecret(
+      'MULTIPLAYER_PROPOSAL_COMMITMENT_SECRET',
+      'multiplayer-proposal-commitment-secret-v1'
+    )
+  },
   proxy: {
     enabled: process.env.PROXY_ENABLED === 'true',
     url: process.env.PROXY_URL || '',
@@ -137,7 +199,7 @@ export const config = deepFreeze({
     // 等待（优先尊重上游 Retry-After，截断到 maxPerRetryMs）后重新发起同一请求。
     upstreamRetry: {
       // 首次请求之外的重试次数（总请求数 = 1 + 该值）
-      maxAttempts: toPositiveInt(process.env.AI_PROXY_RETRY_MAX_ATTEMPTS, 2),
+      maxAttempts: resolveAiProxyRetryMaxAttempts(process.env),
       // 单次等待上限（毫秒）：尊重上游 Retry-After，但截断过长等待
       maxPerRetryMs: toPositiveInt(process.env.AI_PROXY_RETRY_MAX_PER_RETRY_MS, 30000),
       // 所有重试的累计等待预算（毫秒）
@@ -175,11 +237,32 @@ if (config.nodeEnv === 'production') {
   if (!config.discord.requiredGuildId) missing.push('DISCORD_REQUIRED_GUILD_ID');
   if (config.jwt.secret === DEV_FALLBACK_JWT_SECRET) missing.push('JWT_SECRET (using default)');
   if (AUTH_BYPASS_REQUESTED) missing.push('AUTH_BYPASS (must be false in production)');
+  if (config.multiplayer.enabled) {
+    for (const [field, name] of [
+      ['contentMasterKey', 'MULTIPLAYER_CONTENT_MASTER_KEY'],
+      ['credentialMasterKey', 'MULTIPLAYER_CREDENTIAL_MASTER_KEY'],
+      ['credentialFingerprintKey', 'MULTIPLAYER_CREDENTIAL_FINGERPRINT_KEY'],
+      ['actionCommitmentSecret', 'MULTIPLAYER_ACTION_COMMITMENT_SECRET'],
+      ['lineageSigningSecret', 'MULTIPLAYER_LINEAGE_SIGNING_SECRET'],
+      ['proposalCommitmentSecret', 'MULTIPLAYER_PROPOSAL_COMMITMENT_SECRET']
+    ]) {
+      if (!config.multiplayer[field]) missing.push(name);
+    }
+  }
 
   if (missing.length > 0) {
     console.warn(`[WARNING] Production mode configuration check failed! Missing keys: ${missing.join(', ')}`);
   }
-  if (config.jwt.secret === DEV_FALLBACK_JWT_SECRET || AUTH_BYPASS_REQUESTED) {
+  if (config.jwt.secret === DEV_FALLBACK_JWT_SECRET
+    || AUTH_BYPASS_REQUESTED
+    || (config.multiplayer.enabled && [
+      config.multiplayer.contentMasterKey,
+      config.multiplayer.credentialMasterKey,
+      config.multiplayer.credentialFingerprintKey,
+      config.multiplayer.actionCommitmentSecret,
+      config.multiplayer.lineageSigningSecret,
+      config.multiplayer.proposalCommitmentSecret
+    ].some(value => !value))) {
     console.error('[FATAL] Production security configuration is unsafe. Exiting.');
     process.exit(1);
   }

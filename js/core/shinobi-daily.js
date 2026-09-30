@@ -41,13 +41,111 @@ export const SHINOBI_DAILY_EXAMPLE = Object.freeze({
 });
 
 const EXACT_KEYS = Object.freeze({
-  root: ['schema', 'date', 'issue', 'headline', 'world', 'flavor', 'missions', 'quote'],
-  headline: ['title', 'body', 'sig'],
-  world: ['tag', 'title', 'text'],
-  flavor: ['mark', 'title', 'text'],
-  mission: ['rank', 'task', 'pay', 'status'],
-  quote: ['text', 'who']
+  root: Object.freeze(['schema', 'date', 'issue', 'headline', 'world', 'flavor', 'missions', 'quote']),
+  headline: Object.freeze(['title', 'body', 'sig']),
+  world: Object.freeze(['tag', 'title', 'text']),
+  flavor: Object.freeze(['mark', 'title', 'text']),
+  mission: Object.freeze(['rank', 'task', 'pay', 'status']),
+  quote: Object.freeze(['text', 'who'])
 });
+
+// Validation and model instructions must share the same delivery constraints.
+// A schema example alone cannot disclose bounds such as an eight-character title.
+export const SHINOBI_DAILY_RULES = Object.freeze({
+  objects: EXACT_KEYS,
+  collections: Object.freeze({
+    world: Object.freeze({ count: REQUIRED_WORLD_ITEMS, object: 'world', label: '要闻' }),
+    flavor: Object.freeze({ count: REQUIRED_FLAVOR_ITEMS, object: 'flavor', label: '逸闻' }),
+    missions: Object.freeze({ count: REQUIRED_MISSION_RANKS.length, object: 'mission', label: '布告' })
+  }),
+  text: Object.freeze(Object.fromEntries(Object.entries({
+    schema: { min: 10, max: 48, constant: SHINOBI_DAILY_SCHEMA },
+    date: { min: 4, max: 40 },
+    issue: { min: 3, max: 20, pattern: /^第\s*\d{1,8}\s*号$/u, format: '第 N 号，N 为 1-8 位阿拉伯数字，数字前后可有空格' },
+    'headline.title': { min: 8, max: 64 },
+    'headline.body': { min: 40, max: 420 },
+    'headline.sig': { min: 4, max: 48 },
+    'world[].tag': { min: 2, max: 12 },
+    'world[].title': { min: 6, max: 42 },
+    'world[].text': { min: 24, max: 240 },
+    'flavor[].mark': { min: 1, max: 1, pattern: /^\p{Script=Han}$/u, format: '只能是一个汉字' },
+    'flavor[].title': { min: 5, max: 42 },
+    'flavor[].text': { min: 20, max: 220 },
+    'missions[].rank': { min: 1, max: 1, orderedValues: REQUIRED_MISSION_RANKS },
+    'missions[].task': { min: 6, max: 70 },
+    'missions[].pay': { min: 2, max: 20 },
+    'missions[].status': { min: 2, max: 16 },
+    'quote.text': { min: 6, max: 100 },
+    'quote.who': { min: 3, max: 48 }
+  }).map(([field, rule]) => [field, Object.freeze(rule)])))
+});
+
+export function buildShinobiDailyRulesPrompt() {
+  const collectionPaths = new Map(Object.entries(SHINOBI_DAILY_RULES.collections)
+    .map(([path, rule]) => [rule.object, `${path}[]`]));
+  const shape = Object.entries(SHINOBI_DAILY_RULES.objects).map(([object, keys]) => (
+    `- ${collectionPaths.get(object) || object} 仅包含字段：${keys.join('、')}；全部必填，不得增删。`
+  ));
+  const counts = Object.entries(SHINOBI_DAILY_RULES.collections)
+    .map(([path, rule]) => `${path} 恰好 ${rule.count} 条${rule.label}`).join('；');
+  const fields = Object.entries(SHINOBI_DAILY_RULES.text).map(([path, rule]) => {
+    const constraints = [
+      `${path}：${rule.min}-${rule.max} 个字符`,
+      rule.constant ? `固定值 ${rule.constant}` : '',
+      rule.format || '',
+      rule.orderedValues ? `依次只能为 ${rule.orderedValues.join('、')}，不得调整顺序` : ''
+    ].filter(Boolean);
+    return `- ${constraints.join('；')}。`;
+  });
+  return [
+    '【日报字段规则 · 与本地校验共用】',
+    ...shape,
+    `- ${counts}。`,
+    '- 所有叶子字段必须是非空字符串；禁止 HTML、XML 和控制字符。字符数按 Unicode 码点计算，先合并连续空白为一个空格并去掉首尾空白；[] 表示数组的每一项。',
+    ...fields
+  ].join('\n');
+}
+
+// Provider contracts derive from the same rules as validation and repair prompts.
+export function buildShinobiDailyJsonSchema() {
+  const textSchema = path => {
+    const rule = SHINOBI_DAILY_RULES.text[path];
+    return {
+      type: 'string', minLength: rule.min, maxLength: rule.max,
+      ...(rule.constant === undefined ? {} : { const: rule.constant }),
+      ...(rule.pattern ? { pattern: rule.pattern.source } : {}),
+      ...(rule.format ? { description: rule.format } : {})
+    };
+  };
+  const objectSchema = (object, prefix = '') => ({
+    type: 'object', additionalProperties: false,
+    required: [...SHINOBI_DAILY_RULES.objects[object]],
+    properties: Object.fromEntries(SHINOBI_DAILY_RULES.objects[object].map(key => {
+      const collection = SHINOBI_DAILY_RULES.collections[key];
+      if (object === 'root' && collection) {
+        const item = objectSchema(collection.object, `${key}[].`);
+        const orderedField = Object.keys(item.properties).find(field => (
+          SHINOBI_DAILY_RULES.text[`${key}[].${field}`].orderedValues
+        ));
+        return [key, {
+          type: 'array', minItems: collection.count, maxItems: collection.count,
+          ...(orderedField ? {
+            prefixItems: SHINOBI_DAILY_RULES.text[`${key}[].${orderedField}`].orderedValues
+              .map(value => ({
+                ...item,
+                properties: { ...item.properties, [orderedField]: { ...item.properties[orderedField], const: value } }
+              })),
+            items: false
+          } : { items: item })
+        }];
+      }
+      return [key, object === 'root' && SHINOBI_DAILY_RULES.objects[key]
+        ? objectSchema(key, `${key}.`)
+        : textSchema(`${prefix}${key}`)];
+    }))
+  });
+  return { $id: SHINOBI_DAILY_SCHEMA, ...objectSchema('root') };
+}
 
 function isRecord(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -73,7 +171,9 @@ function normalizeText(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
 }
 
-function readText(value, path, errors, { min = 1, max = 200, pattern = null } = {}) {
+function readText(value, path, errors) {
+  const field = path.replace(/^日报\./u, '').replace(/\[\d+\]/gu, '[]');
+  const { min, max, pattern, constant, format } = SHINOBI_DAILY_RULES.text[field];
   const text = normalizeText(value);
   if (!text) {
     errors.push(`${path} 必须是非空字符串`);
@@ -83,7 +183,8 @@ function readText(value, path, errors, { min = 1, max = 200, pattern = null } = 
   if ([...text].length < min || [...text].length > max) {
     errors.push(`${path} 长度必须为 ${min}-${max} 个字符`);
   }
-  if (pattern && !pattern.test(text)) errors.push(`${path} 格式无效`);
+  if (pattern && !pattern.test(text)) errors.push(`${path} 格式无效${format ? `：${format}` : ''}`);
+  if (constant !== undefined && text !== constant) errors.push(`${path} 必须是 ${constant}`);
   return text;
 }
 
@@ -103,22 +204,21 @@ export function validateShinobiDaily(value) {
   if (!checkExactKeys(value, EXACT_KEYS.root, '日报', errors)) return { valid: false, errors, daily: null };
 
   const daily = {
-    schema: readText(value.schema, '日报.schema', errors, { min: 10, max: 48 }),
-    date: readText(value.date, '日报.date', errors, { min: 4, max: 40 }),
-    issue: readText(value.issue, '日报.issue', errors, { min: 3, max: 20, pattern: /^第\s*\d{1,8}\s*号$/u }),
+    schema: readText(value.schema, '日报.schema', errors),
+    date: readText(value.date, '日报.date', errors),
+    issue: readText(value.issue, '日报.issue', errors),
     headline: {},
     world: [],
     flavor: [],
     missions: [],
     quote: {}
   };
-  if (daily.schema !== SHINOBI_DAILY_SCHEMA) errors.push(`日报.schema 必须是 ${SHINOBI_DAILY_SCHEMA}`);
 
   if (checkExactKeys(value.headline, EXACT_KEYS.headline, '日报.headline', errors)) {
     daily.headline = {
-      title: readText(value.headline.title, '日报.headline.title', errors, { min: 8, max: 64 }),
-      body: readText(value.headline.body, '日报.headline.body', errors, { min: 40, max: 420 }),
-      sig: readText(value.headline.sig, '日报.headline.sig', errors, { min: 4, max: 48 })
+      title: readText(value.headline.title, '日报.headline.title', errors),
+      body: readText(value.headline.body, '日报.headline.body', errors),
+      sig: readText(value.headline.sig, '日报.headline.sig', errors)
     };
   }
 
@@ -129,9 +229,9 @@ export function validateShinobiDaily(value) {
       const path = `日报.world[${index}]`;
       if (!checkExactKeys(item, EXACT_KEYS.world, path, errors)) return { tag: '', title: '', text: '' };
       return {
-        tag: readText(item.tag, `${path}.tag`, errors, { min: 2, max: 12 }),
-        title: readText(item.title, `${path}.title`, errors, { min: 6, max: 42 }),
-        text: readText(item.text, `${path}.text`, errors, { min: 24, max: 240 })
+        tag: readText(item.tag, `${path}.tag`, errors),
+        title: readText(item.title, `${path}.title`, errors),
+        text: readText(item.text, `${path}.text`, errors)
       };
     });
   }
@@ -143,9 +243,9 @@ export function validateShinobiDaily(value) {
       const path = `日报.flavor[${index}]`;
       if (!checkExactKeys(item, EXACT_KEYS.flavor, path, errors)) return { mark: '', title: '', text: '' };
       return {
-        mark: readText(item.mark, `${path}.mark`, errors, { min: 1, max: 1, pattern: /^\p{Script=Han}$/u }),
-        title: readText(item.title, `${path}.title`, errors, { min: 5, max: 42 }),
-        text: readText(item.text, `${path}.text`, errors, { min: 20, max: 220 })
+        mark: readText(item.mark, `${path}.mark`, errors),
+        title: readText(item.title, `${path}.title`, errors),
+        text: readText(item.text, `${path}.text`, errors)
       };
     });
   }
@@ -156,23 +256,24 @@ export function validateShinobiDaily(value) {
     daily.missions = value.missions.map((item, index) => {
       const path = `日报.missions[${index}]`;
       if (!checkExactKeys(item, EXACT_KEYS.mission, path, errors)) return { rank: '', task: '', pay: '', status: '' };
-      const rank = readText(item.rank, `${path}.rank`, errors, { min: 1, max: 1 });
-      if (rank !== REQUIRED_MISSION_RANKS[index]) {
-        errors.push(`${path}.rank 必须是 ${REQUIRED_MISSION_RANKS[index]}`);
+      const rank = readText(item.rank, `${path}.rank`, errors);
+      const expectedRank = SHINOBI_DAILY_RULES.text['missions[].rank'].orderedValues[index];
+      if (rank !== expectedRank) {
+        errors.push(`${path}.rank 必须是 ${expectedRank}`);
       }
       return {
         rank,
-        task: readText(item.task, `${path}.task`, errors, { min: 6, max: 70 }),
-        pay: readText(item.pay, `${path}.pay`, errors, { min: 2, max: 20 }),
-        status: readText(item.status, `${path}.status`, errors, { min: 2, max: 16 })
+        task: readText(item.task, `${path}.task`, errors),
+        pay: readText(item.pay, `${path}.pay`, errors),
+        status: readText(item.status, `${path}.status`, errors)
       };
     });
   }
 
   if (checkExactKeys(value.quote, EXACT_KEYS.quote, '日报.quote', errors)) {
     daily.quote = {
-      text: readText(value.quote.text, '日报.quote.text', errors, { min: 6, max: 100 }),
-      who: readText(value.quote.who, '日报.quote.who', errors, { min: 3, max: 48 })
+      text: readText(value.quote.text, '日报.quote.text', errors),
+      who: readText(value.quote.who, '日报.quote.who', errors)
     };
   }
 
@@ -212,14 +313,15 @@ export function parseShinobiDailyContract(text, { required = false } = {}) {
 }
 
 export function buildShinobiDailyPrompt({ producer = 'main', includeExample = true } = {}) {
-  const placement = producer === 'secondary'
+  const placement = producer === 'repair'
+    ? '本次只输出日报契约；已暂存的变量与记忆由本地保留，不要重新生成。'
+    : producer === 'secondary'
     ? '完成全部变量标签后，在输出末尾追加日报契约。'
     : '完成可见正文和变量、记忆标签后追加日报契约；若本回合另有 <image_contract>，只有绘图契约可以紧随日报之后。';
   return `【忍界日报结构契约 · 固定前端数据源】
 ${placement}
 - 必须输出且只能输出一次 <shinobi_daily>严格 JSON</shinobi_daily>；禁止代码围栏、注释、HTML、Markdown 和标签属性。
-- 固定 schema 为 ${SHINOBI_DAILY_SCHEMA}。字段、层级与数量必须和示例完全一致，不得增删字段。
-- world 恰好 4 条；flavor 恰好 3 条；missions 恰好 4 条并严格按 D、C、B、A 排列；flavor.mark 只能是一个汉字。
+${buildShinobiDailyRulesPrompt()}
 - 日报是面向公众的报纸，不是全知旁白：不得泄露私密意图、秘密身份、未公开情报、内部推理、未来剧情或玩家尚未公开的行动。
 - 头条和要闻只能陈述当前安全证据及最终正文已经公开成立的事实。证据不足时写克制的政务、交通、天气或民生通告，不得把传闻写成定论。
 - 任务布告只是报纸公开栏，不得把它们写入玩家任务状态；等级、风险、报酬与受理状态必须相互合理。

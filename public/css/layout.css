@@ -797,7 +797,16 @@ body[data-bg-mode="image"] {
   .app-statusbar {
     height: calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));
     padding-bottom: env(safe-area-inset-bottom, 0px);
+    justify-content: flex-start;
+    gap: var(--sp-3);
+    padding-left: var(--sp-3);
+    padding-right: var(--sp-3);
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: none;
   }
+  .app-statusbar > span { flex-shrink: 0; }
+  .app-statusbar::-webkit-scrollbar { display: none; }
   
   .mobile-scrim { display: block; position: fixed; inset: var(--topbar-h) 0 0; background: rgba(0,0,0,0.6); opacity: 0; pointer-events: none; transition: opacity 0.3s; z-index: calc(var(--z-overlay) - 1); }
   .mobile-scrim.is-visible { opacity: 1; pointer-events: auto; }

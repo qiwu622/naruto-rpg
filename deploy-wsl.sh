@@ -33,6 +33,7 @@ usage() {
   --mode <环境>           与位置参数等价
   --dry-run               只构建并校验部署包，不连接服务器
   --skip-build            使用当前 public/，跳过 npm 构建
+  --keep-package          保留本地部署包与清单供核对
   --confirm-production    明确授权正式站发布
   --config <文件>         本地配置文件，默认 deploy.local.env
   --release-version <值>  必须与 package.json 的 version 完全一致
@@ -61,6 +62,7 @@ require_value() {
 MODE=""
 DRY_RUN=false
 SKIP_BUILD=false
+KEEP_PACKAGE=false
 CONFIRM_PRODUCTION=false
 CONFIG_FILE="$DEFAULT_CONFIG"
 REQUESTED_RELEASE=""
@@ -84,6 +86,10 @@ while (($# > 0)); do
       ;;
     --skip-build)
       SKIP_BUILD=true
+      shift
+      ;;
+    --keep-package)
+      KEEP_PACKAGE=true
       shift
       ;;
     --confirm-production)
@@ -188,6 +194,11 @@ case "$MODE" in
 esac
 
 BACKEND_DIR='/opt/naruto-rpg'
+BACKEND_NODE_VERSION='v22.23.2'
+BACKEND_RUNTIME_DIR='/opt/naruto-runtime/node-v22.23.2-linux-x64'
+BACKEND_NODE_BIN="$BACKEND_RUNTIME_DIR/bin/node"
+BACKEND_NPM_CLI="$BACKEND_RUNTIME_DIR/lib/node_modules/npm/bin/npm-cli.js"
+BACKEND_RUNTIME_PATH="$BACKEND_RUNTIME_DIR/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 BUILD_ID="$(date +%y%m%d%H%M)"
 DEPLOYMENT_ID="v${RELEASE_VERSION}-${BUILD_ID}-$$"
 TEMP_PARENT="${TMPDIR:-/tmp}"
@@ -199,6 +210,7 @@ BACKEND_PAYLOAD="$PAYLOAD_DIR/backend"
 ARCHIVE="$WORK_DIR/naruto-rpg-${MODE}-${DEPLOYMENT_ID}.tar.gz"
 
 cleanup_local() {
+  if [[ "$KEEP_PACKAGE" == true ]]; then printf 'PACKAGE_DIRECTORY=%s\n' "$WORK_DIR"; return; fi
   local expected_prefix="$TEMP_PARENT/naruto-rpg-deploy-${MODE}-${DEPLOYMENT_ID}."
   if [[ -n "${WORK_DIR:-}" && "$WORK_DIR" == "$expected_prefix"* && -d "$WORK_DIR" ]]; then
     rm -rf -- "$WORK_DIR"
@@ -236,13 +248,30 @@ upload_archive() {
   local remote_part="$1"
   local attempt status=1 delay
   local -a upload_command
+  local rsync_rsh=""
+  if command -v rsync >/dev/null 2>&1; then
+    printf -v rsync_rsh '%q ' ssh "${SSH_OPTIONS[@]}"
+    rsync_rsh="${rsync_rsh% }"
+  fi
   for ((attempt = 1; attempt <= 6; attempt++)); do
-    upload_command=(scp)
-    if ((attempt == 6)); then
-      warn "常规 SFTP 上传连续失败，最后一次改用兼容 SCP 协议"
+    if [[ -n "$rsync_rsh" && $attempt -lt 6 ]]; then
+      upload_command=(
+        rsync
+        --archive
+        --partial
+        --append-verify
+        --bwlimit=4096
+        --timeout=120
+        -e "$rsync_rsh"
+        "$ARCHIVE"
+        "${DEPLOY_SERVER}:${remote_part}"
+      )
+    else
+      upload_command=(scp)
+      warn "断点续传连续失败，最后一次改用兼容 SCP 协议"
       upload_command+=(-O)
+      upload_command+=("${SSH_OPTIONS[@]}" "$ARCHIVE" "${DEPLOY_SERVER}:${remote_part}")
     fi
-    upload_command+=("${SSH_OPTIONS[@]}" "$ARCHIVE" "${DEPLOY_SERVER}:${remote_part}")
     log "上传部署包（尝试 $attempt/6）"
     if "${upload_command[@]}"; then
       return 0
@@ -301,7 +330,7 @@ while IFS= read -r -d '' source_file; do
   destination_file="$BACKEND_PAYLOAD/server/$relative_path"
   mkdir -p "$(dirname "$destination_file")"
   cp "$source_file" "$destination_file"
-done < <(find "$SERVER_ROOT" -type f -name '*.js' -print0)
+done < <(find "$SERVER_ROOT" -type f \( -name '*.js' -o -name '*.sql' \) -print0)
 
 cp "$PROJECT_DIR/package.json" "$PROJECT_DIR/package-lock.json" "$BACKEND_PAYLOAD/"
 
@@ -311,6 +340,9 @@ SHARED_MODULES=(
   'js/core/narrative-artifact.js'
   'js/core/image-studio/contracts.js'
   'js/core/continuity-ledger.js'
+  'js/systems/opening-draft.js'
+  'js/systems/combat-level.js'
+  'js/multiplayer/opening-draft-bridge.js'
   'js/utils/format.js'
 )
 for shared_module in "${SHARED_MODULES[@]}"; do
@@ -319,11 +351,42 @@ for shared_module in "${SHARED_MODULES[@]}"; do
   cp "$PROJECT_DIR/$shared_module" "$destination_file"
 done
 
+# 联机知识核对在服务端直接导入正典数据与 worldbook 解析器。
+# 复制完整目录以保留它们的静态 ESM 依赖闭包。
+mkdir -p "$BACKEND_PAYLOAD/js/data"
+cp -a "$PROJECT_DIR/js/data/." "$BACKEND_PAYLOAD/js/data/"
+cp -a "$PROJECT_DIR/js/." "$BACKEND_PAYLOAD/js/"
+
+BACKEND_RUNTIME_REQUIRED_FILES=(
+  "${SHARED_MODULES[@]}"
+  'js/data/canon-database.js'
+  'js/data/generated/canon-runtime-data.js'
+  'js/data/worldbook/runtime-resolver.js'
+  'js/data/worldbook/v2.js'
+  'server/multiplayer/persistence/migrations/0001-initial-schema.sql'
+  'server/multiplayer/persistence/migrations/0002-latest-source-snapshots.sql'
+  'server/multiplayer/persistence/migrations/0003-genesis-import-reviews.sql'
+  'server/multiplayer/persistence/migrations/0004-ai-usage-budget-reservations.sql'
+  'server/multiplayer/persistence/migrations/0005-narrative-mode-selection-safety.sql'
+  'server/multiplayer/persistence/migrations/0006-writer-audience-acceptance-idempotency.sql'
+  'server/multiplayer/persistence/migrations/0007-room-credential-usage-policy.sql'
+  'server/multiplayer/persistence/migrations/0008-room-opening-drafts.sql'
+)
+
 mkdir -p "$PAYLOAD_DIR/ops/systemd/naruto-rpg.service.d" "$PAYLOAD_DIR/ops/sysctl"
 cp "$PROJECT_DIR/deploy/systemd/naruto-rpg.service.d/limits.conf" \
   "$PAYLOAD_DIR/ops/systemd/naruto-rpg.service.d/limits.conf"
+cp "$PROJECT_DIR/deploy/systemd/naruto-rpg.service.d/runtime.conf" \
+  "$PAYLOAD_DIR/ops/systemd/naruto-rpg.service.d/runtime.conf"
+cp "$PROJECT_DIR/deploy/systemd/naruto-rpg.service.d/cloud-slots.conf" \
+  "$PAYLOAD_DIR/ops/systemd/naruto-rpg.service.d/cloud-slots.conf"
+cp "$PROJECT_DIR/deploy/apply-release.py" "$PAYLOAD_DIR/ops/apply-release.py"
 cp "$PROJECT_DIR/deploy/sysctl/90-naruto-rpg-memory.conf" \
   "$PAYLOAD_DIR/ops/sysctl/90-naruto-rpg-memory.conf"
+
+mkdir -p "$PAYLOAD_DIR/ops/nginx"
+cp "$PROJECT_DIR/deploy/nginx/naruto-rpg-android-download.conf" \
+  "$PAYLOAD_DIR/ops/nginx/naruto-rpg-android-download.conf"
 
 if [[ "$MODE" == staging ]]; then
   mkdir -p "$PAYLOAD_DIR/ops/nginx"
@@ -345,25 +408,29 @@ REQUIRED_FILES=(
   'backend/server/index.js'
   'backend/package.json'
   'backend/package-lock.json'
-  'backend/js/core/timeline-save-schema.js'
-  'backend/js/core/shinobi-daily.js'
-  'backend/js/core/narrative-artifact.js'
-  'backend/js/core/image-studio/contracts.js'
-  'backend/js/core/continuity-ledger.js'
-  'backend/js/utils/format.js'
   'ops/systemd/naruto-rpg.service.d/limits.conf'
+  'ops/systemd/naruto-rpg.service.d/runtime.conf'
   'ops/sysctl/90-naruto-rpg-memory.conf'
 )
 if [[ "$MODE" == staging ]]; then
   REQUIRED_FILES+=('ops/nginx/naruto-rpg-staging.conf')
 fi
+for backend_file in "${BACKEND_RUNTIME_REQUIRED_FILES[@]}"; do
+  REQUIRED_FILES+=("backend/$backend_file")
+done
 for required_file in "${REQUIRED_FILES[@]}"; do
   [[ -s "$PAYLOAD_DIR/$required_file" ]] || fail "部署包缺少文件：$required_file"
 done
 
-for shared_module in "${SHARED_MODULES[@]}"; do
-  [[ -s "$PAYLOAD_DIR/backend/$shared_module" ]] || fail "后端共享模块缺失：$shared_module"
-done
+node --input-type=module -e '
+  import { pathToFileURL } from "node:url";
+  const root = process.argv[1];
+  await import(pathToFileURL(`${root}/server/multiplayer/persistence/sqlite-migrations.js`));
+  await import(pathToFileURL(`${root}/server/multiplayer/application/production-knowledge-evidence.js`));
+  await import(pathToFileURL(`${root}/server/multiplayer/application/genesis-state.js`));
+  await import(pathToFileURL(`${root}/server/multiplayer/agent/prompts.js`));
+' "$BACKEND_PAYLOAD"
+ok "后端联机运行依赖校验通过"
 
 forbidden_file="$(find "$PAYLOAD_DIR" -type f \( \
   -name '.env' -o -name '*.db' -o -name '*.db-journal' -o -name '*.db-wal' -o -name '*.tmp' \
@@ -372,6 +439,7 @@ forbidden_file="$(find "$PAYLOAD_DIR" -type f \( \
 [[ ! -e "$BACKEND_PAYLOAD/server/data" ]] || fail "部署包混入 server/data"
 [[ ! -e "$BACKEND_PAYLOAD/server/db/saves" ]] || fail "部署包混入 server/db/saves"
 
+node "$PROJECT_DIR/scripts/deploy-manifest.mjs" "$PAYLOAD_DIR" "$MODE" "$BUILD_ID" "$DEPLOYMENT_ID"
 tar -czf "$ARCHIVE" -C "$PAYLOAD_DIR" .
 tar -tzf "$ARCHIVE" >/dev/null
 ARCHIVE_SHA256="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
@@ -400,7 +468,7 @@ SSH_OPTIONS=(
   -o ConnectTimeout=15
   -o ConnectionAttempts=3
   -o ServerAliveInterval=15
-  -o ServerAliveCountMax=4
+  -o ServerAliveCountMax=20
   -o TCPKeepAlive=yes
   -o IPQoS=none
 )
@@ -410,6 +478,7 @@ REMOTE_ARCHIVE_PART="${REMOTE_ARCHIVE}.part"
 REMOTE_RELEASE="/tmp/naruto-rpg-release-${MODE}-${DEPLOYMENT_ID}"
 
 log "STEP 4/6：上传部署包"
+node "$PROJECT_DIR/scripts/deploy-manifest.mjs" --check-source "$PAYLOAD_DIR"
 upload_archive "$REMOTE_ARCHIVE_PART" || fail "上传部署包失败"
 
 # 避免上传连接刚释放时触发远端 sshd 的连接节流。
@@ -419,78 +488,10 @@ log "STEP 5/6：部署并执行服务器内验证"
 REMOTE_STEPS=(
   'set -eu'
   "if test -f '$REMOTE_ARCHIVE_PART'; then printf '%s  %s\\n' '$ARCHIVE_SHA256' '$REMOTE_ARCHIVE_PART' | sha256sum -c -; mv -f '$REMOTE_ARCHIVE_PART' '$REMOTE_ARCHIVE'; else test -f '$REMOTE_ARCHIVE'; printf '%s  %s\\n' '$ARCHIVE_SHA256' '$REMOTE_ARCHIVE' | sha256sum -c -; fi"
-  "rm -rf '$REMOTE_RELEASE'"
-  "mkdir -p '$REMOTE_RELEASE' '$TARGET_DIR'"
-  "tar xzf '$REMOTE_ARCHIVE' -C '$REMOTE_RELEASE'"
-  "test -s '$REMOTE_RELEASE/static/index.html'"
-  "test -s '$REMOTE_RELEASE/backend/server/index.js'"
+  "mkdir -p '$REMOTE_RELEASE'"
+  "if test ! -s '$REMOTE_RELEASE/release-manifest.json'; then tar xzf '$REMOTE_ARCHIVE' -C '$REMOTE_RELEASE'; fi"
+  "python3 '$REMOTE_RELEASE/ops/apply-release.py' --mode '$MODE' --build '$BUILD_ID'"
 )
-
-for shared_module in "${SHARED_MODULES[@]}"; do
-  REMOTE_STEPS+=("test -s '$REMOTE_RELEASE/backend/$shared_module'")
-done
-
-if [[ "$MODE" == production ]]; then
-  REMOTE_STEPS+=(
-    "BACKUP_DIR='${TARGET_DIR}.bak.${DEPLOYMENT_ID}'; if test -d '$TARGET_DIR' && test ! -e \"\$BACKUP_DIR\"; then cp -a '$TARGET_DIR' \"\$BACKUP_DIR\"; printf 'BACKUP_DIR=%s\\n' \"\$BACKUP_DIR\"; fi"
-  )
-fi
-
-REMOTE_STEPS+=(
-  "cp -a '$REMOTE_RELEASE/static/.' '$TARGET_DIR/'"
-  "rm -rf '$TARGET_DIR/server' '$TARGET_DIR/public'"
-  "rm -f '$TARGET_DIR/.env' '$TARGET_DIR/.env.example' '$TARGET_DIR/package.json' '$TARGET_DIR/package-lock.json'"
-  "test ! -e '$TARGET_DIR/server'"
-  "chown -R www-data:www-data '$TARGET_DIR'"
-)
-
-if [[ "$MODE" == staging ]]; then
-  STAGING_NGINX_CONFIG='/etc/nginx/sites-enabled/naruto-rpg-staging'
-  STAGING_NGINX_PAYLOAD="$REMOTE_RELEASE/ops/nginx/naruto-rpg-staging.conf"
-  STAGING_NGINX_BACKUP="$REMOTE_RELEASE/naruto-rpg-staging.conf.before"
-  REMOTE_STEPS+=(
-    "test -s '$STAGING_NGINX_PAYLOAD'"
-    "if ! cmp -s '$STAGING_NGINX_PAYLOAD' '$STAGING_NGINX_CONFIG'; then if test -f '$STAGING_NGINX_CONFIG'; then cp '$STAGING_NGINX_CONFIG' '$STAGING_NGINX_BACKUP'; fi; install -m 0644 '$STAGING_NGINX_PAYLOAD' '$STAGING_NGINX_CONFIG'; if ! nginx -t || ! systemctl reload nginx; then if test -f '$STAGING_NGINX_BACKUP'; then install -m 0644 '$STAGING_NGINX_BACKUP' '$STAGING_NGINX_CONFIG'; else rm -f '$STAGING_NGINX_CONFIG'; fi; nginx -t; systemctl reload nginx; exit 1; fi; else nginx -t; fi"
-    "nginx -T 2>&1 | grep -Fq 'auth_request /_staging_auth;'"
-  )
-else
-  REMOTE_STEPS+=("nginx -t")
-fi
-
-REMOTE_STEPS+=(
-  "mkdir -p '$BACKEND_DIR/server' '$BACKEND_DIR/js'"
-  "cp -a '$REMOTE_RELEASE/backend/server/.' '$BACKEND_DIR/server/'"
-  "cp -a '$REMOTE_RELEASE/backend/js/.' '$BACKEND_DIR/js/'"
-  "cp '$REMOTE_RELEASE/backend/package.json' '$REMOTE_RELEASE/backend/package-lock.json' '$BACKEND_DIR/'"
-  "cd '$BACKEND_DIR' && npm install --omit=dev --silent"
-  "chmod 600 '$BACKEND_DIR/.env' 2>/dev/null || true"
-  "chown -R www-data:www-data '$BACKEND_DIR'"
-  "install -D -m 0644 '$REMOTE_RELEASE/ops/systemd/naruto-rpg.service.d/limits.conf' '/etc/systemd/system/naruto-rpg.service.d/limits.conf'"
-  "install -m 0644 '$REMOTE_RELEASE/ops/sysctl/90-naruto-rpg-memory.conf' '/etc/sysctl.d/90-naruto-rpg-memory.conf'"
-  'systemctl daemon-reload'
-  'sysctl -p /etc/sysctl.d/90-naruto-rpg-memory.conf'
-  'systemctl restart naruto-rpg'
-  'systemctl is-active --quiet naruto-rpg'
-  "systemctl show naruto-rpg --property=MemoryHigh --value | grep -Fxq '268435456'"
-  "systemctl show naruto-rpg --property=MemoryMax --value | grep -Fxq '402653184'"
-  "systemctl show naruto-rpg --property=MemorySwapMax --value | grep -Fxq '134217728'"
-  "sysctl -n vm.swappiness | grep -Fxq '10'"
-  'ready=; for attempt in $(seq 1 30); do if curl --fail --silent --output /dev/null --max-time 2 http://127.0.0.1:3000/health/ready; then ready=1; break; fi; sleep 1; done; test "$ready" = 1'
-  "grep -Fq '?v=$BUILD_ID' '$TARGET_DIR/index.html'"
-  "grep -Fq '?v=$BUILD_ID' '$TARGET_DIR/login.html'"
-  "grep -Fq '$RELEASE_VERSION' '$TARGET_DIR/version.json'"
-  "curl --fail --silent --show-error --max-time 30 --resolve '$VERIFY_RESOLVE' '$VERIFY_URL' | grep -Fq '?v=$BUILD_ID'"
-)
-
-if [[ "$MODE" == staging ]]; then
-  STAGING_HEADERS="$REMOTE_RELEASE/staging-root.headers"
-  REMOTE_STEPS+=(
-    "curl --fail --silent --show-error --output /dev/null --dump-header '$STAGING_HEADERS' --max-time 30 --resolve '$VERIFY_RESOLVE' '$PUBLIC_URL'"
-    "tr -d '\\r' < '$STAGING_HEADERS' | grep -Eq '^HTTP/[^ ]+ 302([[:space:]]|$)'"
-    "tr -d '\\r' < '$STAGING_HEADERS' | grep -Fxi 'location: $VERIFY_URL'"
-    "tr -d '\\r' < '$STAGING_HEADERS' | grep -Fxi 'x-staging: true'"
-  )
-fi
 
 REMOTE_DEPLOY_COMMAND="$(printf '%s; ' "${REMOTE_STEPS[@]}")"
 REMOTE_DEPLOY_COMMAND="${REMOTE_DEPLOY_COMMAND%; }"
@@ -502,7 +503,7 @@ log "STEP 6/6：清理远端临时包"
 sleep 12
 if ! retry_remote "清理远端临时文件" 3 10 \
   ssh "${SSH_OPTIONS[@]}" "$DEPLOY_SERVER" \
-    "rm -rf '$REMOTE_RELEASE' '$REMOTE_ARCHIVE' '$REMOTE_ARCHIVE_PART'"; then
+    "python3 '$REMOTE_RELEASE/ops/apply-release.py' --mode '$MODE' --build '$BUILD_ID' --cleanup && rm -f '$REMOTE_ARCHIVE' '$REMOTE_ARCHIVE_PART'"; then
   warn "远端临时文件清理失败，不影响已完成部署"
 fi
 

@@ -1,3 +1,5 @@
+import { isWorldbookEntryEnabled, normalizeWorldbookActivation } from './activation.js';
+
 export const WORLD_BOOK_V2_SCHEMA_VERSION = '2.0';
 
 export const WORLD_BOOK_V2_VISIBILITIES = Object.freeze([
@@ -40,7 +42,12 @@ export const WORLD_BOOK_V2_JSON_SCHEMA = Object.freeze({
       required: ['mode', 'keys'],
       properties: {
         mode: { enum: ['keyword', 'always', 'manual'] },
-        keys: { type: 'array', items: { type: 'string' }, uniqueItems: true }
+        keys: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+        secondary_keys: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+        selective: { type: 'boolean' },
+        selective_logic: { enum: ['and_any', 'not_all', 'not_any', 'and_all'] },
+        case_sensitive: { type: 'boolean' },
+        match_whole_words: { type: 'boolean' }
       }
     },
     validity: {
@@ -513,10 +520,8 @@ export function normalizeWorldbookEntryV2(input, options = {}) {
   const defaultEntityIds = isCharacter ? [buildStableEntityId(title)].filter(Boolean) : [];
   const entityIds = uniqueStrings(raw.entity_ids?.length ? raw.entity_ids : defaultEntityIds);
   const isTrustedCustom = sourceKind === 'custom';
-  const activationMode = isTrustedCustom
-    ? 'always'
-    : (raw.activation?.mode || (raw.isAlwaysOn ? 'always' : 'keyword'));
-  const status = isTrustedCustom
+  const activation = normalizeWorldbookActivation({ ...raw, keys });
+  const status = isTrustedCustom && !['disabled', 'quarantined'].includes(raw.status)
     ? 'legacy_trusted_public'
     : (ALLOWED_STATUSES.has(raw.status) ? raw.status : 'active');
   const id = String(raw.id || options.id || buildStableWorldbookId(title, category));
@@ -527,13 +532,10 @@ export function normalizeWorldbookEntryV2(input, options = {}) {
     title,
     keys,
     category,
-    enabled: isTrustedCustom ? true : raw.enabled !== false,
+    enabled: isWorldbookEntryEnabled(raw),
     status,
     priority: Math.max(0, Math.min(100, Number.isFinite(Number(raw.priority)) ? Number(raw.priority) : 50)),
-    activation: {
-      mode: ALLOWED_ACTIVATION_MODES.has(activationMode) ? activationMode : 'keyword',
-      keys: uniqueStrings(raw.activation?.keys?.length ? raw.activation.keys : keys)
-    },
+    activation,
     validity: normalizeValidity(raw.validity, rawContent),
     knowledge: normalizeKnowledge(raw.knowledge, { sourceKind }),
     entity_ids: entityIds,
@@ -739,7 +741,7 @@ export function toRuntimeWorldbookEntry(entry, { audience = 'writer', date = nul
     enabled: entry.enabled,
     status: entry.status,
     priority: entry.priority,
-    activation: { mode: entry.activation.mode, keys: [...entry.activation.keys] },
+    activation: normalizeWorldbookActivation(entry),
     validity: { ...entry.validity },
     knowledge: {
       visibility: entry.knowledge.visibility,

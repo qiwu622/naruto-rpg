@@ -1,5 +1,6 @@
 import { eventBus } from '../core/event-bus.js';
 import { clearPromptTraces, readPromptTraceBundle } from '../core/prompt-trace.js';
+import { clearVariableUpdaterAttempts, getVariableUpdaterAttempts } from '../core/variable-updater-diagnostics.js';
 import { escHtml, escAttr } from '../utils/format.js';
 import GameModal from './modal.js';
 
@@ -17,6 +18,7 @@ class DeveloperPanel extends HTMLElement {
       eventBus.on('debug:agent-prompt-trace', () => this.render()),
       eventBus.on('debug:narrative-review-prompt-trace', () => this.render()),
       eventBus.on('debug:variable-updater-prompt-trace', () => this.render()),
+      eventBus.on('debug:variable-updater-attempt', () => this.render()),
       eventBus.on('debug:npc-summary-prompt-trace', () => this.render())
     ];
   }
@@ -30,7 +32,8 @@ class DeveloperPanel extends HTMLElement {
     const { main, agents, narrativeReview, variableUpdater, auxiliary } = readPromptTraceBundle();
     const agentList = Array.isArray(agents) ? agents : [];
     const auxiliaryList = Array.isArray(auxiliary) ? auxiliary : [];
-    const hasAnyTrace = Boolean(main || narrativeReview || variableUpdater || agentList.length || auxiliaryList.length);
+    const updaterAttempts = getVariableUpdaterAttempts().filter(attempt => attempt && typeof attempt === 'object').reverse();
+    const hasAnyTrace = Boolean(main || narrativeReview || variableUpdater || agentList.length || auxiliaryList.length || updaterAttempts.length);
     const allTraces = [main, ...agentList, narrativeReview, variableUpdater, ...auxiliaryList].filter(Boolean);
     this._traceMap = new Map(allTraces.map(trace => [this._traceId(trace), trace]));
 
@@ -71,7 +74,7 @@ class DeveloperPanel extends HTMLElement {
         <div class="dev-head">
           <div>
             <div class="dev-title">提示词查看</div>
-            <div class="dev-sub">查看实际发送的 role 链，以及主模型、Agent、叙事审校、变量更新和记忆摘要调用。</div>
+            <div class="dev-sub">查看实际发送的 role 链，以及主模型、Agent、叙事审校、变量更新和记忆摘要调用。变量更新结果保留失败原因与模型原文。</div>
           </div>
           <div class="dev-actions">
             <button data-action="copy">复制全部</button>
@@ -84,12 +87,14 @@ class DeveloperPanel extends HTMLElement {
           ${agentList.length ? `<div class="dev-group-title">Agent 子调用链 <span class="pill">最近 ${agentList.length} 次</span></div>${agentList.map(t => this._renderTraceCard(t)).join('')}` : ''}
           ${narrativeReview ? this._renderTraceCard(narrativeReview) : ''}
           ${variableUpdater ? this._renderTraceCard(variableUpdater) : ''}
+          ${updaterAttempts.length ? `<div class="dev-group-title">变量更新结果 <span class="pill">最近 ${updaterAttempts.length} 次</span></div>${updaterAttempts.map(attempt => this._renderUpdaterAttempt(attempt)).join('')}` : ''}
           ${auxiliaryList.length ? `<div class="dev-group-title">辅助模型调用 <span class="pill">最近 ${auxiliaryList.length} 次</span></div>${auxiliaryList.map(t => this._renderTraceCard(t)).join('')}` : ''}
         </div>
       </div>`;
 
     this.shadowRoot.querySelector('[data-action="clear"]')?.addEventListener('click', () => {
       clearPromptTraces();
+      clearVariableUpdaterAttempts();
       this.render();
     });
     this.shadowRoot.querySelector('[data-action="copy"]')?.addEventListener('click', () => this._copyAll());
@@ -142,6 +147,26 @@ class DeveloperPanel extends HTMLElement {
           <summary>注入项拆解</summary>
           ${injections}
         </details>` : ''}
+      </section>`;
+  }
+
+  _renderUpdaterAttempt(attempt) {
+    const errors = Array.isArray(attempt.errors) ? attempt.errors : [];
+    const warnings = Array.isArray(attempt.warnings) ? attempt.warnings : [];
+    const status = attempt.status === 'failed' ? '失败' : attempt.status === 'validated' ? '校验通过' : attempt.status || '未知';
+    return `
+      <section class="dev-card">
+        <div class="dev-card-title">变量更新 · ${this._esc(attempt.stage || 'unknown')} · ${this._esc(status)}</div>
+        <div class="dev-meta">
+          时间：${this._esc(this._formatLocalTime(attempt.createdAt))}<br>
+          模型：${this._esc(attempt.model || '')}<br>
+          ${attempt.failureKind ? `失败类型：${this._esc(attempt.failureKind)}<br>` : ''}
+          ${attempt.finishReason ? `结束原因：${this._esc(attempt.finishReason)}<br>` : ''}
+          ${attempt.truncated ? '原文超过保存上限，以下仅保留前段。<br>' : ''}
+        </div>
+        ${errors.length ? `<details class="block" open><summary>错误（${errors.length}）</summary><pre>${this._esc(errors.join('\n'))}</pre></details>` : ''}
+        ${warnings.length ? `<details class="block"><summary>提醒（${warnings.length}）</summary><pre>${this._esc(warnings.join('\n'))}</pre></details>` : ''}
+        <details class="block"><summary>模型响应原文${attempt.truncated ? '（已截断）' : ''}</summary><pre>${this._esc(attempt.output || '（无响应正文）')}</pre></details>
       </section>`;
   }
 
@@ -238,9 +263,9 @@ class DeveloperPanel extends HTMLElement {
     const text = this._formatPromptTraceText();
     try {
       await navigator.clipboard.writeText(text);
-      GameModal.alert({ title: '已复制', message: '预设 / 注入链条已复制到剪贴板。' });
+      GameModal.alert({ title: '已复制', message: '提示词与变量更新诊断已复制到剪贴板。' });
     } catch {
-      GameModal.prompt({ title: '复制预设 / 注入链条', message: '选中下方内容复制', value: text, multiline: true, rows: 14, okLabel: '关闭' });
+      GameModal.prompt({ title: '复制提示词与变量更新诊断', message: '选中下方内容复制', value: text, multiline: true, rows: 14, okLabel: '关闭' });
     }
   }
 
@@ -270,6 +295,18 @@ class DeveloperPanel extends HTMLElement {
     dump(narrativeReview);
     dump(variableUpdater);
     for (const trace of (Array.isArray(auxiliary) ? auxiliary : [])) dump(trace);
+    for (const attempt of getVariableUpdaterAttempts()) {
+      if (!attempt || typeof attempt !== 'object') continue;
+      blocks.push('===== 变量更新结果 =====');
+      blocks.push(`time: ${this._formatLocalTime(attempt.createdAt)}`);
+      for (const key of ['stage', 'model', 'status', 'failureKind', 'finishReason']) {
+        if (attempt[key] != null) blocks.push(`${key}: ${attempt[key]}`);
+      }
+      blocks.push(`truncated: ${Boolean(attempt.truncated)}`);
+      blocks.push('--- errors ---', ...(Array.isArray(attempt.errors) ? attempt.errors : []));
+      blocks.push('--- warnings ---', ...(Array.isArray(attempt.warnings) ? attempt.warnings : []));
+      blocks.push('--- model output ---', attempt.output || '');
+    }
     return blocks.join('\n');
   }
 

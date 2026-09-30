@@ -1,4 +1,5 @@
 import { KNOWLEDGE_BASE } from '../data/knowledge-base.js';
+import { importWorldbookEntries, normalizeCustomWorldbookEntry, normalizeWorldbookActivation, worldbookKeys } from '../data/worldbook/activation.js';
 import { eventBus } from '../core/event-bus.js';
 import { escHtml, escAttr } from '../utils/format.js';
 import GameModal from './modal.js';
@@ -24,7 +25,7 @@ export class WorldbookEditor extends HTMLElement {
 
   _load() {
     this._builtin = KNOWLEDGE_BASE.getDefaultEntries();
-    this._custom = KNOWLEDGE_BASE.getCustomEntries().map((e, i) => ({ ...e, _idx: i }));
+    this._custom = KNOWLEDGE_BASE.getCustomEntries().map((e, i) => ({ ...normalizeCustomWorldbookEntry(e, i), _idx: i }));
   }
 
   _save() {
@@ -32,7 +33,7 @@ export class WorldbookEditor extends HTMLElement {
       const { _idx, ...entry } = e;
       return entry;
     }));
-    eventBus.emit('app:toast', `已保存 ${this._custom.length} 条自定义世界书 (下次加载生效)`);
+    eventBus.emit('app:toast', `已保存 ${this._custom.length} 条自定义世界书，下一次生成生效`);
   }
 
   _captureCurrentEdit() {
@@ -43,10 +44,20 @@ export class WorldbookEditor extends HTMLElement {
     const contentEl = root.querySelector('#entry-content');
     if (!titleEl || !keysEl || !contentEl) return false;
 
+    const activation = normalizeWorldbookActivation(this._custom[this._selectedIndex]);
+    const keys = worldbookKeys(keysEl.value);
     this._custom[this._selectedIndex] = {
       ...this._custom[this._selectedIndex],
       title: titleEl.value.trim(),
-      keys: keysEl.value.split(',').map(s => s.trim()).filter(Boolean),
+      keys,
+      activation: {
+        ...activation,
+        keys,
+        mode: root.querySelector('#entry-mode')?.value || activation.mode,
+        secondary_keys: worldbookKeys(root.querySelector('#entry-secondary-keys')?.value || ''),
+        selective: root.querySelector('#entry-selective')?.value !== 'off',
+        selective_logic: root.querySelector('#entry-selective')?.value === 'off' ? activation.selective_logic : (root.querySelector('#entry-selective')?.value || activation.selective_logic)
+      },
       content: contentEl.value
     };
     return true;
@@ -118,23 +129,16 @@ export class WorldbookEditor extends HTMLElement {
     reader.onload = () => {
       try {
         const json = JSON.parse(reader.result);
-        let imported;
-
-        if (json.entries && typeof json.entries === 'object' && !Array.isArray(json.entries)) {
-          imported = this._convertTavernEntries(json.entries);
-        } else {
-          imported = Array.isArray(json) ? json : (json.custom || json.entries || []);
-        }
-
-        if (!Array.isArray(imported)) throw new Error('无效格式');
+        const imported = importWorldbookEntries(json);
         let added = 0, updated = 0;
+        const handled = new Set();
         for (const entry of imported) {
           if (!entry.title) continue;
-          const clean = { ...entry, source: 'custom', enabled: entry.enabled !== false, _idx: this._custom.length };
-          delete clean.isAlwaysOn;
-          const existed = this._custom.findIndex(e => e.title === clean.title);
-          if (existed >= 0) { this._custom[existed] = clean; updated++; }
-          else { this._custom.push(clean); added++; }
+          const clean = { ...entry, _idx: this._custom.length };
+          const existed = this._custom.findIndex((e, index) => !handled.has(index) && e.title === clean.title
+            && (e.uid == null || clean.uid == null || e.uid === clean.uid));
+          if (existed >= 0) { this._custom[existed] = clean; handled.add(existed); updated++; }
+          else { handled.add(this._custom.length); this._custom.push(clean); added++; }
         }
         this._custom.forEach((e, i) => e._idx = i);
         this._save();
@@ -148,24 +152,7 @@ export class WorldbookEditor extends HTMLElement {
   }
 
   _convertTavernEntries(entries) {
-    const result = [];
-    for (const entry of Object.values(entries)) {
-      if (!entry || !entry.content || !entry.content.trim()) continue;
-      const title = (entry.comment || '').trim();
-      if (!title) continue;
-      const primaryKeys = Array.isArray(entry.key) ? entry.key : [];
-      const secondaryKeys = Array.isArray(entry.keysecondary) ? entry.keysecondary : [];
-      const keys = [...new Set([...primaryKeys, ...secondaryKeys])].filter(Boolean);
-      const isDisabled = entry.disable === true;
-      result.push({
-        title,
-        keys,
-        content: entry.content,
-        enabled: !isDisabled,
-        source: 'custom'
-      });
-    }
-    return result;
+    return importWorldbookEntries({ entries });
   }
 
   _toggleAllCustom(enable) {
@@ -210,6 +197,7 @@ export class WorldbookEditor extends HTMLElement {
       ? this._custom[this._selectedIndex] : (this._selectedType === 'builtin' && this._selectedIndex >= 0 && this._selectedIndex < this._builtin.length
       ? this._builtin[this._selectedIndex] : null);
     const isBuiltin = this._selectedType === 'builtin';
+    const activation = selectedEntry ? normalizeWorldbookActivation(selectedEntry) : null;
 
     this.shadowRoot.innerHTML = `
       <style>${worldbookStyles}</style>
@@ -247,7 +235,7 @@ export class WorldbookEditor extends HTMLElement {
                 <div class="wb-item${this._selectedType === 'custom' && this._selectedIndex === e._idx ? ' active' : ''}" data-type="custom" data-idx="${e._idx}" role="button" tabindex="0" aria-selected="${this._selectedType === 'custom' && this._selectedIndex === e._idx}">
                   <div class="wb-item-toggle ${e.enabled !== false ? 'on' : ''}" data-action="toggle" data-idx="${e._idx}" role="switch" tabindex="0" aria-checked="${e.enabled !== false}" title="${e.enabled !== false ? '已启用' : '已禁用'}"></div>
                   <span class="wb-item-title">${escHtml(e.title || '无标题')}</span>
-                  <span class="wb-item-meta">${(e.keys||[]).length} 关键词</span>
+                  <span class="wb-item-meta" data-mode="${escAttr(e.activation?.mode || 'keyword')}">${e.activation?.mode === 'always' ? '蓝灯 · 常驻' : e.activation?.mode === 'manual' ? '手动' : `绿灯 · ${(e.keys||[]).length} 关键词`}</span>
                 </div>`).join('')}
               ${customSearch.length === 0 ? '<div style="padding:12px;text-align:center;color:rgba(232,228,217,0.15);font-size:12px;">暂无自定义条目<br>点击「导入」或下方按钮添加</div>' : ''}
             </div>
@@ -277,6 +265,24 @@ export class WorldbookEditor extends HTMLElement {
                 <label class="wb-form-label">触发关键词 (逗号分隔)</label>
                 <input type="text" class="wb-input" id="entry-keys" value="${escAttr((selectedEntry.keys || []).join(', '))}" placeholder="关键词1, 关键词2" ${isBuiltin ? 'disabled' : ''}>
               </div>
+              ${!isBuiltin ? `
+              <div class="wb-form-group">
+                <label class="wb-form-label" for="entry-mode">触发模式</label>
+                <select class="wb-input" id="entry-mode">
+                  <option value="keyword" ${activation.mode === 'keyword' ? 'selected' : ''}>绿灯 · 关键词触发</option>
+                  <option value="always" ${activation.mode === 'always' ? 'selected' : ''}>蓝灯 · 常驻</option>
+                  <option value="manual" ${activation.mode === 'manual' ? 'selected' : ''}>手动 · 不自动注入</option>
+                </select>
+                <div style="font-size:12px;opacity:0.65;margin-top:6px;line-height:1.6;">关闭条目不会注入；绿灯需命中主关键词，无关键词时不触发。蓝灯优先注入，仍受上下文预算限制。旧导入缺少蓝灯标记时，可在此设为常驻或重新导入原文件。</div>
+              </div>
+              <div class="wb-form-group">
+                <label class="wb-form-label" for="entry-secondary-keys">次关键词过滤 (逗号分隔)</label>
+                <input class="wb-input" id="entry-secondary-keys" value="${escAttr(activation.secondary_keys.join(', '))}" placeholder="先命中主关键词，再判断此处条件">
+                <select class="wb-input" id="entry-selective" style="margin-top:6px;">
+                  ${[['off', '不使用次关键词'], ['and_any', '至少命中一个次关键词'], ['and_all', '必须命中全部次关键词'], ['not_any', '不得命中任何次关键词'], ['not_all', '不能同时命中全部次关键词']].map(([value, label]) => `<option value="${value}" ${(!activation.selective ? value === 'off' : value === activation.selective_logic) ? 'selected' : ''}>${label}</option>`).join('')}
+                </select>
+                ${activation.case_sensitive || activation.match_whole_words ? `<div style="font-size:12px;opacity:0.65;margin-top:6px;">已保留导入规则：${[activation.case_sensitive && '区分大小写', activation.match_whole_words && '完整词匹配'].filter(Boolean).join('、')}。</div>` : ''}
+              </div>` : ''}
               <div class="wb-form-group" style="flex:1; display:flex; flex-direction:column;">
                 <label class="wb-form-label">内容</label>
                 <textarea class="wb-input wb-textarea" id="entry-content" style="flex:1;" placeholder="条目内容..." ${isBuiltin ? 'disabled' : ''}>${escHtml(selectedEntry.content || '')}</textarea>
@@ -294,6 +300,12 @@ export class WorldbookEditor extends HTMLElement {
 
   _bindEvents() {
     const root = this.shadowRoot;
+    for (const id of ['entry-mode', 'entry-selective', 'entry-secondary-keys', 'entry-keys']) {
+      root.querySelector(`#${id}`)?.addEventListener('change', () => {
+        this._saveCurrentEdit();
+        if (id === 'entry-mode' || id === 'entry-selective') this._rerenderWithView();
+      });
+    }
 
     root.querySelector('#btn-close')?.addEventListener('click', () => {
       this._saveCurrentEdit();
@@ -365,6 +377,7 @@ export class WorldbookEditor extends HTMLElement {
         title: builtin.title + ' (副本)',
         keys: [...(builtin.keys || [])],
         content: builtin.content || '',
+        activation: normalizeWorldbookActivation(builtin),
         source: 'custom',
         enabled: true,
         _idx: this._custom.length

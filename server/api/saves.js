@@ -130,7 +130,8 @@ router.get('/capabilities', (_req, res) => {
       max_uncompressed_bytes: config.saves.maxSizeMb * MiB,
       max_compressed_bytes: config.saves.maxCompressedSizeMb * MiB,
       max_legacy_json_bytes: config.saves.legacyMaxSizeMb * MiB,
-      max_metadata_bytes: config.saves.maxPreviewSizeKb * 1024
+      max_metadata_bytes: config.saves.maxPreviewSizeKb * 1024,
+      max_slots: config.saves.maxSlots
     }
   });
 });
@@ -142,6 +143,37 @@ router.get('/', asyncRoute(async (req, res) => {
     console.error('[API SAVES] Get list error:', error);
     res.status(500).json({ error: '获取存档列表失败', code: 'SAVE_LIST_FAILED' });
   }
+}));
+
+// Player management needs only this account's metadata, never save contents.
+router.get('/storage', asyncRoute(async (req, res) => {
+  const saves = await db.getUserSaves(req.user.id);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({
+    used_slots: saves.length,
+    max_slots: config.saves.maxSlots,
+    remaining_slots: Math.max(0, config.saves.maxSlots - saves.length),
+    used_uncompressed_bytes: saves.reduce((sum, save) => sum + (Number(save.size_bytes) || 0), 0),
+    used_compressed_bytes: saves.reduce((sum, save) => sum + (Number(save.compressed_size_bytes) || 0), 0),
+    max_save_bytes: config.saves.maxSizeMb * MiB,
+    max_upload_bytes: config.saves.maxCompressedSizeMb * MiB
+  });
+}));
+
+router.patch('/:id/metadata', asyncRoute(async (req, res) => {
+  const { id } = req.params;
+  if (!validateSaveId(id)) return res.status(400).json({ error: '无效的存档 ID', code: 'INVALID_SAVE_ID' });
+  if (!req.is('application/json') && !req.is('application/*+json')) return res.status(415).json({ error: '改名接口需要 application/json', code: 'UNSUPPORTED_SAVE_MEDIA_TYPE' });
+  const body = req.body;
+  if (!body || Array.isArray(body) || Object.keys(body).some(key => key !== 'slot_name') || typeof body.slot_name !== 'string' || !body.slot_name.trim() || body.slot_name.trim().length > 50) {
+    return res.status(400).json({ error: '仅接受 1 至 50 个字的 slot_name', code: 'INVALID_SAVE_METADATA' });
+  }
+  const existing = await db.getSaveMetaById(id);
+  if (!existing) return res.status(404).json({ error: '未找到指定存档', code: 'SAVE_NOT_FOUND' });
+  if (existing.user_id !== req.user.id) return res.status(403).json({ error: '无权操作此存档', code: 'SAVE_FORBIDDEN' });
+  const updated = await db.updateSaveFile(id, { slot_name: body.slot_name.trim() });
+  if (!updated) return res.status(404).json({ error: '未找到指定存档', code: 'SAVE_NOT_FOUND' });
+  res.json({ id, slot_name: body.slot_name.trim(), message: '云存档名称已更新' });
 }));
 
 router.get('/:id/content', asyncRoute(async (req, res) => {

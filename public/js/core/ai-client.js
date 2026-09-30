@@ -1,8 +1,10 @@
 import { eventBus } from './event-bus.js';
+import { isNativeAndroidApp } from './runtime-platform.js';
+import { fetchAI } from './native-ai-fetch.js';
 
 export const isTavernEnv = typeof globalThis !== 'undefined' && typeof globalThis.generate === 'function';
 // 浏览器版默认可使用同源代理；酒馆 iframe 没有本项目服务端，必须直连酒馆桥接 API。
-const USE_PROXY = typeof location !== 'undefined' && !isTavernEnv;
+const USE_PROXY = typeof location !== 'undefined' && !isTavernEnv && !isNativeAndroidApp();
 
 export function normalizeOpenAIMessageOrder(messages = []) {
   const systemParts = [];
@@ -386,7 +388,7 @@ export class AIAdapter {
         for (const fwd of ['anthropic-version', 'anthropic-beta']) {
           if (h[fwd]) nh[fwd] = h[fwd];
         }
-        const request = fetch(realUrl, { ...init, headers: nh });
+        const request = fetchAI(realUrl, { ...init, headers: nh });
         return localTarget ? request.catch(error => {
           if (error?.name === 'AbortError' || init.signal?.aborted) {
             throw normalizeAbortError(error, init.signal);
@@ -1054,6 +1056,7 @@ export class AIClient {
     this._config = { ...config, apiUrl: normalizedApiUrl };
     this._useProxy = backend !== 'tavern'
       && config.useProxy === true
+      && !isNativeAndroidApp()
       && !isLocalNetworkApiUrl(normalizedApiUrl);
 
     switch (backend) {

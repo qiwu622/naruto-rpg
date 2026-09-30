@@ -288,6 +288,52 @@
       flex-shrink: 0;
     }
 
+    /* Android download styles begin */
+    .login-card {
+      max-height: calc(100vh - 112px);
+      max-height: calc(100dvh - 112px);
+      overflow-y: auto;
+    }
+
+    .android-download {
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .android-download-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      min-height: 46px;
+      padding: 12px 16px;
+      border: 1px solid rgba(var(--shuiro-rgb),0.4);
+      border-radius: 12px;
+      background: rgba(var(--shuiro-rgb),0.1);
+      color: #f1c2af;
+      font-family: inherit;
+      font-weight: 700;
+      font-size: 15px;
+      line-height: 1.4;
+      text-decoration: none;
+      transition: background 0.2s ease, border-color 0.2s ease;
+    }
+
+    .android-download-btn:hover,
+    .android-download-btn:focus-visible {
+      background: rgba(var(--shuiro-rgb),0.2);
+      border-color: var(--c-shuiro);
+    }
+
+    .android-download-note {
+      margin-top: 10px;
+      color: rgba(232,230,227,0.6);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    /* Android download styles end */
+
     /* ========== Hint Text ========== */
     .login-hint {
       margin-top: 20px;
@@ -442,6 +488,16 @@
     </a>
 
     <p class="login-hint">需要加入指定 Discord 服务器才能登录</p>
+
+    <!-- Android download begin -->
+    <div class="android-download">
+      <a class="android-download-btn" id="android-download" href="https://www.qiwu.asia/app/android/naruto-rpg.apk" download="naruto-rpg.apk">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg>
+        下载安卓测试版
+      </a>
+      <p class="android-download-note">3.5.1 · 约 27 MB · 本地单机<br>内置游戏页面，AI 需自行配置接口。</p>
+    </div>
+    <!-- Android download end -->
 
     <div class="error-msg" id="errorMsg">
       <i class="error-icon">⚠</i>

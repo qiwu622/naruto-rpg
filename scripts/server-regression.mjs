@@ -343,6 +343,25 @@ try {
     assert.equal(aiProxyModule.resolveProxyPurposePolicy('arbitrary-egress', proxyConfig), null);
   });
 
+  await check('AI proxy zero retry configuration sends a rate-limited request only once', async () => {
+    const resolve = serverConfigModule.resolveAiProxyRetryMaxAttempts;
+    assert.equal(typeof resolve, 'function');
+    assert.equal(resolve({}), 2);
+    assert.equal(resolve({ AI_PROXY_RETRY_MAX_ATTEMPTS: '' }), 2);
+    assert.equal(resolve({ AI_PROXY_RETRY_MAX_ATTEMPTS: '-1' }), 2);
+    assert.equal(resolve({ AI_PROXY_RETRY_MAX_ATTEMPTS: '1.5' }), 2);
+    assert.equal(resolve({ AI_PROXY_RETRY_MAX_ATTEMPTS: ' 0 ' }), 0);
+    assert.equal(resolve({ AI_PROXY_RETRY_MAX_ATTEMPTS: '3' }), 3);
+    let calls = 0;
+    const response = { statusCode: 429, headers: { 'retry-after': '0' }, destroy() {} };
+    const result = await aiProxyModule.requestUpstreamWithRetry(async () => {
+      calls += 1;
+      return response;
+    }, { maxAttempts: resolve({ AI_PROXY_RETRY_MAX_ATTEMPTS: '0' }) });
+    assert.equal(result, response);
+    assert.equal(calls, 1);
+  });
+
   await check('AI proxy rejects invalid purpose without breaking legacy generic requests', async () => {
     const invalid = await fetch(`http://127.0.0.1:${port}/api/ai-proxy`, {
       headers: {

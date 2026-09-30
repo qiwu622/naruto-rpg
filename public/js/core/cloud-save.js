@@ -140,6 +140,21 @@ export class CloudSaveClient {
     return this._request('/api/saves', {}, '获取存档列表失败');
   }
 
+  async getStorage() {
+    try { return await this._request('/api/saves/storage', {}, '获取云端容量失败'); }
+    catch (error) { if (error.status === 404) return null; throw error; }
+  }
+
+  async renameSave(saveId, slotName) {
+    const options = { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slot_name: slotName }) };
+    try { return await this._request(`/api/saves/${encodeURIComponent(saveId)}/metadata`, options, '云存档改名失败'); }
+    catch (error) {
+      // The existing PUT API already supports metadata-only JSON updates.
+      if (error.status !== 404 && error.status !== 405) throw error;
+      return this._request(`/api/saves/${encodeURIComponent(saveId)}`, { ...options, method: 'PUT' }, '云存档改名失败');
+    }
+  }
+
   async _buildMultipart(slotName, saveData, previewData, capabilities) {
     const encoded = await encodeTimelineSave(saveData, { compression: 'gzip' });
     if (encoded.blob.size > capabilities.max_compressed_bytes) {

@@ -133,13 +133,14 @@ const customMigration = migrateCustomWorldbookEntriesV1ToV2([{
 }]);
 assert.equal(customMigration.entries.length, 1);
 const custom = customMigration.entries[0];
-assert.equal(custom.enabled, true, 'legacy custom entries are intentionally always enabled after migration');
+assert.equal(custom.enabled, false, 'migration must preserve the disabled switch');
 assert.equal(custom.status, 'legacy_trusted_public');
-assert.equal(custom.activation.mode, 'always');
+assert.equal(custom.activation.mode, 'keyword');
 assert.equal(custom.knowledge.visibility, 'public');
 assert.ok(custom.knowledge.audience.includes('writer'));
 assert.match(custom.source_fragments[0].original_content, /小穴/, 'custom original must remain auditable');
-const customRuntime = toRuntimeWorldbookEntry(custom, { audience: 'writer' });
+assert.equal(toRuntimeWorldbookEntry(custom, { audience: 'writer' }), null);
+const customRuntime = toRuntimeWorldbookEntry({ ...custom, enabled: true }, { audience: 'writer' });
 assert.ok(customRuntime);
 assert.doesNotMatch(customRuntime.content, forbiddenRuntime);
 assert.equal('source_fragments' in customRuntime, false);

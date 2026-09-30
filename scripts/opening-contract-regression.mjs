@@ -182,7 +182,8 @@ test('pipeline rejects AI attempts to overwrite protected identity', () => {
 test('character creation emits a structured payload and app reads state contract', () => {
   const creatorSource = readFileSync(new URL('../js/ui/character-creator.js', import.meta.url), 'utf8');
   const appSource = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
-  assert.match(creatorSource, /eventBus\.emit\('character:created',\s*\{[\s\S]*?contract:/);
+  assert.match(creatorSource, /eventBus\.emit\('character:created',\s*payload\)/);
+  assert.match(creatorSource, /contract:\s*initialized\._opening_contract/);
   assert.doesNotMatch(creatorSource, /eventBus\.emit\('character:created',\s*s\['玩家·姓名'\]\)/);
   assert.match(appSource, /state\._opening_contract\s*\|\|\s*payload\.contract/);
   assert.doesNotMatch(appSource, /player\.custom_profile/);

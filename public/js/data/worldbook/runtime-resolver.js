@@ -5,6 +5,8 @@ import {
   toRuntimeWorldbookEntry
 } from './v2.js';
 import { normalizeNpcIdentity } from '../npc-identity.js';
+import { matchesWorldbookActivation, normalizeCustomWorldbookEntry } from './activation.js';
+import { KNOWLEDGE_BASE } from '../knowledge-base.js';
 
 const DEFAULT_CUSTOM_STORAGE_KEY = 'naruto_worldbook_custom';
 
@@ -159,6 +161,7 @@ function projectCharacterRuntime(entry, currentDate) {
 function defaultCustomLoader(storageKey) {
   try {
     if (typeof localStorage === 'undefined') return [];
+    if (storageKey === DEFAULT_CUSTOM_STORAGE_KEY) return KNOWLEDGE_BASE.getCustomEntries();
     const raw = localStorage.getItem(storageKey);
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
@@ -184,8 +187,8 @@ export class WorldbookV2Resolver {
 
   _customEntries() {
     const legacy = this.customLoader?.() || [];
-    if (!legacy.length) return [];
-    return migrateCustomWorldbookEntriesV1ToV2(legacy, { strict: true }).entries;
+    if (!Array.isArray(legacy) || !legacy.length) return [];
+    return migrateCustomWorldbookEntriesV1ToV2(legacy.map(normalizeCustomWorldbookEntry), { strict: true }).entries;
   }
 
   resolve({
@@ -196,7 +199,8 @@ export class WorldbookV2Resolver {
     maxEntries = 12,
     budget = 9000
   } = {}) {
-    const directText = `${query}\n${stateSearchText(state)}`.normalize('NFKC').toLocaleLowerCase('zh-CN');
+    const triggerText = `${query}\n${stateSearchText(state)}`;
+    const directText = triggerText.normalize('NFKC').toLocaleLowerCase('zh-CN');
     const terms = tokenize(directText);
     const customIds = new Set();
     const candidates = [];
@@ -205,19 +209,19 @@ export class WorldbookV2Resolver {
       if (!currentDate && (entry.validity?.from || entry.validity?.until)) continue;
       const baseRuntime = toRuntimeWorldbookEntry(entry, { audience, date: currentDate });
       const runtime = baseRuntime ? projectCharacterRuntime(baseRuntime, currentDate) : null;
-      if (!runtime) continue;
+      if (!runtime || !matchesWorldbookActivation(runtime, triggerText)) continue;
       customIds.add(runtime.id);
-      candidates.push({ entry: runtime, score: 2_000_000 + Number(runtime.priority || 0), required: true });
+      candidates.push({ entry: runtime, score: 2_000_000 + Number(runtime.priority || 0), required: runtime.activation.mode === 'always', budgetExempt: false });
     }
     for (const entry of this.builtinEntries) {
       if (!currentDate && (entry.validity?.from || entry.validity?.until)) continue;
       if (!currentDate && entry.character_profile) continue;
       const baseRuntime = toRuntimeWorldbookEntry(entry, { audience, date: currentDate });
       const runtime = baseRuntime ? projectCharacterRuntime(baseRuntime, currentDate) : null;
-      if (!runtime || customIds.has(runtime.id)) continue;
+      if (!runtime || runtime.activation?.mode === 'manual' || customIds.has(runtime.id)) continue;
       const score = scoreEntry(runtime, terms, directText);
       const required = runtime.activation?.mode === 'always';
-      if (required || score > 5) candidates.push({ entry: runtime, score, required });
+      if (required || score > 5) candidates.push({ entry: runtime, score, required, budgetExempt: required });
     }
 
     candidates.sort((left, right) => Number(right.required) - Number(left.required)
@@ -229,12 +233,18 @@ export class WorldbookV2Resolver {
     const selected = [];
     let optionalUsed = 0;
     let optionalSelected = 0;
+    const budgetSkippedIds = [];
     for (const candidate of candidates) {
-      const cost = JSON.stringify(candidate.entry).length;
-      if (!candidate.required && optionalSelected >= Math.max(0, Number(maxEntries) || 0)) continue;
-      if (!candidate.required && optionalUsed > 0 && optionalUsed + cost > Math.max(0, Number(budget) || 0)) continue;
+      const cost = JSON.stringify(candidate.entry).length + (optionalSelected ? 1 : 2);
+      // Only the finite, bundled core rules retain their reserved allocation.
+      // Imported blue entries are prioritized, but never exempt from the cap.
+      if (!candidate.budgetExempt && (optionalSelected >= Math.max(0, Number(maxEntries) || 0)
+        || optionalUsed + cost > Math.max(0, Number(budget) || 0))) {
+        budgetSkippedIds.push(candidate.entry.id);
+        continue;
+      }
       selected.push(candidate.entry);
-      if (!candidate.required) {
+      if (!candidate.budgetExempt) {
         optionalSelected++;
         optionalUsed += cost;
       }
@@ -246,7 +256,9 @@ export class WorldbookV2Resolver {
       entries: selected,
       character_mentions: characterMentions,
       selected_ids: selected.map(entry => entry.id),
-      custom_always_on_count: selected.filter(entry => entry.source?.kind === 'custom').length
+      custom_always_on_count: selected.filter(entry => entry.source?.kind === 'custom' && entry.activation?.mode === 'always').length,
+      budget_used_chars: optionalUsed,
+      budget_skipped_ids: budgetSkippedIds
     };
   }
 }

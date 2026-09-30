@@ -24,6 +24,7 @@ import { settingsConfigGateway } from './settings-config-gateway.js';
 import { icon } from '../utils/icons.js';
 import { musicService } from '../core/music-service.js';
 import { musicPlayback } from '../core/music-playback.js';
+import { usesProjectServerFeatures } from '../core/runtime-platform.js';
 
 const callPolicyImageSettingsStore = new ImageSettingsStore();
 const SUPPORT_AFDIAN_URL = 'https://www.ifdian.net/a/2608_1?utm_source=copylink&utm_medium=link';
@@ -160,6 +161,7 @@ class SettingsPanel extends HTMLElement {
   render() {
     const s = this._settings;
     const isCreator = this._mode === 'creator';
+    const projectServerFeatures = usesProjectServerFeatures();
     const apiConfig = stateManager.getAPIConfig() || {};
     const agentConfig = getAgentConfig();
     const callPolicy = resolveAICallPolicy({
@@ -472,9 +474,8 @@ class SettingsPanel extends HTMLElement {
                           <label><input type="checkbox" name="musicLoop"> 轮播</label>
                           <label><input type="checkbox" name="musicShuffle"> 随机</label>
                           <label>音量 <input type="range" name="musicVolume" min="0" max="100" value="${s.musicVolume}"></label>
-                          <button class="btn ghost" type="button" data-action="toggle-lyrics" style="padding:4px 8px;">歌词</button>
-                          <button class="btn ghost" type="button" data-action="sync-favorites-up" style="padding:4px 8px;" title="上传收藏到云端">☁↑</button>
-                          <button class="btn ghost" type="button" data-action="sync-favorites-down" style="padding:4px 8px;" title="从云端下载收藏">☁↓</button>
+                          <button class="btn ghost btn-xs" type="button" data-action="toggle-lyrics">歌词</button>
+                          ${projectServerFeatures ? '<button class="btn ghost btn-xs" type="button" data-action="sync-favorites-up" title="上传收藏到云端">☁↑</button><button class="btn ghost btn-xs" type="button" data-action="sync-favorites-down" title="从云端下载收藏">☁↓</button>' : ''}
                           <span class="music-sync-status" id="music-sync-status"></span>
                         </div>
                       </div>
@@ -543,6 +544,7 @@ class SettingsPanel extends HTMLElement {
                     </label>
                     <div class="storage-status" id="storage-info" role="status" aria-live="polite">等待统计...</div>
                     <div class="storage-actions">
+                      <button class="btn primary" type="button" data-action="save-library">${icon('book-open', 15)}<span>本地存档库</span></button>
                       <button class="btn ghost" type="button" data-action="check-storage" title="刷新存档空间统计">${icon('database', 15)}<span>刷新统计</span></button>
                       <button class="btn ghost" type="button" data-action="manual-archive" title="立即压缩旧时间线回合">${icon('timeline', 15)}<span>立即压缩</span></button>
                       <button class="btn primary" type="button" data-action="export-save" title="导出无损 gzip 压缩存档">${icon('export', 15)}<span>压缩导出</span></button>
@@ -876,6 +878,7 @@ class SettingsPanel extends HTMLElement {
     if (action === 'check-storage') return this._checkStorage(event?.currentTarget);
     if (action === 'manual-archive') return this._manualArchive(event?.currentTarget);
     if (action === 'export-save') return eventBus.emit('timeline:export-request', { compression: 'auto' });
+    if (action === 'save-library') return eventBus.emit('app:open-saves');
     if (action === 'export-save-json') return eventBus.emit('timeline:export-request', { compression: 'json' });
     if (action === 'fetch-models') return this._fetchModelsFor(event.target);
   }
@@ -1488,7 +1491,10 @@ class SettingsPanel extends HTMLElement {
     else if (tab === 'playlist') this._renderMusicList(this._getPlaylist(), 'playlist');
     else if (tab === 'favorites') {
       this._renderMusicList(this._getFavorites(), 'favorites');
-      if (!this._favoritesTabVisited) { this._favoritesTabVisited = true; this._syncFavoritesFromServer(); }
+      if (usesProjectServerFeatures() && !this._favoritesTabVisited) {
+        this._favoritesTabVisited = true;
+        this._syncFavoritesFromServer();
+      }
     }
   }
 
@@ -1514,10 +1520,10 @@ class SettingsPanel extends HTMLElement {
     const wasRemoved = idx >= 0;
     if (wasRemoved) {
       favs.splice(idx, 1);
-      this._removeFavoriteFromServer(sid);
+      if (usesProjectServerFeatures()) this._removeFavoriteFromServer(sid);
     } else {
       favs.push(song);
-      this._pushFavoriteToServer(song);
+      if (usesProjectServerFeatures()) this._pushFavoriteToServer(song);
     }
     this._saveFavorites(favs);
     if (this._activeTab === 'favorites') this._renderMusicList(favs, 'favorites');
@@ -1533,6 +1539,7 @@ class SettingsPanel extends HTMLElement {
   }
 
   async _fetchWithAuth(url, options = {}) {
+    if (!usesProjectServerFeatures()) return null;
     try {
       const res = await fetch(url, { ...options, credentials: 'same-origin' });
       if (res.status === 401) return null;

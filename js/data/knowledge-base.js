@@ -1,4 +1,5 @@
 import { WORLD_BOOK_ENTRIES } from './worldbook/index.js';
+import { isWorldbookEntryEnabled, matchesWorldbookActivation } from './worldbook/activation.js';
 import { CANON_DATABASE } from './canon-database.js';
 
 export const KNOWLEDGE_BASE = {
@@ -139,7 +140,7 @@ S级任务: 影级任务，涉及国家机密或超强敌人。报酬: 500000两
 
   get allEntries() {
     const builtin = this.getDefaultEntries();
-    const custom = this._loadCustomEntries().filter(e => e.enabled !== false);
+    const custom = this._loadCustomEntries().filter(isWorldbookEntryEnabled).map(e => ({ ...e, source: 'custom' }));
     return [...builtin, ...custom];
   },
 
@@ -147,7 +148,10 @@ S级任务: 影级任务，涉及国家机密或超强敌人。报酬: 500000两
     try {
       if (typeof localStorage === 'undefined') return [];
       let saved = localStorage.getItem('naruto_worldbook_custom');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const entries = JSON.parse(saved);
+        return Array.isArray(entries) ? entries : [];
+      }
       const legacy = localStorage.getItem('naruto_worldbook');
       if (legacy) {
         const all = JSON.parse(legacy);
@@ -156,7 +160,7 @@ S级任务: 影级任务，涉及国家机密或超强敌人。报酬: 500000两
           const b = builtin.get(e.title);
           if (!b) return true;
           return JSON.stringify(e.keys) !== JSON.stringify(b.keys) || e.content !== b.content;
-        }).map(e => ({ ...e, source: 'custom', enabled: true }));
+        }).map(e => ({ ...e, source: 'custom', enabled: isWorldbookEntryEnabled(e) }));
         if (custom.length) {
           localStorage.setItem('naruto_worldbook_custom', JSON.stringify(custom));
           console.log('[KnowledgeBase] Migrated', custom.length, 'custom entries from legacy worldbook');
@@ -169,6 +173,7 @@ S级任务: 影级任务，涉及国家机密或超强敌人。报酬: 500000两
 
   saveCustomEntries(entries) {
     try { localStorage.setItem('naruto_worldbook_custom', JSON.stringify(entries)); } catch {}
+    this.invalidateCache();
   },
 
   getCustomEntries() {
@@ -176,8 +181,9 @@ S级任务: 影级任务，涉及国家机密或超强敌人。报酬: 500000两
   },
 
   buildContext({ query = '', state = {}, memory = {}, maxEntries = 8, budget = 5600, includeCanon = true } = {}) {
+    this._refreshWorldbookCache();
     // 增量检测: 场景未变时复用上次结果,跳过搜索+格式化开销
-    const fp = `${CANON_DATABASE.revision}|${includeCanon ? 'canon' : 'worldbook'}|${this._sceneFingerprint(state, memory, query)}`;
+    const fp = `${CANON_DATABASE.revision}|${includeCanon ? 'canon' : 'worldbook'}|${maxEntries}|${budget}|${this._sceneFingerprint(state, memory, query)}`;
     if (this._sceneCacheKey === fp && this._sceneCacheOutput !== null) {
       return this._sceneCacheOutput;
     }
@@ -194,10 +200,11 @@ S级任务: 影级任务，涉及国家机密或超强敌人。报酬: 500000两
     const selected = [];
     let used = 0;
     const addEntry = (entry, force = false) => {
+      if (entry.source === 'custom') force = false;
       const block = this._formatEntry(entry);
       const cost = block.length;
       if (!force && selected.length >= maxEntries) return false;
-      if (!force && used && used + cost > budget) return false;
+      if (!force && used + cost > budget) return false;
       selected.push(block);
       used += cost;
       return true;
@@ -250,17 +257,21 @@ S级任务: 影级任务，涉及国家机密或超强敌人。报酬: 500000两
   },
 
   search(query, { state = {}, memory = {} } = {}) {
-    if (!query) return [];
-    const cacheKey = this._cacheKey(query, state, memory);
+    this._refreshWorldbookCache();
+    const searchText = this._buildSearchText(query, state, memory);
+    const cacheKey = `${this._cacheKey(query, state, memory)}|${searchText}`;
     if (this._searchCache && this._searchCacheKey === cacheKey) {
       return this._searchCache;
     }
     const matched = new Map();
-    const lowerQuery = query.toLowerCase();
+    const lowerQuery = String(query || '').toLowerCase();
     const stopTerms = new Set(['血继', '血继限界', '家族', '一族', '是否', '存在', '调查', '了解', '打听', '相关', '线索']);
     const terms = this._tokenize(lowerQuery);
     for (const entry of this.allEntries) {
+      if (!lowerQuery && entry.source !== 'custom') continue;
+      if (entry.source === 'custom' && !matchesWorldbookActivation(entry, searchText)) continue;
       let relevance = 0;
+      if (entry.source === 'custom') relevance = 1000;
       const lowerTitle = String(entry.title || '').toLowerCase();
       const lowerContent = String(entry.content || '').toLowerCase();
       if (lowerQuery.includes(lowerTitle)) relevance += 18;
@@ -298,6 +309,15 @@ S级任务: 影级任务，涉及国家机密或超强敌人。报酬: 500000两
     this._searchCacheKey = null;
     this._sceneCacheKey = null;
     this._sceneCacheOutput = null;
+  },
+
+  _refreshWorldbookCache() {
+    if (typeof localStorage === 'undefined') return;
+    const raw = localStorage.getItem('naruto_worldbook_custom') ?? localStorage.getItem('naruto_worldbook');
+    if (raw !== this._cachedWorldbookRaw) {
+      this._cachedWorldbookRaw = raw;
+      this.invalidateCache();
+    }
   },
 
   _sceneFingerprint(state, memory, query = '') {
@@ -400,7 +420,7 @@ S级任务: 影级任务，涉及国家机密或超强敌人。报酬: 500000两
     for (const entry of all) {
       // 玩家开局契约属于当前存档；旧版全局“玩家人设”不能污染其他角色。
       if (entry.title === '玩家人设' && state._opening_contract) continue;
-      if (entry.isAlwaysOn) {
+      if (entry.source !== 'custom' && entry.isAlwaysOn) {
         add(entry);
       }
     }

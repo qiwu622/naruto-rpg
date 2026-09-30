@@ -119,6 +119,20 @@ export async function fetchDiscordJson(url, options = {}, {
 
 const router = Router();
 
+export function ensureCsrfCookie(req, res) {
+  const existing = req.cookies?.naruto_csrf;
+  if (typeof existing === 'string' && /^[a-f0-9]{64}$/u.test(existing)) return existing;
+  const token = crypto.randomBytes(32).toString('hex');
+  res.cookie('naruto_csrf', token, {
+    httpOnly: false,
+    secure: config.nodeEnv === 'production' && req.secure,
+    sameSite: 'strict',
+    path: '/',
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  });
+  return token;
+}
+
 /**
  * GET /auth/discord - 发起 Discord 授权重定向
  */
@@ -295,6 +309,7 @@ router.get('/discord/callback', asyncRoute(async (req, res) => {
       path: '/',
       maxAge: 7 * 24 * 60 * 60 * 1000 // 7 天
     });
+    ensureCsrfCookie(req, res);
 
     console.log(`[DISCORD CALLBACK] User ${discordUser.username} logged in successfully.`);
     return res.redirect('/');
@@ -316,6 +331,7 @@ router.get('/discord/callback', asyncRoute(async (req, res) => {
  * GET /auth/me - 获取当前登录用户信息
  */
 router.get('/me', requireAuth, (req, res) => {
+  ensureCsrfCookie(req, res);
   const user = req.user;
   res.json({
     id: user.id,
@@ -331,6 +347,7 @@ router.get('/me', requireAuth, (req, res) => {
  */
 router.post('/logout', (req, res) => {
   res.clearCookie('naruto_token', { path: '/' });
+  res.clearCookie('naruto_csrf', { path: '/' });
   res.json({ success: true, message: '已成功注销登录' });
 });
 

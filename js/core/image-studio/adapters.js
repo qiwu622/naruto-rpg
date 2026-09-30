@@ -1,4 +1,4 @@
-import { ImageTransport, imageError } from './transport.js';
+import { ImageTransport, imageError, normalizeImageApiKey } from './transport.js';
 import { NOVELAI_IMAGE_MODELS } from './settings.js';
 import { extractFirstImageFromZip } from './zip.js';
 
@@ -191,16 +191,34 @@ function novelDimension(value, fallback) {
 export class NovelAIImageAdapter {
   constructor(transport) { this.transport = transport; this.type = 'novelai'; }
 
-  async probe(provider) {
+  async probe(provider, { signal } = {}) {
     if (!String(provider?.apiUrl || '').trim()) throw imageError('PROFILE_INVALID', '请填写 NovelAI API 地址');
-    if (!String(provider?.apiKey || '').trim()) throw imageError('AUTH', '请填写 NovelAI API Token');
+    if (!normalizeImageApiKey(provider?.apiKey, 'novelai')) throw imageError('AUTH', '请填写 NovelAI API Token');
     const models = NOVELAI_IMAGE_MODELS.map(item => item.id);
     const model = String(provider.model || NOVELAI_IMAGE_MODELS[0].id).trim();
     if (model && !models.includes(model)) models.push(model);
+    // 标签接口不计生图费用，但也接受无效 Token：只能证明网络连通。
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal?.reason);
+    if (signal?.aborted) abort();
+    else signal?.addEventListener('abort', abort, { once: true });
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 20000);
+    try {
+      const query = new URLSearchParams({ model, prompt: 'landscape', lang: 'en' });
+      const result = await this.transport.json(provider, `/ai/generate-image/suggest-tags?${query}`, { signal: controller.signal });
+      if (!Array.isArray(result?.tags)) throw imageError('PROVIDER_ERROR', 'NovelAI 标签接口返回格式异常，请检查 API 地址');
+    } catch (error) {
+      if (timedOut) throw imageError('UPSTREAM_TIMEOUT', 'NovelAI 连接测试超时，请检查运行网站的服务器网络与 AI_PROXY_FORWARD_URL 代理配置');
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+    }
     return {
-      status: 'configured', verified: false, adapter: this.type, model, models, imageModels: [...models],
+      status: 'connected', verified: false, adapter: this.type, model, models, imageModels: [...models],
       recommendedModel: NOVELAI_IMAGE_MODELS[0].id,
-      message: '配置已识别；Token 将在首次生成时验证',
+      message: '已连通标签接口；Token、余额及生图权限将在生成时验证',
       capabilities: {
         textToImage: true, referenceImage: false, deterministicSeed: true, resumable: false, cancel: 'request'
       }
@@ -208,9 +226,13 @@ export class NovelAIImageAdapter {
   }
 
   async generate({ provider, prompt, negativePrompt, parameters = {}, signal }) {
-    const input = String(prompt || '').trim();
-    if (!input) throw imageError('PROFILE_INVALID', 'NovelAI 画面提示词不能为空');
-    if (!String(provider?.apiKey || '').trim()) throw imageError('AUTH', '请填写 NovelAI API Token');
+    const scenePrompt = String(prompt || '').trim();
+    if (!scenePrompt) throw imageError('PROFILE_INVALID', 'NovelAI 画面提示词不能为空');
+    if (!normalizeImageApiKey(provider?.apiKey, 'novelai')) throw imageError('AUTH', '请填写 NovelAI API Token');
+    const artistPrompt = typeof provider.artistPrompt === 'string' ? provider.artistPrompt.trim() : '';
+    const input = artistPrompt
+      ? [scenePrompt.replace(/[,\s]+$/, ''), artistPrompt.replace(/^[,\s]+/, '')].filter(Boolean).join(', ')
+      : scenePrompt;
     const negative = String(negativePrompt || '').trim();
     const model = String(provider.model || NOVELAI_IMAGE_MODELS[0].id).trim();
     const seedSource = Number.isInteger(parameters.seed) ? parameters.seed

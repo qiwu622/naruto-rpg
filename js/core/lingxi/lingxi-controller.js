@@ -52,6 +52,7 @@ import { LingXiContextBroker } from './lingxi-context-broker.js';
 import { createLingXiResearchGate, inferNarrativeResearchKinds } from './research-gate.js';
 import { createLingXiTools, redactLingXiSecrets } from './lingxi-tools.js';
 import { getApiScheme, listApiSchemes } from '../api-schemes.js';
+import { usesProjectServerFeatures } from '../runtime-platform.js';
 
 const SESSION_KEY = 'naruto_lingxi_session_v1';
 const API_CHOICE_KEY = 'naruto_lingxi_api_choice_v1';
@@ -258,7 +259,7 @@ export class LingXiController {
           ...(typeof executeTimelineAction === 'function' ? { executeTimelineAction } : {})
         })
       : null;
-    this.cloudSaveActionAdapter = (
+    this.cloudSaveActionAdapter = usesProjectServerFeatures() && (
       typeof cloudSave?.listSaves === 'function'
       && typeof cloudSave?.uploadSave === 'function'
       && typeof cloudSave?.updateSave === 'function'

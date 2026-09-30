@@ -1,5 +1,23 @@
 import assert from 'node:assert/strict';
 
+// app-shell imports the multiplayer custom element. Keep this regression test
+// browser-free while still allowing custom-element modules to register.
+globalThis.HTMLElement = class {
+  attachShadow() {
+    this.shadowRoot = {};
+    return this.shadowRoot;
+  }
+};
+globalThis.customElements = {
+  registry: new Map(),
+  define(name, value) {
+    this.registry.set(name, value);
+  },
+  get(name) {
+    return this.registry.get(name);
+  }
+};
+
 class MemoryStorage {
   constructor() { this.values = new Map(); }
   getItem(key) { return this.values.has(String(key)) ? this.values.get(String(key)) : null; }

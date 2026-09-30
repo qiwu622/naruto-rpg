@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 import { AIClient } from '../js/core/ai-client.js';
-import { appShell } from '../js/ui/app-shell.js';
+import { withCustomElementGlobals } from './helpers/browser-element-globals.mjs';
 
 let passed = 0;
 
@@ -362,7 +362,8 @@ await test('cancelling during retry backoff stops before another request', async
   }
 });
 
-await test('AI narrative style blocks are discarded without touching document.head', async () => {
+await test('AI narrative style blocks are discarded without touching document.head', () => withCustomElementGlobals(async () => {
+  const { appShell } = await import('../js/ui/app-shell.js');
   const originalDocument = globalThis.document;
   const originalElement = appShell.element;
   const appendedStyles = [];
@@ -410,7 +411,7 @@ await test('AI narrative style blocks are discarded without touching document.he
     if (originalDocument === undefined) delete globalThis.document;
     else globalThis.document = originalDocument;
   }
-});
+}));
 
 await test('welcome privacy copy accurately describes stateless proxying', () => {
   const source = fs.readFileSync(new URL('../js/utils/help-guide.js', import.meta.url), 'utf8');

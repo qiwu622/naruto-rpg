@@ -80,6 +80,73 @@ await test('the canonical example passes the exact daily schema', () => {
   assert.equal(Object.isFrozen(result.daily), true);
 });
 
+const dailyTextLimits = [
+  ['schema', 10, 48], ['date', 4, 40], ['issue', 3, 20],
+  ['headline.title', 8, 64], ['headline.body', 40, 420], ['headline.sig', 4, 48],
+  ['world[].tag', 2, 12], ['world[].title', 6, 42], ['world[].text', 24, 240],
+  ['flavor[].mark', 1, 1], ['flavor[].title', 5, 42], ['flavor[].text', 20, 220],
+  ['missions[].rank', 1, 1], ['missions[].task', 6, 70], ['missions[].pay', 2, 20],
+  ['missions[].status', 2, 16], ['quote.text', 6, 100], ['quote.who', 3, 48]
+];
+
+function setDailyField(value, field, text) {
+  const parts = field.replace('[]', '.0').split('.');
+  const leaf = parts.pop();
+  const parent = parts.reduce((current, key) => current[key], value);
+  parent[leaf] = text;
+}
+
+await test('daily prompts expose every enforced field limit even without an example', () => {
+  for (const producer of ['main', 'secondary']) {
+    const prompt = buildShinobiDailyPrompt({ producer, includeExample: false });
+    for (const [field, min, max] of dailyTextLimits) {
+      assert.ok(prompt.includes(`${field}：${min}-${max} 个字符`), `${producer} must disclose ${field}'s length range`);
+    }
+    assert.match(prompt, /issue[^\n]*1-8 位阿拉伯数字/);
+    assert.match(prompt, /flavor\[\]\.mark[^\n]*一个汉字/);
+    assert.match(prompt, /missions\[\]\.rank[^\n]*D、C、B、A/);
+    assert.match(prompt, /root[^\n]*schema、date、issue、headline、world、flavor、missions、quote/);
+    assert.match(prompt, /headline[^\n]*title、body、sig/);
+    assert.match(prompt, /world\[\][^\n]*tag、title、text/);
+    assert.match(prompt, /flavor\[\][^\n]*mark、title、text/);
+    assert.match(prompt, /missions\[\][^\n]*rank、task、pay、status/);
+    assert.match(prompt, /quote[^\n]*text、who/);
+    assert.match(prompt, /world 恰好 4 条/);
+    assert.match(prompt, /flavor 恰好 3 条/);
+    assert.match(prompt, /missions 恰好 4 条/);
+    assert.match(prompt, /控制字符/);
+  }
+});
+
+await test('all daily text bounds remain enforced and ordinary boundary values are accepted', () => {
+  const specialFormats = new Set(['schema', 'issue', 'flavor[].mark', 'missions[].rank']);
+  for (const [field, min, max] of dailyTextLimits) {
+    for (const size of [min - 1, max + 1]) {
+      const value = structuredClone(SHINOBI_DAILY_EXAMPLE);
+      setDailyField(value, field, '字'.repeat(size));
+      const result = validateShinobiDaily(value);
+      assert.equal(result.valid, false, `${field} must reject ${size} characters`);
+      assert.ok(result.errors.some(error => error.includes(field.replace('[]', '[0]'))), result.errors.join('; '));
+    }
+    if (specialFormats.has(field)) continue;
+    for (const size of [min, max]) {
+      const value = structuredClone(SHINOBI_DAILY_EXAMPLE);
+      setDailyField(value, field, '字'.repeat(size));
+      const result = validateShinobiDaily(value);
+      assert.equal(result.valid, true, `${field} must accept its ${size}-character boundary: ${result.errors.join('; ')}`);
+    }
+  }
+});
+
+await test('the reported four-character headline is still rejected with a disclosed correction', () => {
+  const value = structuredClone(SHINOBI_DAILY_EXAMPLE);
+  value.headline.title = '木叶晨报';
+  const result = validateShinobiDaily(value);
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.errors, ['日报.headline.title 长度必须为 8-64 个字符']);
+  assert.ok(buildShinobiDailyPrompt({ includeExample: false }).includes('headline.title：8-64 个字符'));
+});
+
 await test('few-shot outputs are complete and pass the production contracts', () => {
   assert.equal(FEW_SHOT_EXAMPLES.length, 2);
 

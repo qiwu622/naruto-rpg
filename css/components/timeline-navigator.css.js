@@ -203,7 +203,7 @@
           min-width: 0; display: flex; flex-wrap: wrap; gap: 8px;
           align-items: stretch; margin-top: 14px;
         }
-        .jump-btn, .reroll-btn {
+        .jump-btn, .reroll-btn, .fork-btn {
           flex: 1 1 118px; min-width: 0; padding: 9px 8px; background: transparent;
           border: 1px solid rgba(255,255,255,0.15); border-radius: 2px;
           font: 11px/1.35 var(--font-title); font-weight: normal; letter-spacing: 0;
@@ -214,6 +214,8 @@
         .reroll-btn { color: var(--c-shuiro); border-color: rgba(235,97,63,0.3); }
         .jump-btn:hover { background: rgba(255,255,255,0.05); color: var(--text-primary); }
         .reroll-btn:hover { background: rgba(235,97,63,0.1); color: var(--text-primary); }
+        .fork-btn { color: #bfc6ee; border-color: #aab8e740; }
+        .fork-btn:hover { background: #aab8e711; }
         
         .cur-text {
           flex: 1 1 118px; min-width: 0; color: var(--c-shuiro);
@@ -233,7 +235,7 @@
           .node-statuses { justify-content: flex-start; }
           .maintenance-time { white-space: normal; }
           .node-actions { flex-direction: column; }
-          .jump-btn, .reroll-btn, .cur-text { flex-basis: auto; width: 100%; }
+          .jump-btn, .reroll-btn, .fork-btn, .cur-text { flex-basis: auto; width: 100%; }
         }
 
         .empty {

@@ -244,7 +244,10 @@ export function migrateWorldbookEntriesV1ToV2(records, options = {}) {
     .map((record, index) => normalizeMigrationRecord(record, index, options));
   const groups = new Map();
   for (const record of normalizedRecords) {
-    const identity = normalizeIdentityTitle(record.entry.title || `未命名条目-${record.globalIndex}`);
+    // Custom entries may share a memo but have different switches/conditions.
+    // Merging their bodies can leak a disabled sibling through an enabled one.
+    const titleIdentity = normalizeIdentityTitle(record.entry.title || `未命名条目-${record.globalIndex}`);
+    const identity = record.sourceKind === 'custom' ? `${titleIdentity}|custom:${record.globalIndex}` : titleIdentity;
     if (!groups.has(identity)) groups.set(identity, []);
     groups.get(identity).push(record);
   }

@@ -31,6 +31,8 @@
         .wb-item.active { background:rgba(255,255,255,0.04); border-left-color:#eb613f; }
         .wb-item-title { font-weight:600; color:#f4efe4; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .wb-item-meta { font-size:10px; color:rgba(232,228,217,0.3); white-space:nowrap; }
+        .wb-item-meta[data-mode="keyword"] { color:#81c784; }
+        .wb-item-meta[data-mode="always"] { color:#8cbcf0; }
         .wb-item-toggle { width:28px; height:16px; border-radius:8px; background:rgba(255,255,255,0.1); position:relative; cursor:pointer; flex-shrink:0; transition:background 0.2s; }
         .wb-item-toggle.on { background:#81c784; }
         .wb-item-toggle::after { content:''; position:absolute; top:2px; left:2px; width:12px; height:12px; border-radius:50%; background:#fff; transition:left 0.2s; }

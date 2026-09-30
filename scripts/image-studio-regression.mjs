@@ -953,8 +953,8 @@ await test('OpenAI-compatible probe normalizes mixed model catalog shapes withou
   assert.equal(bounded.models.some(model => model.length > 512), false);
 });
 
-await test('NovelAI registry aliases expose a fixed model catalog without spending generation credits', async () => {
-  const transport = new RecordingTransport();
+await test('NovelAI probe checks connectivity without claiming token verification or spending credits', async () => {
+  const transport = new RecordingTransport(async () => ({ tags: [] }));
   const registry = new ImageAdapterRegistry({ transport });
   const adapter = registry.get('nai');
   assert.ok(adapter instanceof NovelAIImageAdapter);
@@ -967,11 +967,63 @@ await test('NovelAI registry aliases expose a fixed model catalog without spendi
   const probe = await adapter.probe({
     apiUrl: 'https://image.novelai.net', apiKey: 'fixture-token', model: 'nai-diffusion-4-5-full'
   });
-  assert.equal(probe.status, 'configured');
+  assert.equal(probe.status, 'connected');
   assert.equal(probe.verified, false);
   assert.ok(probe.models.includes('nai-diffusion-4-5-full'));
   assert.ok(probe.models.includes('nai-diffusion-furry-3'));
-  assert.equal(transport.calls.length, 0, 'probing must not spend NovelAI credits');
+  assert.equal(transport.calls.length, 1);
+  assert.equal(transport.calls[0].kind, 'json');
+  assert.match(transport.calls[0].path, /^\/ai\/generate-image\/suggest-tags\?/);
+  assert.match(probe.message, /Token.*生成时验证/);
+  const offline = new NovelAIImageAdapter(new RecordingTransport(async () => { throw new Error('offline'); }));
+  await assert.rejects(() => offline.probe({ apiUrl: 'https://image.novelai.net', apiKey: 'fixture' }), /offline/);
+});
+
+await test('NovelAI artist prompt reaches both positive captions once and can be cleared', async () => {
+  const archive = zipBlob([{ name: 'image.png', data: Buffer.from(await pngBlob().arrayBuffer()) }]);
+  const transport = new RecordingTransport(async () => archive);
+  const adapter = new NovelAIImageAdapter(transport);
+  const artistPrompt = '  1.2::artist:fixture_a::,\n{artist:fixture_b}  ';
+  const provider = { type: 'novelai', apiUrl: 'https://image.novelai.net', apiKey: 'fixture', artistPrompt };
+  for (let i = 0; i < 2; i++) await adapter.generate({ provider, prompt: 'landscape,', negativePrompt: 'text' });
+  for (const call of transport.calls) {
+    assert.equal(call.options.body.input, 'landscape, 1.2::artist:fixture_a::,\n{artist:fixture_b}');
+    assert.equal(call.options.body.parameters.v4_prompt.caption.base_caption, call.options.body.input);
+    assert.equal(call.options.body.parameters.negative_prompt, 'text');
+  }
+  assert.equal(provider.artistPrompt, artistPrompt);
+  await adapter.generate({ provider: { ...provider, artistPrompt: '' }, prompt: 'landscape' });
+  assert.equal(transport.calls[2].options.body.input, 'landscape');
+});
+
+await test('NovelAI transport normalizes pasted tokens without changing other provider credentials', async () => {
+  const calls = [];
+  const transport = new ImageTransport({ async fetchImpl(url, options) {
+    calls.push({ url, options });
+    return new Response('{}');
+  } });
+  for (const apiUrl of ['https://image.novelai.net', 'http://127.0.0.1:8000']) {
+    await transport.json({ type: 'novelai', apiUrl, apiKey: '  Bearer pst-fixture\\_token  ' }, '/ai/generate-image');
+  }
+  assert.equal(calls[0].options.headers['x-user-api-key'], 'pst-fixture_token');
+  assert.equal(calls[1].options.headers.Authorization, 'Bearer pst-fixture_token');
+  await transport.json({ type: 'a1111', apiUrl: 'http://127.0.0.1:8000', apiKey: 'raw_fixture', apiKeyHeader: 'x-api-key' }, '/test');
+  assert.equal(calls[2].options.headers['x-api-key'], 'raw_fixture');
+});
+
+await test('image errors retain actionable detail and distinguish proxy network failures', async () => {
+  const provider = { type: 'novelai', apiUrl: 'https://image.novelai.net', apiKey: 'fixture' };
+  const failure = (status, body) => new ImageTransport({ async fetchImpl() {
+    return new Response(JSON.stringify(body), { status });
+  } }).json(provider, '/test');
+  await assert.rejects(() => failure(400, { error: 'Bad Request', message: ['unsupported sampler', 'invalid noise_schedule'] }), e =>
+    e.code === 'PROVIDER_ERROR' && /unsupported sampler.*invalid noise_schedule/.test(e.message));
+  await assert.rejects(() => failure(403, { error: '目标域名解析到受限地址' }), e => e.code === 'PROVIDER_POLICY');
+  await assert.rejects(() => failure(401, { error: '登录会话已过期，请重新登录' }), e => e.code === 'SESSION_AUTH');
+  await assert.rejects(() => failure(401, { message: 'Invalid access token' }), e => e.code === 'AUTH');
+  await assert.rejects(() => failure(504, { error: 'AI 上游请求超时' }), e => e.code === 'UPSTREAM_TIMEOUT' && /服务器.*代理/.test(e.message));
+  const offline = new ImageTransport({ async fetchImpl() { throw new TypeError('Failed to fetch'); } });
+  await assert.rejects(() => offline.json(provider, '/test'), e => e.code === 'PROXY_NETWORK' && /网站.*代理/.test(e.message));
 });
 
 await test('NovelAI adapter sends V4-compatible parameters and extracts a deflated ZIP image', async () => {

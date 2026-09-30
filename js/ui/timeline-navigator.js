@@ -28,8 +28,10 @@ class TimelineNavigator extends HTMLElement {
       eventBus.on('timeline:branch-created', () => this._load()),
       eventBus.on('timeline:branch-switched', () => this._load()),
       eventBus.on('timeline:jumped', () => this._load()),
+      eventBus.on('timeline:nodes-deleted', () => this._load()),
       eventBus.on('timeline:branch-promoted', () => this._load()),
       eventBus.on('timeline:branch-deleted', () => this._load()),
+      eventBus.on('timeline:branch-renamed', () => this._load()),
       eventBus.on('timeline:imported', () => this._load(true)),
       eventBus.on('state:restored', () => this._load())
     ];
@@ -88,33 +90,9 @@ class TimelineNavigator extends HTMLElement {
             <div class="list">${bn.slice(-30).map(node => this._renderNode(node, { currentId: curId, color: b.color })).join('')}</div>
           `;
         }).join('')}
-        ${nodes.length>0?`
-          <div class="control-bento">
-            <button class="btn-ghost" id="manage-btn">管理卷宗</button>
-            <button class="btn-ghost" id="export-btn">导出情报</button>
-            <button class="btn-ghost danger" id="restart-btn">轮回转生 · 重置</button>
-          </div>
-        `:`
-          <div class="control-bento">
-            <button class="btn-ghost" id="manage-btn">管理卷宗</button>
-            <button class="btn-ghost" id="export-btn">导出情报</button>
-          </div>
-        `}
-      </div>
-
-      <div class="modal-overlay" id="manage-modal">
-        <div class="modal-content">
-          <div class="modal-title">时间线管理</div>
-          ${altBranches.length > 0 ? altBranches.map(b => `
-            <div class="branch-item">
-              <span class="branch-name" style="color:${this._safeColor(b.color)}">${this._esc(b.name)}</span>
-              <div class="branch-actions">
-                <button class="promote-branch-btn" data-id="${escAttr(b.id)}">升格为主线</button>
-                <button class="del-branch-btn" data-id="${escAttr(b.id)}">剪除</button>
-              </div>
-            </div>
-          `).join('') : '<div style="text-align:center;font-size:11px;color:var(--text-tertiary);padding:10px;">暂无分支IF线</div>'}
-          <button class="modal-close" id="manage-close">返回</button>
+        <div class="control-bento">
+          <button class="btn-ghost" id="save-library-btn">${icon('archive', 14)} 存档库</button>
+          <button class="btn-ghost" id="if-lines-btn">${icon('git-branch', 14)} IF 线管理</button>
         </div>
       </div>
     `;
@@ -146,32 +124,11 @@ class TimelineNavigator extends HTMLElement {
       });
     });
     
-    const eb = this.shadowRoot.querySelector('#export-btn');
-    if(eb) eb.addEventListener('click',()=> eventBus.emit('timeline:export-request'));
-
-    const mb = this.shadowRoot.querySelector('#manage-btn');
-    const modal = this.shadowRoot.querySelector('#manage-modal');
-    if(mb) mb.addEventListener('click', () => modal.classList.add('active'));
-
-    const closeBtn = this.shadowRoot.querySelector('#manage-close');
-    if(closeBtn) closeBtn.addEventListener('click', () => modal.classList.remove('active'));
-
-    const restartBtn = this.shadowRoot.querySelector('#restart-btn');
-    if(restartBtn) restartBtn.addEventListener('click', () => eventBus.emit('game:restart'));
-
-    this.shadowRoot.querySelectorAll('.promote-branch-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        eventBus.emit('timeline:promote-branch', { branchId: btn.dataset.id });
-        modal.classList.remove('active');
-      });
-    });
-
-    this.shadowRoot.querySelectorAll('.del-branch-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        eventBus.emit('timeline:delete-branch', { branchId: btn.dataset.id });
-        modal.classList.remove('active');
-      });
-    });
+    this.shadowRoot.querySelector('#save-library-btn')?.addEventListener('click', () => eventBus.emit('app:open-saves'));
+    this.shadowRoot.querySelector('#if-lines-btn')?.addEventListener('click', () => eventBus.emit('app:open-saves', { kind: 'if_lines' }));
+    this.shadowRoot.querySelectorAll('.fork-btn').forEach(btn => btn.addEventListener('click', () => {
+      eventBus.emit('app:open-saves', { kind: 'if_lines', fromNodeId: btn.dataset.id });
+    }));
 
     const newTl = this.shadowRoot?.querySelector('.tl');
     if (newTl) {
@@ -195,7 +152,7 @@ class TimelineNavigator extends HTMLElement {
       <article class="node${current ? ' cur' : ''}${selected ? ' sel' : ''}" data-id="${escAttr(node.id)}"${accent}>
         <button class="node-toggle" type="button" data-id="${escAttr(node.id)}" aria-expanded="${selected}" aria-label="${escAttr(toggleLabel)}">
           <span class="node-heading">
-            <span class="node-chapter">第 ${this._esc(turn)} 回</span>
+            <span class="node-chapter">${node.branch_anchor ? `IF 起点 · 第 ${this._esc(turn)} 回` : `第 ${this._esc(turn)} 回`}</span>
             <span class="node-statuses">
               ${current ? '<span class="node-status current-status">当前</span>' : ''}
               ${isCompressedTimelineNode(node) ? '<span class="node-status compressed-status">已压缩</span>' : ''}
@@ -210,12 +167,12 @@ class TimelineNavigator extends HTMLElement {
           ` : ''}
           <span class="node-summary">${this._esc(summary)}</span>
         </button>
-        ${selected ? this._renderNodeDetails({ current, records, summary, nodeId: node.id }) : ''}
+        ${selected ? this._renderNodeDetails({ current, records, summary, nodeId: node.id, branchAnchor: node.branch_anchor }) : ''}
       </article>
     `;
   }
 
-  _renderNodeDetails({ current, records, summary, nodeId }) {
+  _renderNodeDetails({ current, records, summary, nodeId, branchAnchor = false }) {
     return `
       <div class="node-details">
         <div class="detail-heading">剧情摘要</div>
@@ -243,7 +200,8 @@ class TimelineNavigator extends HTMLElement {
           ${current
             ? '<div class="cur-text">此乃当下此时</div>'
             : `<button class="jump-btn" type="button" data-id="${escAttr(nodeId)}">逆转时间至此</button>`}
-          <button class="reroll-btn" type="button" data-id="${escAttr(nodeId)}">快速重Roll</button>
+          ${branchAnchor ? '' : `<button class="reroll-btn" type="button" data-id="${escAttr(nodeId)}">快速重Roll</button>`}
+          <button class="fork-btn" type="button" data-id="${escAttr(nodeId)}">从此创建 IF 线</button>
         </div>
       </div>
     `;

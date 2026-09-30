@@ -37,6 +37,9 @@ server/db/*.db-wal
 *.png
 !img/*.png
 !public/img/*.png
+!artwork/app-identity/*.png
+!android/app/src/main/res/**/ic_launcher*.png
+!android/app/src/main/res/**/splash.png
 /debug.log
 discord-proxy-worker.js
 app-shell-history.txt
@@ -65,3 +68,16 @@ server-*.err.log
 server-*.out.log
 server-*.stderr.log
 server-*.stdout.log
+
+# Local Android packages and validation receipts
+/reports/android/
+
+# Local diagnostics and generated validation artifacts
+/.probe-logs/
+/.probe-tmp/
+/reports/
+/tests/previews/
+__pycache__/
+*.pyc
+*.jks
+*.keystore

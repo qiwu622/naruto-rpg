@@ -194,6 +194,8 @@ export function normalizeImageSettings(value = {}) {
   merged.providers['openai-compatible'].apiKeyHeader = deriveImageApiKeyHeader(
     merged.providers['openai-compatible']
   );
+  merged.providers.novelai.artistPrompt = typeof merged.providers.novelai.artistPrompt === 'string'
+    ? merged.providers.novelai.artistPrompt : '';
   return merged;
 }
 

@@ -13,6 +13,10 @@ import { missionSystem } from './systems/mission-system.js';
 import { relationshipSystem } from './systems/relationship-system.js';
 import { memorySystem } from './systems/memory-system.js';
 import { cloudSave } from './core/cloud-save.js';
+import { personalSaveLibrary } from './core/personal-save-library.js';
+import { ROOM_SAVE_KIND, SAVE_PACKAGE_SCHEMA } from './core/save-library.js';
+import { localRoomHistory } from './multiplayer/local-room-history.js';
+import { openSaveLibrary } from './ui/save-library-panel.js';
 import { authClient } from './core/auth-client.js';
 import { worldStateSystem } from './systems/world-state-system.js';
 import { errorHandler } from './utils/error-handler.js';
@@ -25,6 +29,12 @@ import { imageFeatureIntegration } from './core/image-studio/integration.js';
 import { resolveAICallPolicy } from './core/ai-call-policy.js';
 import { TIMELINE_FILE_ACCEPT, decodeTimelineSaveFile } from './core/timeline-file-codec.js';
 import { inspectRuntimeBuild, showStaleBuildNotice } from './utils/build-version.js';
+import { isNativeAndroidApp, usesProjectServerFeatures, isMultiplayerEntryVisible } from './core/runtime-platform.js';
+import {
+  ANDROID_APP_DOWNLOAD_URL,
+  ANDROID_APP_VERSION,
+  appUpdateService
+} from './core/app-update.js';
 
 import { appShell } from './ui/app-shell.js';
 import { atmosphereManager } from './ui/atmosphere-manager.js';
@@ -46,12 +56,85 @@ import './ui/map-modal.js';
 import './ui/image-studio.js';
 import './ui/lingxi-companion.js';
 import SettingsPanel, { applyLocalSettings } from './ui/settings-panel.js';
+import { openMultiplayerOverlay } from './ui/multiplayer-overlay.js';
+import {
+  actionSubmissionUnavailableMessage,
+  canSubmitProjectedAction,
+  isProjectedOpeningTurn,
+  projectedNarrativeDeliveries
+} from './multiplayer/ui-projection.js';
 import { musicPlayback } from './core/music-playback.js';
 import {
   bindMusicFloatingPlayer,
   controlMusicWithFloatingPlayer,
   openMusicWithFloatingPlayer
 } from './ui/music-floating-player.js';
+
+const MULTIPLAYER_ROOM_STORAGE_KEY = 'naruto_multiplayer_last_room';
+const MULTIPLAYER_INVITE_SESSION_KEY = 'naruto_multiplayer_session_invite';
+const MULTIPLAYER_ROOM_ID_PATTERN = /^[A-Za-z][A-Za-z0-9:_-]{1,255}$/u;
+
+function readRememberedMultiplayerRoomId() {
+  try {
+    const roomId = globalThis.localStorage?.getItem(multiplayerRoomStorageKey())?.trim()
+      ?? globalThis.localStorage?.getItem(MULTIPLAYER_ROOM_STORAGE_KEY)?.trim() ?? '';
+    return MULTIPLAYER_ROOM_ID_PATTERN.test(roomId) ? roomId : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberMultiplayerRoomId(roomId) {
+  if (!MULTIPLAYER_ROOM_ID_PATTERN.test(String(roomId ?? ''))) return false;
+  try {
+    globalThis.localStorage?.setItem(multiplayerRoomStorageKey(), roomId);
+    if (authClient.getUser()?.id) globalThis.localStorage?.removeItem(MULTIPLAYER_ROOM_STORAGE_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function multiplayerRoomStorageKey() {
+  const userId = authClient.getUser()?.id;
+  return userId ? `${MULTIPLAYER_ROOM_STORAGE_KEY}:${userId}` : MULTIPLAYER_ROOM_STORAGE_KEY;
+}
+
+function rememberMultiplayerInvite(invite) {
+  if (!invite?.room_id || !invite?.token) return false;
+  try {
+    globalThis.sessionStorage?.setItem(MULTIPLAYER_INVITE_SESSION_KEY, JSON.stringify({
+      room_id: invite.room_id,
+      room_code: invite.room_code ?? null,
+      token: invite.token
+    }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readRememberedMultiplayerInvite(roomId) {
+  try {
+    const value = JSON.parse(
+      globalThis.sessionStorage?.getItem(MULTIPLAYER_INVITE_SESSION_KEY) ?? 'null'
+    );
+    if (!value || value.room_id !== roomId || typeof value.token !== 'string') return null;
+    return Object.freeze(value);
+  } catch {
+    return null;
+  }
+}
+
+function forgetRememberedMultiplayerSession() {
+  try { globalThis.localStorage?.removeItem(multiplayerRoomStorageKey()); } catch { /* no-op */ }
+  try { globalThis.localStorage?.removeItem(MULTIPLAYER_ROOM_STORAGE_KEY); } catch { /* no-op */ }
+  try { globalThis.sessionStorage?.removeItem(MULTIPLAYER_INVITE_SESSION_KEY); } catch { /* no-op */ }
+}
+
+function forgetRememberedMultiplayerInvite() {
+  try { globalThis.sessionStorage?.removeItem(MULTIPLAYER_INVITE_SESSION_KEY); } catch { /* no-op */ }
+}
 
 class NarutoRPGApp {
   constructor() {
@@ -61,6 +144,11 @@ class NarutoRPGApp {
     this._profileModal = null;
     this._musicGestureCleanup = null;
     this._musicPlayerStateCleanup = null;
+    this._multiplayerOverlay = null;
+    this._multiplayerActiveRoomId = null;
+    this._multiplayerRenderedCommit = null;
+    this._multiplayerNoticeSeq = 0;
+    this._appUpdateCheckScheduled = false;
   }
 
   async init() {
@@ -76,7 +164,7 @@ class NarutoRPGApp {
     this._musicPlayerStateCleanup ||= bindMusicFloatingPlayer(musicPlayback);
 
     appShell.init(container);
-    void this._checkRuntimeBuild();
+    if (usesProjectServerFeatures()) void this._checkRuntimeBuild();
     if (!container.querySelector('lingxi-companion')) {
       container.appendChild(document.createElement('lingxi-companion'));
     }
@@ -137,6 +225,8 @@ class NarutoRPGApp {
           this._registerServiceWorker();
           this._state = 'ready';
           console.log('[NarutoRPG] App initialized');
+          this._scheduleMultiplayerRestore();
+          this._scheduleAppUpdateCheck();
           return;
         } catch (e) {
           console.warn('[NarutoRPG] Failed to restore saved game:', e.message);
@@ -150,9 +240,91 @@ class NarutoRPGApp {
     this._registerServiceWorker();
     this._state = 'ready';
     console.log('[NarutoRPG] App initialized');
+    this._scheduleMultiplayerRestore();
+    this._scheduleAppUpdateCheck();
+  }
+
+  _scheduleAppUpdateCheck() {
+    if (!isNativeAndroidApp() || this._appUpdateCheckScheduled) return false;
+    this._appUpdateCheckScheduled = true;
+    setTimeout(() => {
+      void this._checkAppUpdate({ automatic: true }).catch(error => {
+        console.warn('[AppUpdate] Automatic update check failed:', error.message);
+      });
+    }, 0);
+    return true;
+  }
+
+  async _checkAppUpdate({ automatic = false } = {}) {
+    const result = await appUpdateService.check();
+    this._refreshProfileUpdateIndicator(result);
+    if (!result.updateAvailable) return result;
+    if (automatic && appUpdateService.isAutomaticPromptDisabled()) return result;
+
+    const accepted = await customElements.get('game-modal').confirm({
+      title: '发现 Android App 新版本',
+      message: `当前版本 ${result.currentVersion}，最新版本 ${result.latestVersion}。是否前往下载更新？`,
+      okLabel: '前往更新',
+      cancelLabel: '暂不更新'
+    });
+    if (accepted) await appUpdateService.openDownload();
+    else if (automatic) appUpdateService.disableAutomaticPrompt();
+    return result;
+  }
+
+  _refreshProfileUpdateIndicator(result = appUpdateService.getLastResult()) {
+    const root = this._profileModal?.shadowRoot;
+    if (!root) return;
+    const available = result?.updateAvailable === true;
+    const dot = root.querySelector('#pf-app-update-dot');
+    if (dot) dot.hidden = !available;
+    const status = root.querySelector('#pf-app-update-status');
+    if (status) {
+      status.textContent = available
+        ? `发现新版本 ${result.latestVersion}`
+        : `当前版本 ${ANDROID_APP_VERSION}`;
+    }
+  }
+
+  _scheduleMultiplayerRestore() {
+    if (!usesProjectServerFeatures() || !isMultiplayerEntryVisible()) return false;
+    setTimeout(() => {
+      void (async () => {
+        // Account-specific resume keys can only be selected after auth resolves.
+        if (!await authClient.checkAuth()) return;
+        const roomId = readRememberedMultiplayerRoomId();
+        if (!roomId) return;
+        await eventBus.request('app:open-multiplayer', { roomId, autoRestore: true });
+      })().catch(error => console.warn('[Multiplayer] Automatic room reconnect failed:', error.message));
+    }, 0);
+    return true;
   }
 
   _bindEvents() {
+    eventBus.on('app:open-saves', async (options = {}) => {
+      if (usesProjectServerFeatures()) await authClient.checkAuth();
+      // Capture the legacy working timeline on first use, without replacing it.
+      let migrationError = null;
+      if (!this.pipeline?.isProcessing && !this._saveTransition && !this._multiplayerOverlay?.panel?.controller?.state?.roomId) {
+        try { await this._personalSaveOperation(() => personalSaveLibrary.capture({ reason: 'library-open' })); }
+        catch (error) { migrationError = error; }
+      }
+      const modal = await openSaveLibrary(options);
+      if (migrationError) eventBus.emit('app:toast', `当前个人档未备份：${migrationError.message}`);
+      return modal;
+    });
+    eventBus.on('app:save-personal', () => this._personalSaveOperation(() => personalSaveLibrary.capture()));
+    eventBus.on('app:load-personal-save', ({ id }) => this._personalSaveOperation(async () => {
+      const node = await personalSaveLibrary.load(id);
+      const history = await timelineSystem._reconstructChatHistory(node);
+      this.pipeline?.setHistory(history);
+      appShell.showGame();
+      appShell.restoreChatHistory(history, node?.clean_response || node?.ai_response_summary || '存档已读取。', { timelineNodeId: node?.id });
+      eventBus.emit('app:toast', '已读取个人存档；切换前的进度已保留在本地存档库。');
+      return node;
+    }));
+    eventBus.on('app:new-personal-save', () => this._startNewPersonalSave());
+    eventBus.on('app:if-line-action', options => this._manageIfLine(options));
     eventBus.on('app:api-config', async (config) => {
       await stateManager.saveAPIConfig(config);
       aiClient.configure(config);
@@ -162,29 +334,15 @@ class NarutoRPGApp {
     eventBus.on('app:timeline-import-file', async ({ file }) => {
       try {
         const data = await decodeTimelineSaveFile(file);
-
-        // 检查现有库是否非空,决定是否需要询问导入模式
-        const existingNodes = await stateManager.dbGetAll('timeline_nodes') || [];
-        let mode = 'overwrite';
-        if (existingNodes.length > 0) {
-          const choice = await this._showImportModeChoice(existingNodes.length);
-          if (choice === 'cancel') return;
-          mode = choice;
-        }
-
-        const node = await timelineSystem.importTimeline(data, { mode });
-        if (mode === 'merge') {
-          this._sendSystemMessage(`时间线已合并导入:新增 ${(data.nodes || []).length} 个节点到现有库。当前进度保持不变。`);
+        if (data?.schema === SAVE_PACKAGE_SCHEMA && data.kind === ROOM_SAVE_KIND) {
+          if (usesProjectServerFeatures()) await authClient.checkAuth();
+          await localRoomHistory.importPackage(data);
+          await openSaveLibrary({ kind: ROOM_SAVE_KIND });
         } else {
-          const history = await timelineSystem._reconstructChatHistory(node);
-          this.pipeline?.setHistory(history);
-          appShell.restoreChatHistory(
-            history,
-            node?.clean_response || node?.ai_response_summary || '存档已导入。',
-            { timelineNodeId: node?.id || null }
-          );
-          this._sendSystemMessage('时间线存档导入成功(覆盖模式)。');
+          await personalSaveLibrary.importData(data);
+          await eventBus.request('app:open-saves');
         }
+        eventBus.emit('app:toast', '存档已加入本地存档库，选择“读取”即可继续；当前进度没有被覆盖。');
       } catch (error) {
         this._sendSystemMessage(`导入失败: ${error.message}`);
       }
@@ -220,6 +378,7 @@ class NarutoRPGApp {
     });
 
     eventBus.on('image:binding-changed', () => {
+      if (!usesProjectServerFeatures()) return;
       if (localStorage.getItem('naruto_auto_cloud_sync') !== 'true') return;
       clearTimeout(this._imageCloudSyncTimer);
       this._imageCloudSyncTimer = setTimeout(() => {
@@ -233,8 +392,7 @@ class NarutoRPGApp {
       try {
         const node = await stateManager.dbGet('timeline_nodes', nodeId);
         if (!node) return;
-        const parentId = node.parent_id;
-        if (!parentId) {
+        if (!node.parent_id) {
           this._sendSystemMessage('初始节点无法快速重推衍，如需重新开局请点击底部重置按钮。');
           return;
         }
@@ -246,22 +404,13 @@ class NarutoRPGApp {
         const choice = await this._showRerollChoice();
         if (choice === 'cancel') return;
 
-        await timelineSystem.jumpToNode(parentId);
+        const mode = choice === 'prune' ? 'replace' : 'branch';
+        const prepared = await timelineSystem.prepareReroll(nodeId, { mode });
+        this.pipeline?.setHistory(prepared.history);
 
-        if (choice === 'prune') {
-          await timelineSystem.pruneForward(parentId);
-          timelineSystem._pendingBranchFrom = null;
-        } else {
-          timelineSystem._pendingBranchFrom = parentId;
-        }
-
-        const parentNode = await timelineSystem.getCurrentNode();
-        const history = await timelineSystem._reconstructChatHistory(parentNode);
-        this.pipeline?.setHistory(history);
-
-        const actionLabel = choice === 'prune' ? '重新推衍' : '平行重推衍';
-        this._sendSystemMessage(`正在${actionLabel}：${node.player_input}`);
-        await this.pipeline.process(node.player_input);
+        const actionLabel = mode === 'replace' ? '重新推衍' : '平行重推衍';
+        this._sendSystemMessage(`正在${actionLabel}：${prepared.playerInput}`);
+        await this.pipeline.process(prepared.playerInput);
       } catch (error) {
         console.error('[App] Reroll failed:', error);
         this._sendSystemMessage(`重推衍失败: ${error.message}`);
@@ -330,6 +479,7 @@ class NarutoRPGApp {
     eventBus.on('timeline:export-request', async ({ compression = 'auto' } = {}) => {
       try {
         const result = await timelineSystem.exportTimeline({ compression });
+        if (result.cancelled) { this._sendSystemMessage('已取消导出，原存档仍保留。'); return; }
         this._sendSystemMessage(result.fallbackReason
           ? `浏览器未能创建 gzip，已改为导出普通 JSON：${result.fallbackReason}`
           : `本地存档已导出（${result.format === 'gzip' ? 'gzip 压缩' : '普通 JSON'}）。`);
@@ -339,69 +489,29 @@ class NarutoRPGApp {
     });
 
     eventBus.on('game:restart', async () => {
-      const confirmed = await customElements.get('game-modal').confirm({
-        title: '⚠ 重新开始 · 不可撤销',
-        message: '确定要放弃当前的忍道并重新开始吗？所有存档和时间线将被永久抹除，此操作无法恢复。',
-        okLabel: '确认重置',
-        cancelLabel: '取消'
-      });
-      if (!confirmed) return;
-      await timelineSystem.emergencyReset();
-      localStorage.removeItem('naruto_ui_prefs');
-      localStorage.removeItem('naruto_rpg_state');
-      window.location.reload();
+      try { await this._startNewPersonalSave(); }
+      catch (error) { this._sendSystemMessage(`未开始新档：${error.message}`); }
     });
 
     eventBus.on('app:reset', async () => {
       try {
-        await timelineSystem.emergencyReset();
-        this.pipeline?.clearHistory();
-        appShell.element.innerHTML = '';
-        appShell.element.classList.add('app-shell--setup');
-        const center = appShell.element.querySelector('#app-center');
-        if (center) {
-          center.classList.add('app-center--setup');
-          const inputArea = center.querySelector('#chat-input-area');
-          if (inputArea) inputArea.style.display = 'none';
-        }
-        appShell.showCharacterCreator();
+        await this._startNewPersonalSave();
       } catch (err) {
         window.location.reload();
       }
     });
 
     eventBus.on('timeline:delete-branch', async ({ branchId }) => {
-      if(branchId === 'branch_main') {
-         await customElements.get('game-modal').alert({ title: '无法斩断', message: '主线不可斩断！' });
-         return;
-      }
-      const confirmed = await customElements.get('game-modal').confirm({
-        title: '剪除分支',
-        message: '确定要剪除这条时间分支吗？该分支上的所有记忆将不复存在，此操作不可撤销。',
-        okLabel: '确认剪除',
-        cancelLabel: '取消'
-      });
-      if (!confirmed) return;
       try {
-        await timelineSystem.deleteBranch(branchId);
-        appShell.renderSinglePage('时间线剪定完成。');
+        await this._manageIfLine({ action: 'delete', branchId });
       } catch(e) {
         this._sendSystemMessage('剪定失败: ' + e.message);
       }
     });
 
     eventBus.on('timeline:promote-branch', async ({ branchId }) => {
-      if(branchId === 'branch_main') return;
-      const confirmed = await customElements.get('game-modal').confirm({
-        title: '升格为主线',
-        message: '确定要将此IF线升格为主线吗？原主线分支将会降格为IF线。',
-        okLabel: '确认升格',
-        cancelLabel: '取消'
-      });
-      if (!confirmed) return;
       try {
-        await timelineSystem.promoteBranchToMain(branchId);
-        appShell.renderSinglePage('时间线收束完成，新的主线已确立。');
+        await this._manageIfLine({ action: 'promote', branchId });
       } catch(e) {
         this._sendSystemMessage('收束失败: ' + e.message);
       }
@@ -414,6 +524,63 @@ class NarutoRPGApp {
         section: typeof route.section === 'string' && route.section ? route.section : 'appearance',
         anchor: typeof route.anchor === 'string' ? route.anchor : ''
       });
+    });
+
+    eventBus.on('app:open-multiplayer', async (options = {}) => {
+      if (!usesProjectServerFeatures() || !isMultiplayerEntryVisible()) return null;
+      const request = options && typeof options === 'object' ? options : {};
+      // The staging site serves this shell through an Nginx auth_request
+      // subrequest, whose Set-Cookie response is not forwarded to the browser.
+      // Refresh the browser-facing session before mounting multiplayer so an
+      // existing login also receives the double-submit CSRF cookie.
+      const user = await authClient.checkAuth(true);
+      if (!user) {
+        window.location.href = '/login.html';
+        return null;
+      }
+      const currentRoomId = this._multiplayerOverlay?.panel?.controller?.state?.roomId;
+      if (request.roomId && currentRoomId && currentRoomId !== request.roomId) {
+        const exited = await this._multiplayerOverlay.exit();
+        if (!exited) throw new Error('尚未退出当前房间，已取消切换');
+      }
+      await this._personalResumeAfterExit;
+      if (this._multiplayerOverlay?.element?.isConnected) this._multiplayerOverlay.show();
+      else {
+        this._multiplayerOverlay = openMultiplayerOverlay({
+          host: document.getElementById('app') || document.body,
+          onStateChange: (state, panel) => this._handleMultiplayerState(state, panel),
+          onClose: ({ forgetSession = false, savedRoom = false } = {}) => {
+            if (forgetSession) {
+              forgetRememberedMultiplayerSession();
+              eventBus.emit('app:toast', savedRoom ? '房间已保存到本机历史，已退出联机。' : '已退出联机；可在本机房间历史重新进入。');
+            }
+            this._multiplayerOverlay = null;
+            this._multiplayerActiveRoomId = null;
+            this._multiplayerRenderedCommit = null;
+            appShell.setMultiplayerSessionState(null);
+            if (forgetSession) this._personalResumeAfterExit = this._checkSavedGame()
+              .catch(error => this._sendSystemMessage(`个人进度恢复失败：${error.message}`));
+          }
+        });
+      }
+      const roomId = request.roomId ?? readRememberedMultiplayerRoomId();
+      const panel = this._multiplayerOverlay.panel;
+      if (roomId && panel.controller?.state?.roomId !== roomId) {
+        try {
+          await panel.connectRoom(roomId);
+          const invite = readRememberedMultiplayerInvite(roomId);
+          const members = panel.controller?.state?.room?.members ?? [];
+          if (invite && members.length < 2) panel.controller.store.patch({ invite });
+          else if (members.length >= 2) forgetRememberedMultiplayerInvite();
+        } catch (error) {
+          panel.prefillRoomId?.(roomId);
+          if (request.autoRestore) {
+            eventBus.emit('app:toast', '自动重连未成功，房间号已为你保留，可点击恢复');
+          }
+          if (request.roomId && !request.autoRestore) throw error;
+        }
+      }
+      return this._multiplayerOverlay;
     });
 
     eventBus.on('app:open-creator-workbench', (options = {}) => {
@@ -439,7 +606,7 @@ class NarutoRPGApp {
     });
 
     eventBus.on('app:open-profile', (options = {}) => this._openProfilePanel({
-      loadRemote: options?.loadRemote !== false
+      loadRemote: usesProjectServerFeatures() && options?.loadRemote !== false
     }));
 
     eventBus.on('app:open-info-panel', (options = {}) => {
@@ -456,7 +623,75 @@ class NarutoRPGApp {
     eventBus.on('app:open-api-settings', () => this._openSettings({ mode: 'player', section: 'connection' }));
   }
 
+  _handleMultiplayerState(state) {
+    if (!state?.roomId) return;
+    const room = state.room;
+    if (room?.room_id) rememberMultiplayerRoomId(room.room_id);
+    if (state.invite?.token) rememberMultiplayerInvite(state.invite);
+    if ((room?.members?.length ?? 0) >= 2) forgetRememberedMultiplayerInvite();
+    const notice = [...(state.notices ?? [])].reverse().find(item => (
+      item.event_type === 'member.presence_changed'
+      && item.event_seq > this._multiplayerNoticeSeq
+    ));
+    if (notice) {
+      this._multiplayerNoticeSeq = notice.event_seq;
+      const seat = notice.payload?.member_seat ?? notice.payload?.seat ?? '—';
+      eventBus.emit('app:toast', notice.payload?.ready === true
+        ? `玩家 ${seat} 已确认开局`
+        : `玩家 ${seat} 已加入联机房间`);
+    }
+    if (room?.lifecycle !== 'ACTIVE') {
+      appShell.setMultiplayerSessionState(null);
+      return;
+    }
+    if (this._multiplayerActiveRoomId !== room.room_id) {
+      this._multiplayerActiveRoomId = room.room_id;
+      this._multiplayerRenderedCommit = null;
+      const openingPending = isProjectedOpeningTurn(state)
+        || (room.origin_type === 'new_multiplayer_save' && room.state_revision === 0);
+      appShell.renderSinglePage(openingPending
+        ? [
+            '双方开局已确认。',
+            '',
+            '正在根据双方填写的角色、地点、目标与开场钩子生成第一回合……',
+            '角色、世界、资源、地图、时间与记忆变量将由服务端一并初始化。'
+          ].join('\n')
+        : '双人联机已连接。请在下方主输入框提交本回合行动。');
+    }
+    appShell.setMultiplayerSessionState(state);
+    const publication = state.latestCommittedTurn ?? state.turn;
+    const deliveries = projectedNarrativeDeliveries(publication);
+    const commitId = publication?.commit?.checkpoint?.commit_id
+      ?? publication?.commit?.checkpoint?.checkpoint_id
+      ?? publication?.checkpoint_id
+      ?? null;
+    if (commitId && deliveries.length > 0 && commitId !== this._multiplayerRenderedCommit) {
+      this._multiplayerRenderedCommit = commitId;
+      appShell.renderMultiplayerPublication(publication);
+      appShell.setMultiplayerSessionState(state);
+    }
+  }
+
   async _handleUserInput(text, accept = null) {
+    if (this._saveTransition) { this._sendSystemMessage('正在保存或切换个人存档，请稍候。'); return false; }
+    const multiplayerPanel = this._multiplayerOverlay?.panel;
+    const multiplayer = multiplayerPanel?.controller;
+    if (multiplayer?.state?.room?.lifecycle === 'ACTIVE') {
+      if (!canSubmitProjectedAction(multiplayer.state)) {
+        this._sendSystemMessage(actionSubmissionUnavailableMessage(multiplayer.state));
+        return false;
+      }
+      const options = multiplayerPanel.actionOptions;
+      await multiplayer.lockAction({
+        text,
+        visibility: options.visibility,
+        narrationPreference: options.narrationPreference
+      });
+      accept?.();
+      appShell.setMultiplayerSessionState(multiplayer.state);
+      eventBus.emit('app:toast', '联机行动已发送，提交后不可单方修改');
+      return true;
+    }
     if (!this.pipeline || !aiClient.isConfigured()) {
       this._sendSystemMessage('请先配置 API 连接。');
       return false;
@@ -495,7 +730,7 @@ class NarutoRPGApp {
         await this.pipeline.process(text);
       }
 
-      if (localStorage.getItem('naruto_auto_cloud_sync') === 'true') {
+      if (usesProjectServerFeatures() && localStorage.getItem('naruto_auto_cloud_sync') === 'true') {
         try {
           await this._queueCloudSave();
           console.log('[CloudSave] 自动同步成功');
@@ -511,19 +746,25 @@ class NarutoRPGApp {
   }
 
   async _syncCloudSaveAfterImage() {
+    if (!usesProjectServerFeatures()) return null;
     return this._queueCloudSave();
   }
 
   async _queueCloudSave() {
+    if (this._multiplayerOverlay?.panel?.controller?.state?.roomId) throw new Error('联机房间请使用房间本地存档；云端快捷备份只保存个人档');
+    if (!usesProjectServerFeatures()) throw new Error('Android App 仅使用本地存档');
     return cloudSave.scheduleQuickSave('默认云存档', async () => {
-      const data = await timelineSystem.getExportData({ includeArchive: false });
+      const data = await timelineSystem.getExportData({ includeArchive: true });
       const state = stateManager.get();
       return {
         saveData: data,
         previewData: {
           name: state.player?.name || stateManager.get('玩家·姓名') || '未知',
           location: state.world_state?.current_location || stateManager.get('世界·地点') || '未知',
-          time: Date.now()
+          time: Date.now(),
+          turn: data.nodes.find(node => node.id === data.meta?.value?.current_id)?.turn_number ?? stateManager.getSub('_meta')?.turn_count ?? 0,
+          branch_count: data.branches.filter(branch => branch.id !== 'branch_main').length,
+          branch_name: data.branches.find(branch => branch.id === data.meta?.value?.active_branch)?.name || '主线'
         }
       };
     });
@@ -615,6 +856,7 @@ class NarutoRPGApp {
   }
 
   _registerServiceWorker() {
+    if (!usesProjectServerFeatures()) return;
     if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
 
     const hadController = Boolean(navigator.serviceWorker.controller);
@@ -680,13 +922,16 @@ class NarutoRPGApp {
     const Modal = customElements.get('game-modal');
     if (!Modal) return;
     if (this._profileModal?.isConnected) return this._profileModal;
+    const nativeAndroid = isNativeAndroidApp();
+    loadRemote = loadRemote && !nativeAndroid;
     const state = stateManager.get();
     const player = state.player || {};
     const attrs = state.attributes || {};
     const prog = state.progression || {};
     const world = state.world_state || {};
     const apiConfig = stateManager.getAPIConfig() || {};
-    let autoSync = localStorage.getItem('naruto_auto_cloud_sync') === 'true';
+    let autoSync = !nativeAndroid && localStorage.getItem('naruto_auto_cloud_sync') === 'true';
+    const knownAppUpdate = nativeAndroid && appUpdateService.hasKnownUpdate();
 
     // 四维百分比（纯展示计算）
     const pctOf = (cur, max) => {
@@ -817,6 +1062,7 @@ class NarutoRPGApp {
             padding: 7px 10px; font-size: 11px; border-radius: 6px; cursor: pointer; letter-spacing: 1px;
             border: 1px solid rgba(var(--paper-rgb), 0.12); background: rgba(var(--paper-rgb), 0.04);
             color: var(--text-primary); transition: all 0.15s ease; font-family: var(--font-title, serif);
+            text-decoration: none; text-align: center;
           }
           .pf-btn:hover { border-color: rgba(var(--paper-rgb), 0.25); background: rgba(var(--paper-rgb), 0.08); }
           .pf-btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -832,6 +1078,12 @@ class NarutoRPGApp {
           .pf-api-status { margin-top: 12px; font-size: 10px; color: var(--text-tertiary); display: flex; align-items: center; gap: 6px; letter-spacing: 0.5px; }
           .pf-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(var(--paper-rgb), 0.25); flex-shrink: 0; }
           .pf-dot.on { background: var(--c-moegi); box-shadow: 0 0 6px var(--c-moegi); }
+          .pf-app-row { display: flex; align-items: center; gap: 10px; }
+          .pf-app-row .pf-btn { flex: 1; }
+          .pf-app-status { font-size: 10px; color: var(--text-tertiary); white-space: nowrap; }
+          .pf-update-label { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+          .pf-update-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c-shuiro); box-shadow: 0 0 7px var(--c-shuiro); }
+          .pf-update-dot[hidden], .pf-server-only[hidden] { display: none !important; }
 
           @media (prefers-reduced-motion: reduce), (max-width: 768px) {
             .pf-stat-fill::after, .pf-avatar-ring::before { animation: none; }
@@ -881,11 +1133,11 @@ class NarutoRPGApp {
             </div>
           </section>
 
-          <!-- 卷尾 · 云存档与本地管理 -->
+          <!-- 卷尾 · 存档管理 -->
           <section class="pf-sec" style="animation-delay: 140ms;">
-            <div class="pf-sec-title"><span>云存档与同步</span></div>
+            <div class="pf-sec-title"><span>${nativeAndroid ? '本地存档' : '云存档与同步'}</span></div>
             <div class="pf-cloud">
-              <div class="pf-cloud-head">
+              <div class="pf-cloud-head pf-server-only" ${nativeAndroid ? 'hidden' : ''}>
                 <div class="pf-cloud-title">云端存档</div>
                 <label class="pf-sync">
                   <input type="checkbox" id="cb-auto-sync" ${autoSync ? 'checked' : ''}>
@@ -893,22 +1145,20 @@ class NarutoRPGApp {
                 </label>
               </div>
 
-              <div>
+              <div class="pf-server-only" ${nativeAndroid ? 'hidden' : ''}>
                 <div class="pf-meter-text" id="cloud-size-text">
-                  <span>云端容量 (最高 200MB)</span>
+                  <span>本账号云存档</span>
                   <span>${loadRemote ? '加载中...' : '未自动连接'}</span>
                 </div>
                 <div class="pf-meter"><div class="pf-meter-fill" id="cloud-size-bar"></div></div>
-                <div class="pf-meter-warning" id="cloud-size-warning">容量即将耗尽，请及时清理或精简冗余记忆。</div>
+                <div class="pf-meter-warning" id="cloud-size-warning">槽位已满，可在存档库中备份旧云档后删除，或选择覆盖已有槽位。</div>
               </div>
 
-              <div class="pf-actions">
-                <button class="pf-btn pf-btn-gold" id="btn-cloud-upload" type="button">↑ 上传/覆盖</button>
-                <button class="pf-btn" id="btn-cloud-download" type="button">↓ 恢复</button>
-                <button class="pf-btn pf-btn-danger" id="btn-cloud-delete" type="button" style="display:none;">× 删除</button>
+              <div class="pf-actions pf-server-only" ${nativeAndroid ? 'hidden' : ''}>
+                <button class="pf-btn pf-btn-gold" id="btn-cloud-manage" type="button">管理云存档</button>
               </div>
 
-              <div class="pf-divider"></div>
+              <div class="pf-divider pf-server-only" ${nativeAndroid ? 'hidden' : ''}></div>
 
               <div class="pf-local">
                 <span class="pf-local-label">游戏存档</span>
@@ -923,8 +1173,27 @@ class NarutoRPGApp {
             </div>
           </section>
 
+          <!-- Android 下载与 App 更新 -->
+          <section class="pf-sec" style="animation-delay: 180ms;">
+            <div class="pf-sec-title"><span>${nativeAndroid ? 'App 更新' : 'Android App'}</span></div>
+            <div class="pf-cloud">
+              ${nativeAndroid ? `
+                <div class="pf-app-row">
+                  <button class="pf-btn pf-btn-gold" id="btn-check-app-update" type="button">
+                    <span class="pf-update-label">检测更新<span class="pf-update-dot" id="pf-app-update-dot" ${knownAppUpdate ? '' : 'hidden'}></span></span>
+                  </button>
+                  <span class="pf-app-status" id="pf-app-update-status">${knownAppUpdate ? '发现新版本' : `当前版本 ${ANDROID_APP_VERSION}`}</span>
+                </div>
+              ` : `
+                <div class="pf-app-row">
+                  <a class="pf-btn pf-btn-gold" href="${this._escAttr(ANDROID_APP_DOWNLOAD_URL)}" target="_blank" rel="noopener noreferrer">下载 Android App</a>
+                </div>
+              `}
+            </div>
+          </section>
+
           <!-- 人设方案 -->
-          <section class="pf-sec" style="animation-delay: 210ms;">
+          <section class="pf-sec" style="animation-delay: 220ms;">
             <div class="pf-sec-title"><span>人设方案</span></div>
             <div id="pf-persona-list" class="pf-persona-list">加载中...</div>
             <div class="pf-persona-hint">人设长期保存在本地；切换人设请在「编写你的忍者开局」向导中选择。</div>
@@ -957,46 +1226,42 @@ class NarutoRPGApp {
         }).catch(() => {});
       }
 
-      // Fetch cloud save size asynchronously
-      if (loadRemote) cloudSave.listSaves().then(saves => {
-        let sizeBytes = 0;
-        let saveId = null;
-        if (saves && saves.length > 0) {
-          sizeBytes = saves[0].size_bytes || 0;
-          saveId = saves[0].id;
-        }
-        const sizeMb = (sizeBytes / (1024 * 1024)).toFixed(2);
-        const percent = Math.min(100, (sizeBytes / (200 * 1024 * 1024)) * 100);
-        const isWarning = percent > 80;
-        
+      // Capacity is per account; the limit applies to each archive, not their total.
+      if (loadRemote) Promise.all([cloudSave.listSaves(), cloudSave.getStorage()]).then(([saves, storage]) => {
         const root = modal.shadowRoot;
         if (!root) return;
+        const bytes = storage?.used_uncompressed_bytes ?? saves.reduce((sum, save) => sum + (Number(save.size_bytes) || 0), 0);
+        const used = storage?.used_slots ?? saves.length;
+        const max = storage?.max_slots;
+        const full = max != null && used >= max;
         const txt = root.querySelector('#cloud-size-text');
+        if (txt) txt.children[1].textContent = `${used}${max != null ? ' / ' + max : ''} 个槽位 · ${(bytes / 1024 / 1024).toFixed(2)} MB`;
         const bar = root.querySelector('#cloud-size-bar');
+        if (bar) bar.style.width = max ? `${Math.min(100, used / max * 100)}%` : '0%';
         const warn = root.querySelector('#cloud-size-warning');
-        const delBtn = root.querySelector('#btn-cloud-delete');
-        
-        if (txt) {
-          txt.children[1].textContent = `${sizeMb} MB / 200 MB`;
-          if (isWarning) txt.style.color = '#ef5350';
-        }
-        if (bar) {
-          bar.style.width = `${percent}%`;
-          if (isWarning) bar.style.background = '#ef5350';
-        }
-        if (warn && isWarning) {
-          warn.style.display = 'block';
-        }
-        if (delBtn && saveId) {
-          delBtn.dataset.saveId = saveId;
-          delBtn.style.display = 'inline-block';
-        }
-      }).catch(e => {
+        if (warn) warn.style.display = full ? 'block' : 'none';
+      }).catch(() => {
         const txt = modal.shadowRoot?.querySelector('#cloud-size-text');
         if (txt) txt.children[1].textContent = '获取失败';
       });
 
       this._renderProfilePersonas(modal);
+
+      modal.shadowRoot?.querySelector('#btn-check-app-update')?.addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        const status = modal.shadowRoot?.querySelector('#pf-app-update-status');
+        if (button) button.disabled = true;
+        if (status) status.textContent = '正在检测...';
+        try {
+          const result = await this._checkAppUpdate({ automatic: false });
+          if (status && !result.updateAvailable) status.textContent = `当前版本 ${ANDROID_APP_VERSION}，已是最新版`;
+        } catch (error) {
+          if (status) status.textContent = '检测失败';
+          this._sendSystemMessage(`检测更新失败: ${error.message}`);
+        } finally {
+          if (button) button.disabled = false;
+        }
+      });
 
       modal.shadowRoot?.querySelector('#cb-auto-sync')?.addEventListener('change', (e) => {
         localStorage.setItem('naruto_auto_cloud_sync', e.target.checked);
@@ -1004,63 +1269,16 @@ class NarutoRPGApp {
         else this._sendSystemMessage('已关闭自动云同步。');
       });
 
-      modal.shadowRoot?.querySelector('#btn-cloud-upload')?.addEventListener('click', async (e) => {
-        const btn = e.currentTarget;
-        try {
-          if (btn) {
-            btn.textContent = '上传中...';
-            btn.disabled = true;
-          }
-          await this._queueCloudSave();
-          this._sendSystemMessage('云存档上传成功！');
-          modal.close();
-          this._openProfilePanel(); 
-        } catch(err) {
-          this._sendSystemMessage('上传失败: ' + err.message);
-          if (btn) {
-            btn.textContent = '↑ 上传/覆盖';
-            btn.disabled = false;
-          }
-        }
-      });
-
-      modal.shadowRoot?.querySelector('#btn-cloud-download')?.addEventListener('click', async (e) => {
-        if (!confirm('确定要从云端恢复存档吗？当前未保存的本地进度将会丢失！')) return;
-        try {
-          const saves = await cloudSave.listSaves();
-          if (!saves || saves.length === 0) {
-            return this._sendSystemMessage('未找到云端存档。');
-          }
-          this._sendSystemMessage('正在下载云存档...');
-          const file = await cloudSave.downloadSave(saves[0].id);
-          eventBus.emit('app:timeline-import-file', { file });
-          modal.close();
-        } catch(e) {
-          this._sendSystemMessage('恢复失败: ' + e.message);
-        }
-      });
-
-      modal.shadowRoot?.querySelector('#btn-cloud-delete')?.addEventListener('click', async (e) => {
-        const saveId = e.target.dataset.saveId;
-        if (!saveId) return;
-        if (!confirm('确定要彻底删除该云存档吗？此操作无法撤销。')) return;
-        try {
-          e.target.textContent = '删除中...';
-          e.target.disabled = true;
-          await cloudSave.deleteSave(saveId);
-          this._sendSystemMessage('云存档已删除。您可以重新上传了。');
-          modal.close();
-          this._openProfilePanel();
-        } catch(err) {
-          this._sendSystemMessage('删除失败: ' + err.message);
-          e.target.textContent = '× 删除';
-          e.target.disabled = false;
-        }
+      modal.shadowRoot?.querySelector('#btn-cloud-manage')?.addEventListener('click', async () => {
+        modal.close();
+        try { await eventBus.request('app:open-saves', { cloud: true }); }
+        catch (error) { this._sendSystemMessage('打开云存档失败: ' + error.message); }
       });
 
       modal.shadowRoot?.querySelector('#btn-export-save')?.addEventListener('click', async () => {
         try {
           const result = await timelineSystem.exportTimeline();
+          if (result.cancelled) { this._sendSystemMessage('已取消导出，原存档仍保留。'); return; }
           this._sendSystemMessage(result.fallbackReason
             ? `浏览器未能创建 gzip，已改为导出普通 JSON：${result.fallbackReason}`
             : '本地压缩存档已导出。');
@@ -1193,21 +1411,70 @@ class NarutoRPGApp {
     return escAttr(value);
   }
 
-  async _confirmEmergencyReset(settingsModal) {
-    const confirmed = await customElements.get('game-modal').confirm({
-      title: '重置全部存档',
-      message: '这会清空当前角色、时间线节点和所有分支。API 配置会保留。确定继续？',
-      okLabel: '确认重置',
-      cancelLabel: '取消'
-    });
-    if (!confirmed) return;
+  async _personalSaveOperation(operation) {
+    if (this._multiplayerOverlay?.panel?.controller?.state?.roomId) throw new Error('请先退出联机房间，再保存或切换个人档');
+    if (this.pipeline?.isProcessing || this._saveTransition) throw new Error('正文正在生成或存档正在切换，请等待完成后再操作');
+    this._saveTransition = true;
+    try { return await operation(); } finally { this._saveTransition = false; }
+  }
 
-    try {
-      await timelineSystem.emergencyReset();
+  async _startNewPersonalSave() {
+    return this._personalSaveOperation(async () => {
+      const confirmed = await customElements.get('game-modal').confirm({
+        title: '保留旧档并开始新冒险',
+        message: '当前完整时间线将先保存到本地存档库，再开始创建新角色。你可以随时读取旧档。',
+        okLabel: '保存并开新档', cancelLabel: '取消'
+      });
+      if (!confirmed) return false;
+      await personalSaveLibrary.startNew();
       this.pipeline?.clearHistory();
-      settingsModal?.close();
+      this._pendingStartPrompt = null;
       appShell.showCharacterCreator();
-      this._sendSystemMessage('存档已重置，请重新创建角色。');
+      eventBus.emit('app:toast', '旧进度已保留在本地存档库，可以开始新的冒险。');
+      return true;
+    });
+  }
+
+  async _manageIfLine({ action, branchId, fromNodeId, name, description } = {}) {
+    return this._personalSaveOperation(async () => {
+      if (!['create', 'switch', 'rename', 'promote', 'delete'].includes(action)) throw new Error('未知的 IF 线操作');
+      if (action === 'delete' || action === 'promote') {
+        if (branchId === 'branch_main') throw new Error('主线不能删除或重复升格');
+        const branches = await timelineSystem.getAllBranches();
+        const branch = branches.find(item => item.id === branchId);
+        if (!branch) throw new Error('线路不存在，请刷新后重试');
+        const confirmed = await customElements.get('game-modal').confirm({
+          title: action === 'delete' ? '删除 IF 线' : '设为主线',
+          message: action === 'delete'
+            ? `删除「${branch.name}」及从它继续分出的子线？操作前会将完整进度备份到个人存档，之后可从备份找回。`
+            : `将「${branch.name}」设为主线？原主线的后续剧情会保留为 IF 线；操作前会备份完整进度。`,
+          okLabel: action === 'delete' ? '备份并删除' : '备份并设为主线', cancelLabel: '取消'
+        });
+        if (!confirmed) return false;
+      }
+      return personalSaveLibrary.exclusive(async () => {
+        await personalSaveLibrary.capture({ reason: `before-if-${action}` });
+        let result;
+        if (action === 'create') result = await timelineSystem.createIfBranch({ fromNodeId, name, description });
+        if (action === 'switch') result = await timelineSystem.switchBranch(branchId);
+        if (action === 'rename') result = await timelineSystem.renameBranch(branchId, { name, description });
+        if (action === 'promote') result = await timelineSystem.promoteBranchToMain(branchId);
+        if (action === 'delete') result = await timelineSystem.deleteBranch(branchId);
+        if (action !== 'rename') {
+          const node = await timelineSystem.getCurrentNode();
+          const history = await timelineSystem._reconstructChatHistory(node);
+          this.pipeline?.setHistory(history);
+          appShell.showGame();
+          appShell.restoreChatHistory(history, node?.clean_response || node?.ai_response_summary || '线路已切换。', { timelineNodeId: node?.id });
+        }
+        return result ?? true;
+      });
+    });
+  }
+
+  async _confirmEmergencyReset(settingsModal) {
+    try {
+      if (await this._startNewPersonalSave()) settingsModal?.close();
     } catch (error) {
       this._sendSystemMessage(`重置失败: ${error.message}`);
     }
@@ -1235,35 +1502,16 @@ class NarutoRPGApp {
       (document.getElementById('app') || document.body).appendChild(modal);
       modal.show({
         title: '平行推衍',
-        content: `<p>你选择重新推衍本回合。<br/>请选择如何处理当前回合的剧情：</p>`,
+        content: `<p>你选择重新推衍本回合。<br/>请选择如何处理本回及之后的剧情：</p>`,
         buttons: [
           { label: '取消', onClick: () => resolve('cancel') },
-          { label: '不保存本回', primary: true, onClick: () => resolve('prune') },
+          { label: '删除本回及后续', primary: true, onClick: () => resolve('prune') },
           { label: '保存为IF线', onClick: () => resolve('branch') }
         ]
       });
     });
   }
 
-  async _showImportModeChoice(existingCount) {
-    return new Promise(resolve => {
-      const modal = document.createElement('game-modal');
-      (document.getElementById('app') || document.body).appendChild(modal);
-      modal.show({
-        title: '导入时间线存档',
-        content: `<p>当前已有 ${existingCount} 个回合的游戏进度。请选择导入方式:</p>
-                  <p style="font-size:11px;color:#a39f98;margin-top:8px;">
-                    <strong>覆盖</strong>:清空当前进度,用导入存档完全替换(不可撤销)<br/>
-                    <strong>合并</strong>:保留当前进度,把导入的节点作为新分支追加(可在时间线导航器中切换)
-                  </p>`,
-        buttons: [
-          { label: '取消', onClick: () => resolve('cancel') },
-          { label: '合并(追加分支)', onClick: () => resolve('merge') },
-          { label: '覆盖(替换)', primary: true, onClick: () => resolve('overwrite') }
-        ]
-      });
-    });
-  }
   _buildCombatActionMessage(action) {
     return buildCombatPlayerActionMessage(action);
   }

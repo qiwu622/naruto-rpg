@@ -178,6 +178,12 @@
   --z-overlay:  300;
   --z-modal:    400;
   --z-toast:    500;
+  --z-float:    600;    /* 预留：浮动小组件 */
+  --z-overlay-top: 3000;  /* 联机覆盖层（高于普通 modal） */
+  --z-atmosphere: 9999;   /* 全屏氛围 canvas */
+  --z-lyrics:   99999;  /* 桌面歌词 */
+  --z-fullscreen: 100000; /* 全屏编辑器基准（编辑器间按 calc 叠放） */
+  --z-modal-top: 200000;  /* GameModal 全局最高弹窗 */
 }
 
 @media (prefers-reduced-motion: reduce) {

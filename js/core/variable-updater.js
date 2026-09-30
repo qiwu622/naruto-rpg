@@ -1,6 +1,7 @@
 import { AIClient } from './ai-client.js';
 import { eventBus } from './event-bus.js';
 import { publishPromptTrace } from './prompt-trace.js';
+import { recordVariableUpdaterAttempt } from './variable-updater-diagnostics.js';
 import { buildShinobiDailyPrompt, parseShinobiDailyContract } from './shinobi-daily.js';
 import { getVariableUpdaterPreset, resolveVariableUpdaterPreset } from '../data/variable-updater-preset.js';
 import { normalizeNpcIdentity } from '../data/npc-identity.js';
@@ -8,6 +9,8 @@ import {
   ALLOWED_TAGS,
   calendarMonthFromValue,
   coerceValue,
+  getVariableUpdateDomain,
+  getVariableUpdateDomainPrompt,
   isKnownKey,
   normalizeRelationshipInstruction,
   normalizeStructuredVariableUpdate,
@@ -129,7 +132,7 @@ export const VARIABLE_UPDATER_CONSISTENCY_PROTOCOL = `【系统强制输出一�
 - <update_manifest> 是唯一的机器可校验更新清单；实际业务标签是唯一提交结果。每个标签只放一个严格 JSON 对象。所有 path、op、字段类型和必填字段必须服从结构化变量 DSL。
 - 每回合至少包含一个 <variable_thinking> 和一个含非空 summary 的 <memory>。
 - 任一字段无法确认时只跳过该字段，不得因此丢弃同回合其他已确认变化。
-- 本地会因标签/JSON 无法解析、字段类型错误、危险身份键、非法变量路径、内容无法执行，以及 <update_manifest> 漏项或与实际标签矛盾而拒绝整份输出。清单外但格式正确的人物写入、人物资料完整度和规范名偏差只作提醒，不得为了满足提醒而删除格式正确的写入。`;
+- 本地会因标签/JSON 无法解析、字段类型错误、危险身份键、非法变量路径或内容无法执行而拒绝输出。审计措辞和清单领域统计由本地提醒或纠正，不阻断合法更新。清单外但格式正确的人物写入、人物资料完整度和规范名偏差只作提醒，不得为了满足提醒而删除格式正确的写入。`;
 
 export const VARIABLE_UPDATER_PATH_PROTOCOL = `【系统强制只读证据与写入路径边界 · 不受自定义预设覆盖】
 - [当前状态] / current_state JSON 中的 player、world、attributes_and_progression、skills_and_equipment、missions、relationships、combat、map 只是只读证据分组名，绝不是可写 variable.path；不得把这些分组名写入 path。
@@ -138,10 +141,10 @@ export const VARIABLE_UPDATER_PATH_PROTOCOL = `【系统强制只读证据与写
 
 export const VARIABLE_UPDATER_OBLIGATION_PROTOCOL = `【系统强制更新义务协议 · 不受自定义预设覆盖】
 - 必须在 <variable_thinking> 后、业务标签前输出且只输出一个 <update_manifest>，内容为严格 JSON：{"domains":{"领域ID":"updated|unchanged"},"present_npcs":{"姓名":"updated"},"active_missions":{"任务ID":"updated|unchanged"}}。
-- domains 必须逐项覆盖给出的固定领域；该领域有对应业务标签时写 updated，没有时写 unchanged。漏项或状态与实际标签矛盾都会导致整份输出被拒绝。
+- domains 按实际业务标签填写；本地会依据规范目标字段自动生成并纠正领域统计，缺少清单时也会本地补全，不因领域统计遗漏而重试。
 - update_obligations.present_npcs 是帮助查漏的参考清单，不是人物写入白名单。优先使用清单中的 canonical 规范姓名，但可为清单外人物输出格式正确的 <relationship>，也不得因清单不完整而删除人物写入。只写有依据的字段；history、inner_thoughts、combatant 和 combat_stats 均可在无法确认时省略，后续回合再补全。inner_thoughts 不得推断或索取未公开的私密意图。
-- present_npcs 必须逐项覆盖 update_obligations 中的参考人物并标记 updated；清单外人物仍可写入，且不会因为不在参考清单而被拒绝。
-- active_missions 必须逐项覆盖当前全部活动任务。正文确有推进、完成、失败或字段变化时写 updated 并输出同 ID <mission>；没有变化时写 unchanged 且不得输出该任务标签。漏项或标签与状态矛盾都会导致整份输出被拒绝；status=progress 时 progress.note 必须说明本轮实际进展。
+- present_npcs 按实际人物标签填写 updated 或 unchanged；本地会补全参考人物的统计。清单外人物仍可写入，且不会因为不在参考清单而被拒绝。
+- active_missions 核对当前全部活动任务。正文确有推进、完成、失败或字段变化时写 updated 并输出同 ID <mission>；没有变化时写 unchanged。缺少清单项时本地按实际标签补全；已声明 updated 却缺少同 ID 标签仍会被拒绝，避免丢失承诺的任务变化。status=progress 时 progress.note 必须说明本轮实际进展。
 - <variable_thinking> 中的自然语言不产生任何更新义务，也不能代替 <update_manifest> 或业务标签。`;
 
 export const VARIABLE_UPDATER_COVERAGE_PROTOCOL = `【系统强制反漏更协议 · 不受自定义预设覆盖】
@@ -219,6 +222,7 @@ export function buildVariableUpdaterRuntimeContract({
   updateObligations,
   correctionInstruction = '',
   repairCandidate = '',
+  includeDaily = true,
   includeExample = true,
   exampleTitle = '变量更新完整混合示例'
 } = {}) {
@@ -255,7 +259,9 @@ export function buildVariableUpdaterRuntimeContract({
   sections.push(VARIABLE_UPDATER_PATH_PROTOCOL);
   if (includeExample) {
     const title = String(exampleTitle || '变量更新完整混合示例').trim();
-    sections.push(`【${title} · 仅示范格式与字段，禁止复制示例事实、ID或数值】\n${VARIABLE_UPDATER_MIXED_EXAMPLE}`);
+    const example = includeDaily ? VARIABLE_UPDATER_MIXED_EXAMPLE
+      : VARIABLE_UPDATER_MIXED_EXAMPLE.replace(/<shinobi_daily>[\s\S]*?<\/shinobi_daily>/g, '').trim();
+    sections.push(`【${title} · 仅示范格式与字段，禁止复制示例事实、ID或数值】\n${example}`);
   }
 
   const obligations = normalizeUpdateObligations(updateObligations);
@@ -277,7 +283,8 @@ ${repairData}
     sections.push(`【上一次变量输出未通过一致性校验】\n${correctionInstruction}\n请重新生成本回合完整输出，不要只补一个孤立标签；以本次实际出现的顶层标签为唯一结果。`);
   }
 
-  sections.push(buildShinobiDailyPrompt({ producer: 'secondary', includeExample: false }));
+  if (includeDaily) sections.push(buildShinobiDailyPrompt({ producer: 'secondary', includeExample: false }));
+  else sections.push('【仅修复状态】日报已通过校验并由本地保留，本次只输出变量、更新清单与记忆等状态标签，不要重新生成日报。');
   // Saved presets may contain the former rule that regenerated every named NPC
   // card. Reassert the incremental combat rule near the end of the contract.
   sections.push(VARIABLE_UPDATER_COMBAT_PROTOCOL);
@@ -860,15 +867,7 @@ function validateRelationshipBlocks(blocks, state, requirements, errors, warning
 }
 
 function variableDomain(update) {
-  const path = String(update?.path || update?.key || '');
-  if (path.startsWith('world_state.') || path.startsWith('世界·')) return 'world';
-  if (path.startsWith('attributes.') || path.startsWith('progression.')
-    || path.startsWith('属性·') || path.startsWith('进度·')) return 'attributes';
-  if (path.startsWith('skills.') || path.startsWith('技能·')) return 'skills';
-  if (path.startsWith('equipment.') || path.startsWith('物品·')) return 'equipment';
-  if (path === 'player.current_goal' || path === '玩家·当前目标') return 'missions';
-  if (path.startsWith('player.') || path.startsWith('玩家·')) return 'attributes';
-  return null;
+  return getVariableUpdateDomain(update);
 }
 
 function exactManifestSection(manifest, field, expectedKeys, errors, warnings = [], { allowExtra = false } = {}) {
@@ -908,25 +907,31 @@ function validateUpdateManifest(blocks, normalizedUpdates, obligations, errors, 
   const unmetObligations = [];
   const manifests = parsedBlockValues(blocks, 'update_manifest', errors);
   const manifestBlocks = blocks.filter(block => block.tag === 'update_manifest');
-  if (manifestBlocks.length !== 1 || manifests.length !== 1) {
+  if (manifestBlocks.length > 1 || manifests.length > 1) {
     errors.push('启用更新义务时必须且只能输出一个顶层 <update_manifest>');
     unmetObligations.push('缺少唯一且有效的更新义务清单');
     return { unmetObligations };
   }
-  const manifest = manifests[0];
+  const manifest = manifests[0] || {};
+  if (!manifestBlocks.length) warnings.push('未提供 <update_manifest>，已按实际业务标签生成更新清单');
   const domainKeys = obligations.fixed_domains.map(domain => domain.id);
   const npcKeys = obligations.present_npcs.map(item => item.npc);
   const missionKeys = obligations.active_missions.map(item => item.id);
-  const domains = exactManifestSection(manifest, 'domains', domainKeys, errors, warnings);
+  const domains = exactManifestSection(manifest, 'domains', domainKeys, warnings, warnings);
   const presentNpcs = exactManifestSection(
     manifest,
     'present_npcs',
     npcKeys,
-    errors,
+    warnings,
     warnings,
     { allowExtra: true }
   );
-  const activeMissions = exactManifestSection(manifest, 'active_missions', missionKeys, errors, warnings);
+  const rawActiveMissions = Object.hasOwn(manifest, 'active_missions') ? manifest.active_missions : {};
+  const activeMissions = rawActiveMissions && typeof rawActiveMissions === 'object' && !Array.isArray(rawActiveMissions)
+    ? rawActiveMissions : {};
+  if (activeMissions !== rawActiveMissions) {
+    errors.push('<update_manifest> active_missions 必须是JSON对象');
+  }
 
   const actualDomains = new Set(normalizedUpdates.map(variableDomain).filter(Boolean));
   if (blocks.some(block => block.tag === 'mission')) actualDomains.add('missions');
@@ -936,7 +941,7 @@ function validateUpdateManifest(blocks, normalizedUpdates, obligations, errors, 
   for (const { id, label } of obligations.fixed_domains) {
     const actual = actualDomains.has(id) ? 'updated' : 'unchanged';
     if (domains[id] && domains[id] !== actual) {
-      errors.push(`领域 ${label || id} 的 manifest=${domains[id]}，但实际业务标签应为 ${actual}`);
+      warnings.push(`领域 ${label || id} 的 manifest=${domains[id]}，已按实际业务标签修正为 ${actual}`);
     }
   }
 
@@ -946,8 +951,7 @@ function validateUpdateManifest(blocks, normalizedUpdates, obligations, errors, 
     const npc = obligation.npc;
     if (presentNpcs[npc] !== 'updated') {
       const message = `登场人物 ${npc} 在 <update_manifest> 中必须标记 updated`;
-      errors.push(message);
-      unmetObligations.push(message);
+      warnings.push(message);
     }
     const matches = relationships.filter(item => (
       item.npc === npc || (item.op === 'rename' && item.new_npc === npc)
@@ -971,19 +975,34 @@ function validateUpdateManifest(blocks, normalizedUpdates, obligations, errors, 
   }
 
   const missions = parsedBlockValues(blocks, 'mission', errors);
-  for (const obligation of obligations.active_missions) {
-    const id = obligation.id;
+  const derivedMissions = Object.create(null);
+  const allMissionIds = new Set([...missionKeys, ...Object.keys(activeMissions), ...missions.map(item => nonEmptyText(item?.id)).filter(Boolean)]);
+  for (const id of allMissionIds) {
     const status = activeMissions[id];
     const matches = missions.filter(item => nonEmptyText(item?.id) === id);
-    if (status === 'updated' && matches.length !== 1) {
+    derivedMissions[id] = matches.length ? 'updated' : 'unchanged';
+    if (status !== undefined && !UPDATE_MANIFEST_STATUSES.includes(status)) {
+      errors.push(`<update_manifest> active_missions.${id} 只能是 updated 或 unchanged`);
+    }
+    if (matches.length > 1 || (status === 'updated' && !matches.length)) {
       const message = `活动任务 ${id} 标记 updated 时必须恰好输出一个同 ID <mission>，实际 ${matches.length} 个`;
       errors.push(message);
       unmetObligations.push(message);
     } else if (status === 'unchanged' && matches.length) {
-      errors.push(`活动任务 ${id} 标记 unchanged 时不得输出 <mission>`);
+      warnings.push(`活动任务 ${id} 已有 <mission>，清单已修正为 updated`);
     }
   }
-  return { unmetObligations: [...new Set(unmetObligations)] };
+  const derivedNpcs = Object.fromEntries(npcKeys.map(npc => [npc,
+    relationships.some(item => item.npc === npc || item.new_npc === npc) ? 'updated' : 'unchanged'
+  ]));
+  return {
+    unmetObligations: [...new Set(unmetObligations)],
+    manifest: {
+      domains: Object.fromEntries(domainKeys.map(id => [id, actualDomains.has(id) ? 'updated' : 'unchanged'])),
+      present_npcs: derivedNpcs,
+      active_missions: derivedMissions
+    }
+  };
 }
 
 export function sanitizeVariableUpdaterOutput(text) {
@@ -1245,16 +1264,16 @@ export function validateVariableUpdaterOutput(text, options = {}) {
   if (counts.memory < 1) errors.push('缺少每回合必需的顶层 <memory> 标签');
   if (options.updateObligations !== undefined && counts.thinking > 0) {
     if (!VARIABLE_THINKING_REQUEST_MARKERS.some(marker => thinking.includes(marker))) {
-      errors.push('<variable_thinking> 缺少请求复述标记');
+      warnings.push('<variable_thinking> 缺少请求复述标记');
     }
     let previousIndex = -1;
     for (const heading of VARIABLE_THINKING_AUDIT_HEADINGS) {
       const index = thinking.indexOf(heading, previousIndex + 1);
       if (index < 0) {
-        errors.push(`<variable_thinking> 缺少固定审计项: ${heading}`);
+        warnings.push(`<variable_thinking> 缺少固定审计项: ${heading}`);
         continue;
       }
-      if (index <= previousIndex) errors.push(`<variable_thinking> 固定审计项顺序错误: ${heading}`);
+      if (index <= previousIndex) warnings.push(`<variable_thinking> 固定审计项顺序错误: ${heading}`);
       previousIndex = index;
     }
   }
@@ -1303,6 +1322,7 @@ export function validateVariableUpdaterOutput(text, options = {}) {
     }
   }
   let unmetObligations = [];
+  let manifest = null;
   if (options.updateObligations !== undefined) {
     const result = validateUpdateManifest(
       blocks,
@@ -1313,6 +1333,7 @@ export function validateVariableUpdaterOutput(text, options = {}) {
       { state: state || {} }
     );
     unmetObligations = result.unmetObligations;
+    manifest = result.manifest || null;
   }
   return {
     valid: errors.length === 0,
@@ -1321,6 +1342,7 @@ export function validateVariableUpdaterOutput(text, options = {}) {
     counts,
     declared: {},
     thinking,
+    manifest,
     unmetObligations
   };
 }
@@ -1353,7 +1375,8 @@ export function buildVariableUpdaterMessages(preset, {
   knowledgeContext = '',
   updateObligations,
   correctionInstruction = '',
-  repairCandidate = ''
+  repairCandidate = '',
+  includeDaily = true
 } = {}) {
   const publicCompactState = projectPublicUpdaterValue(compactState || {});
   const messages = resolveVariableUpdaterPreset(preset, {
@@ -1383,15 +1406,42 @@ export function buildVariableUpdaterMessages(preset, {
       openingContract,
       updateObligations,
       correctionInstruction,
-      repairCandidate
+      repairCandidate,
+      includeDaily
     })
   });
+  const domainPrompt = getVariableUpdateDomainPrompt();
+  if (!messages.some(message => message.content?.includes(domainPrompt))) {
+    messages.unshift({ role: 'system', content: domainPrompt });
+  }
   const systemContent = messages
     .filter(message => message.role === 'system')
     .map(message => message.content)
     .join('\n\n');
   const conversation = messages.filter(message => message.role !== 'system');
   return systemContent ? [{ role: 'system', content: systemContent }, ...conversation] : conversation;
+}
+
+function withDerivedManifest(output, validation) {
+  if (!validation.manifest) return output;
+  const blocks = extractTopLevelTags(output).filter(block => block.tag !== 'update_manifest');
+  const index = blocks.findIndex(block => !['variable_thinking', 'var_thinking'].includes(block.tag));
+  blocks.splice(index < 0 ? blocks.length : index, 0, canonicalBlock('update_manifest', validation.manifest));
+  return blocks.map(block => block.text).join('\n');
+}
+
+function buildDailyRepairMessages({ state, compactState, userInput, narrativeResponse,
+  knowledgeContext, correctionInstruction, repairCandidate }) {
+  const dailyCandidate = parseShinobiDailyContract(repairCandidate || '').raw || '';
+  return [
+    { role: 'system', content: `【只修复忍界日报】\n变量与记忆已通过校验并由本地暂存，本次只修复日报。只返回一个完整 <shinobi_daily>，不要输出或修改变量、记忆、审计或更新清单。\n${buildShinobiDailyPrompt({ producer: 'repair' })}` },
+    { role: 'user', content: JSON.stringify({
+      current_state: projectPublicUpdaterValue(compactState || state || {}),
+      user_input: userInput, final_narrative: narrativeResponse,
+      public_evidence: knowledgeContext || '', validation_error: correctionInstruction || '',
+      rejected_daily: dailyCandidate.slice(0, VARIABLE_UPDATER_REPAIR_MAX_CHARS)
+    }) }
+  ];
 }
 
 export async function runVariableUpdater({
@@ -1407,6 +1457,7 @@ export async function runVariableUpdater({
   updateObligations,
   correctionInstruction = '',
   repairCandidate = '',
+  repairContext = null,
   onClient,
   onShinobiDaily
 }) {
@@ -1419,8 +1470,20 @@ export async function runVariableUpdater({
     return null;
   }
 
+  const validationOptions = { state, updateObligations, narrativeResponse };
+  // Candidates belong to one immutable turn context. Never reuse state from a
+  // different action, narrative, snapshot, or set of obligations.
+  const scope = JSON.stringify(projectPublicUpdaterValue({ userInput, narrativeResponse,
+    state, compactState, openingContract, updateObligations }));
+  const resumed = repairContext?.scope === scope ? repairContext : null;
+  const savedState = resumed?.stateOutput || '';
+  const savedStateValidation = savedState ? validateVariableUpdaterOutput(savedState, validationOptions) : null;
+  const savedDaily = parseShinobiDailyContract(resumed?.dailyRaw || '', { required: true });
+  let validatedState = savedStateValidation?.valid ? withDerivedManifest(savedState, savedStateValidation) : '';
+  let validatedDaily = savedDaily.valid ? savedDaily.raw : '';
+  const stage = validatedState && !validatedDaily ? 'daily' : validatedDaily && !validatedState ? 'state' : 'full';
   const preset = getVariableUpdaterPreset();
-  const messages = buildVariableUpdaterMessages(preset, {
+  const messageContext = {
     state,
     compactState,
     userInput,
@@ -1432,8 +1495,11 @@ export async function runVariableUpdater({
     knowledgeContext,
     updateObligations,
     correctionInstruction,
-    repairCandidate
-  });
+    repairCandidate: stage === 'state' ? sanitizeVariableUpdaterOutput(repairCandidate) : repairCandidate,
+    includeDaily: stage !== 'state'
+  };
+  const messages = stage === 'daily' ? buildDailyRepairMessages(messageContext)
+    : buildVariableUpdaterMessages(preset, messageContext);
   if (!messages.length) throw new Error('变量更新预设没有启用的有效条目');
 
   const generationOptions = {
@@ -1446,58 +1512,83 @@ export async function runVariableUpdater({
   publishTrace(messages, {
     userInput,
     presetName: preset.name || '未命名预设',
-    generationOptions,
+    generationOptions: { ...generationOptions, repairStage: stage },
     model: updaterConfig.model
   });
 
   let variableTags = '';
-  let cleaned = '';
+  let cleaned = validatedState;
   let dailyResult = null;
+  let validation = null;
+  let finishReason = null;
   try {
     const client = new AIClient();
     onClient?.(client);
     client.configure(updaterConfig);
-    variableTags = variableConfig.streaming !== false
-      ? await client.chatStream(messages, generationOptions, () => {})
-      : await client.chat(messages, generationOptions);
+    if (variableConfig.streaming !== false) {
+      variableTags = await client.chatStream(messages, generationOptions, () => {});
+    } else {
+      const response = await client.chatDetailed(messages, generationOptions);
+      variableTags = response.text;
+      finishReason = response.finishReason;
+    }
     if (!variableTags || variableTags.trim().length < 20) {
-      throw new Error(`变量更新模型返回内容过短（${variableTags?.length || 0}字符），疑似空回或截断`);
+      const error = new Error(`输出为空或不完整：变量更新模型返回内容过短（${variableTags?.length || 0}字符）`);
+      error.code = 'VARIABLE_UPDATER_OUTPUT_INCONSISTENT';
+      error.failureKind = 'empty';
+      throw error;
     }
-    cleaned = sanitizeVariableUpdaterOutput(variableTags);
-    if (!cleaned || cleaned.trim().length < 10) {
-      throw new Error(`未检测到有效的 XML 变量标签（原始长度 ${variableTags?.length || 0} 字符）`);
+    cleaned = stage === 'daily' ? validatedState : sanitizeVariableUpdaterOutput(variableTags);
+    validation = validateVariableUpdaterOutput(cleaned, validationOptions);
+    dailyResult = stage === 'state' ? savedDaily : parseShinobiDailyContract(variableTags, { required: true });
+    if (validation.valid) {
+      cleaned = withDerivedManifest(cleaned, validation);
+      validatedState = cleaned;
     }
-    const validation = validateVariableUpdaterOutput(cleaned, {
-      state,
-      updateObligations,
-      narrativeResponse
-    });
-    dailyResult = parseShinobiDailyContract(variableTags, { required: true });
+    if (dailyResult.valid) validatedDaily = dailyResult.raw;
     if (!validation.valid || !dailyResult.valid) {
       const errors = [...validation.errors, ...dailyResult.errors];
-      const error = new Error(`变量自检与结构标签不一致：${errors.join('；')}`);
+      const truncated = ['length', 'max_tokens'].includes(finishReason)
+        || errors.some(message => /未闭合|被截断/.test(message));
+      const failureKind = truncated ? 'truncated' : !validation.valid && !dailyResult.valid
+        ? 'state-and-daily' : !validation.valid ? 'state' : 'daily';
+      const label = { truncated: '输出被截断', 'state-and-daily': '变量与日报校验失败',
+        state: '变量校验失败', daily: '日报校验失败（变量已暂存）' }[failureKind];
+      const error = new Error(`${label}：${errors.join('；')}`);
       error.code = 'VARIABLE_UPDATER_OUTPUT_INCONSISTENT';
+      error.failureKind = failureKind;
       error.validation = { ...validation, valid: false, errors };
       error.shinobiDaily = dailyResult.daily;
       error.shinobiDailyValidation = dailyResult;
-      error.recovery = filterSafeVariableUpdaterOutput(cleaned, {
-        state,
-        updateObligations,
-        narrativeResponse
-      });
+      error.recovery = filterSafeVariableUpdaterOutput(cleaned, validationOptions);
       error.safeOutput = error.recovery.output;
       throw error;
     }
+    recordVariableUpdaterAttempt({ stage, model: updaterConfig.model, rawOutput: variableTags,
+      warnings: validation.warnings, finishReason });
     onShinobiDaily?.(dailyResult.daily);
     return cleaned;
   } catch (error) {
     if (error && typeof error === 'object') {
       // Only tagged output is a meaningful repair candidate; a short refusal or
       // pure prose would turn "AI repair" into an expensive disguised regenerate.
-      const stateOutput = cleaned || sanitizeVariableUpdaterOutput(variableTags);
-      const failedOutput = [stateOutput, dailyResult?.raw].filter(Boolean).join('\n');
+      const stateOutput = validatedState || cleaned || sanitizeVariableUpdaterOutput(variableTags);
+      const failedOutput = [stateOutput, validatedDaily || dailyResult?.raw].filter(Boolean).join('\n');
       if (failedOutput && !error.failedOutput) error.failedOutput = failedOutput;
       if (variableTags && !error.rawOutput) error.rawOutput = String(variableTags);
+      error.failureKind ||= error.isCancelled ? 'cancelled' : 'transport';
+      error.repairContext = {
+        scope,
+        stage: validatedState && !validatedDaily ? 'daily' : validatedDaily && !validatedState ? 'state' : 'full',
+        stateOutput: validatedState, dailyRaw: validatedDaily
+      };
+      if (!error.recovery && stateOutput) {
+        error.recovery = filterSafeVariableUpdaterOutput(stateOutput, validationOptions);
+        error.safeOutput = error.recovery.output;
+      }
+      if (!error.shinobiDaily && validatedDaily) error.shinobiDaily = parseShinobiDailyContract(validatedDaily).daily;
+      error.attemptDiagnostic = recordVariableUpdaterAttempt({ stage, model: updaterConfig.model,
+        rawOutput: variableTags, error, warnings: validation?.warnings, finishReason });
     }
     console.warn('[VariableUpdater] 更新失败:', error.message);
     eventBus.emit('pipeline:warning', { warning: `变量更新失败: ${error.message}` });

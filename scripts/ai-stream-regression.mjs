@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import { Readable, Writable } from 'node:stream';
+import { withCustomElementGlobals } from './helpers/browser-element-globals.mjs';
 import {
   acceptsEventStream,
   forwardStreamingResponse,
@@ -1294,7 +1295,7 @@ await test('hidden reasoning keeps a visible safe streaming status', async () =>
   assert.doesNotMatch(source, /content\.textContent\s*=\s*(?:text|response)/);
 });
 
-await test('streaming UI can render a token without unrelated timeline state', async () => {
+await test('streaming UI can render a token without unrelated timeline state', () => withCustomElementGlobals(async () => {
   const originalDocument = globalThis.document;
   const { appShell } = await import('../js/ui/app-shell.js');
   const originals = {
@@ -1337,9 +1338,9 @@ await test('streaming UI can render a token without unrelated timeline state', a
     appShell._renderMarkdown = originals.renderMarkdown;
     appShell._scroll = originals.scroll;
   }
-});
+}));
 
-await test('a failed hidden stream removes its placeholder instead of leaving a fake active connection', async () => {
+await test('a failed hidden stream removes its placeholder instead of leaving a fake active connection', () => withCustomElementGlobals(async () => {
   const { appShell } = await import('../js/ui/app-shell.js');
   const originalStreamingEl = appShell._streamingEl;
   let removed = 0;
@@ -1365,7 +1366,7 @@ await test('a failed hidden stream removes its placeholder instead of leaving a 
   } finally {
     appShell._streamingEl = originalStreamingEl;
   }
-});
+}));
 
 if (failures.length) {
   throw new AggregateError(failures, `${failures.length} AI streaming regression test(s) failed`);

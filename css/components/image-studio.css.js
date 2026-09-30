@@ -144,7 +144,7 @@ export const imageStudioStyles = `
   .is-profile .is-grid { margin-top: 11px; grid-template-columns: 90px minmax(0, 1fr); gap: 9px 12px; }
 
   /* Gallery */
-  :host(.is-gallery-host) { position: fixed; inset: 0; z-index: 100100; }
+  :host(.is-gallery-host) { position: fixed; inset: 0; z-index: calc(var(--z-fullscreen) + 100); }
   .is-gallery-backdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 22px; background: rgba(3,4,6,.86); backdrop-filter: blur(12px); }
   .is-gallery-dialog { width: min(1120px, 100%); max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--is-border); border-radius: 12px; background: #0b0f14; box-shadow: 0 32px 100px rgba(0,0,0,.6); }
   .is-gallery-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 19px 22px; border-bottom: 1px solid var(--is-border); }

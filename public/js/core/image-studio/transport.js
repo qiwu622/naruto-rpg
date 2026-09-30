@@ -1,3 +1,5 @@
+import { isNativeAndroidApp } from '../runtime-platform.js';
+
 function imageError(code, message, details = null) {
   const error = new Error(message);
   error.code = code;
@@ -23,6 +25,13 @@ function isOpenAICompatibleProvider(type) {
 function isNovelAIProvider(type) {
   const normalized = String(type || '').trim().toLowerCase();
   return normalized === 'novelai' || normalized === 'novel-ai' || normalized === 'nai';
+}
+
+export function normalizeImageApiKey(value, providerType) {
+  const key = String(value || '');
+  return isNovelAIProvider(providerType)
+    ? key.trim().replace(/^Bearer\s+/i, '').replace(/\\_/g, '_').trim()
+    : key;
 }
 
 export function normalizeImageApiBaseUrl(value, providerType = 'openai-compatible') {
@@ -70,7 +79,11 @@ export function classifyImageEndpoint(value) {
   };
 }
 
-export function resolveImageTransport(apiUrl, { allowedPrivateOrigins = [], allowedPublicHttpOrigins = [] } = {}) {
+export function resolveImageTransport(apiUrl, {
+  allowedPrivateOrigins = [],
+  allowedPublicHttpOrigins = [],
+  nativeDirect = isNativeAndroidApp()
+} = {}) {
   const endpoint = classifyImageEndpoint(apiUrl);
   if (endpoint.public && endpoint.url.protocol !== 'https:'
       && !allowedPublicHttpOrigins.includes(endpoint.origin)) {
@@ -79,7 +92,12 @@ export function resolveImageTransport(apiUrl, { allowedPrivateOrigins = [], allo
   if (endpoint.privateLan && !allowedPrivateOrigins.includes(endpoint.origin)) {
     throw imageError('PROVIDER_POLICY', `局域网图像服务尚未获准直连: ${endpoint.origin}`);
   }
-  return { ...endpoint, route: endpoint.public ? 'public-proxy' : 'browser-direct' };
+  return {
+    ...endpoint,
+    route: endpoint.public
+      ? (nativeDirect ? 'native-direct' : 'public-proxy')
+      : 'browser-direct'
+  };
 }
 
 function joinUrl(base, path) {
@@ -116,21 +134,32 @@ function credentialsForProviderUrl(provider, url) {
     return null;
   }
   return {
-    apiKey: provider.apiKey,
+    apiKey: normalizeImageApiKey(provider.apiKey, provider.type),
     apiKeyHeader: provider.apiKeyHeader || 'Authorization'
   };
 }
 
-async function errorFromResponse(response, fallback) {
+async function errorFromResponse(response, fallback, { route, providerType } = {}) {
   const body = await response.text().catch(() => '');
   let message = body;
   try {
     const parsed = JSON.parse(body);
-    message = parsed.error?.message || parsed.error || parsed.message || body;
+    const detail = parsed.error?.message || parsed.message || parsed.error || body;
+    message = Array.isArray(detail) ? detail.join('; ') : (typeof detail === 'object' ? JSON.stringify(detail) : detail);
   } catch { /* text response */ }
+  message = String(message);
+  const viaProxy = route === 'public-proxy';
+  let code = response.status === 401 || response.status === 403 ? 'AUTH' : 'PROVIDER_ERROR';
+  if (viaProxy && /^(未登录|登录会话已过期|账户不存在或已被删除)/.test(message)) code = 'SESSION_AUTH';
+  if (viaProxy && /^目标域名解析到受限地址/.test(message)) code = 'PROVIDER_POLICY';
+  if (response.status === 504) code = 'UPSTREAM_TIMEOUT';
+  const proxyHint = viaProxy && isNovelAIProvider(providerType)
+    && (response.status === 502 || response.status === 504 || code === 'PROVIDER_POLICY')
+    ? '。请检查运行网站的服务器能否访问 NovelAI；需要代理时在服务器配置 AI_PROXY_FORWARD_URL（电脑浏览器的代理不会自动生效）'
+    : '';
   const error = imageError(
-    response.status === 401 || response.status === 403 ? 'AUTH' : 'PROVIDER_ERROR',
-    `${fallback} (${response.status})${message ? `: ${String(message).slice(0, 500)}` : ''}`
+    code,
+    `${fallback} (${response.status})${message ? `: ${message.slice(0, 500)}` : ''}${proxyHint}`
   );
   error.status = response.status;
   error.retryable = response.status === 429 || response.status >= 500;
@@ -156,19 +185,20 @@ export class ImageTransport {
     });
     const targetUrl = joinUrl(baseUrl, path);
     const requestHeaders = { Accept: accept, ...headers };
+    const apiKey = normalizeImageApiKey(provider.apiKey, provider.type);
     let url = targetUrl;
     if (transport.route === 'public-proxy') {
       url = '/api/ai-proxy';
       requestHeaders['x-target-url'] = targetUrl;
-      requestHeaders['x-user-api-key'] = provider.apiKey || '';
+      requestHeaders['x-user-api-key'] = apiKey;
       requestHeaders['x-api-key-header'] = provider.apiKeyHeader || 'Authorization';
       requestHeaders['x-proxy-purpose'] = String(path).replace(/[?#].*$/, '').replace(/\/+$/, '').endsWith('/models')
         ? 'models'
         : 'image-generation';
-    } else if (provider.apiKey) {
+    } else if (apiKey) {
       const keyHeader = provider.apiKeyHeader || 'Authorization';
       requestHeaders[keyHeader] = keyHeader.toLowerCase() === 'authorization'
-        ? `Bearer ${provider.apiKey}` : provider.apiKey;
+        ? `Bearer ${apiKey}` : apiKey;
     }
     let requestBody = body;
     if (body !== undefined && body !== null && !(body instanceof Blob) && !(body instanceof FormData)
@@ -187,12 +217,17 @@ export class ImageTransport {
       });
     } catch (error) {
       if (error?.name === 'AbortError') throw error;
+      if (transport.route === 'public-proxy') {
+        throw imageError('PROXY_NETWORK', '无法连接网站的图像代理，请检查网站服务与登录状态', { cause: error?.message });
+      }
       const hint = transport.route === 'browser-direct'
         ? '。请确认本地服务已启动，并允许当前网页来源的 CORS / Private Network Access'
         : '';
       throw imageError('CORS_OR_PRIVATE_NETWORK', `无法连接图像服务${hint}`, { cause: error?.message });
     }
-    if (!response.ok) throw await errorFromResponse(response, '图像服务请求失败');
+    if (!response.ok) throw await errorFromResponse(response, '图像服务请求失败', {
+      route: transport.route, providerType: provider.type
+    });
     return response;
   }
 

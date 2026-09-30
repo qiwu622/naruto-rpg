@@ -2,6 +2,8 @@ import { ToolLoopAgent, jsonSchema, stepCountIs, tool } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createToolResultBudget } from '../../js/core/tool-result-budget.js';
+import { isNativeAndroidApp } from '../../js/core/runtime-platform.js';
+import { fetchAI } from '../../js/core/native-ai-fetch.js';
 
 export const version = 'naruto-agent-sdk/v1';
 
@@ -50,10 +52,16 @@ function proxyFetch(config) {
   };
 }
 
+function directFetch() {
+  return (input, init = {}) => fetchAI(input, init);
+}
+
 function createModel(config = {}) {
   const backend = String(config.backend || 'openai').toLowerCase();
   const baseURL = normalizeBaseUrl(config.apiUrl, backend);
-  const fetch = proxyFetch({ ...config, backend });
+  const fetch = isNativeAndroidApp()
+    ? directFetch()
+    : proxyFetch({ ...config, backend });
   if (backend === 'claude' || backend === 'anthropic') {
     return createAnthropic({
       baseURL,

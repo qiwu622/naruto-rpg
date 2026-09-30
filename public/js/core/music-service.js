@@ -1,4 +1,8 @@
+import { isNativeAndroidApp } from './runtime-platform.js';
+
 const TENCENT_SEARCH_ENDPOINT = 'https://api.vkeys.cn/v2/music/tencent/search/song';
+const TENCENT_RESOLVE_ENDPOINT = 'https://api.vkeys.cn/v2/music/tencent';
+const TENCENT_STREAM_HOST_SUFFIX = '.stream.qqmusic.qq.com';
 const MAX_CACHE_SIZE = 120;
 
 function cleanText(value, max = 240) {
@@ -78,13 +82,33 @@ export function normalizeMusicTrack(track = {}) {
   });
 }
 
+export function parseAllowedMusicStreamUrl(value) {
+  let url;
+  try { url = new URL(String(value || '')); }
+  catch { throw new Error('音乐流地址无效'); }
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, '');
+  const allowedHost = hostname === TENCENT_STREAM_HOST_SUFFIX.slice(1)
+    || hostname.endsWith(TENCENT_STREAM_HOST_SUFFIX);
+  if (!allowedHost
+      || !['http:', 'https:'].includes(url.protocol)
+      || url.port
+      || url.username
+      || url.password
+      || url.hash
+      || url.href.length > 8192) {
+    throw new Error('音乐流地址不在允许的音乐域名内');
+  }
+  return url.href;
+}
+
 function copyTrack(track) {
   return track ? { ...track } : null;
 }
 
 export class MusicService {
-  constructor({ fetchImpl = globalThis.fetch } = {}) {
+  constructor({ fetchImpl = globalThis.fetch, nativeCheck = isNativeAndroidApp } = {}) {
     this.fetchImpl = fetchImpl;
+    this.nativeCheck = nativeCheck;
     this._tracks = new Map();
     this._searches = new Map();
     this._lastQuery = '';
@@ -172,6 +196,16 @@ export class MusicService {
       ? this.rememberTrack(trackOrId)
       : this.getTrack(trackOrId);
     if (!track) throw new Error('曲目不在最近的搜索结果中，请先搜索后再播放');
+    if (this.nativeCheck()) {
+      const response = await this._fetch()(
+        `${TENCENT_RESOLVE_ENDPOINT}?mid=${encodeURIComponent(track.id)}`,
+        { method: 'GET', headers: { Accept: 'application/json' }, redirect: 'error' }
+      );
+      if (!response?.ok) throw new Error(`音乐地址解析失败：HTTP ${Number(response?.status) || 0}`);
+      const payload = await response.json().catch(() => null);
+      if (!payload || payload.code !== 200) throw new Error('音乐地址解析服务返回无效数据');
+      return parseAllowedMusicStreamUrl(payload?.data?.url);
+    }
     return `/api/music/stream?mid=${encodeURIComponent(track.id)}`;
   }
 }

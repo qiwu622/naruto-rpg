@@ -6,12 +6,11 @@ import {
   getDefaults,
   isKnownKey,
   isNumeric,
-  normalizeStructuredVariableUpdate,
   resolveAlias,
-  STRUCTURED_SCALAR_PATH_MAP,
   validate,
   VAR_SCHEMA
 } from '../data/var-schema.js';
+import { normalizeStateCommands } from './state-command-normalizer.js';
 import { createContinuityLedger, migrateLegacyMemory } from './continuity-ledger.js';
 
 const DB_NAME = 'naruto_rpg';
@@ -116,8 +115,8 @@ class StateManager {
 
     state.player = {
       name: state['玩家·姓名'] || '',
-      age: state['玩家·年龄'] || 12,
-      soul_age: state['玩家·灵魂年龄'] || 12,
+      age: state['玩家·年龄'] ?? 12,
+      soul_age: state['玩家·灵魂年龄'] ?? 12,
       gender: state['玩家·性别'] || '',
       rank: state['玩家·忍阶'] || '忍校学生',
       official_rank: state['玩家·正式忍阶'] || '忍校学生',
@@ -133,37 +132,37 @@ class StateManager {
     };
 
     state.attributes = {
-      chakra: state['属性·查克拉'] || 10,
-      chakra_current: state['属性·当前查克拉'] || 10,
-      spirit: state['属性·精神力'] || 10,
-      spirit_current: state['属性·当前精神力'] || 10,
-      vitality: state['属性·生命力'] || 100,
-      vitality_current: state['属性·当前生命力'] || 100,
-      stamina: state['属性·体力'] || 80,
-      stamina_current: state['属性·当前体力'] || 80,
-      speed: state['属性·速度'] || 5,
-      luck: state['属性·幸运'] || 10
+      chakra: state['属性·查克拉'] ?? 10,
+      chakra_current: state['属性·当前查克拉'] ?? 10,
+      spirit: state['属性·精神力'] ?? 10,
+      spirit_current: state['属性·当前精神力'] ?? 10,
+      vitality: state['属性·生命力'] ?? 100,
+      vitality_current: state['属性·当前生命力'] ?? 100,
+      stamina: state['属性·体力'] ?? 80,
+      stamina_current: state['属性·当前体力'] ?? 80,
+      speed: state['属性·速度'] ?? 5,
+      luck: state['属性·幸运'] ?? 10
     };
 
     state.progression = {
-      exp: state['进度·经验'] || 0,
-      exp_to_next: state['进度·下一级经验'] || 100,
-      jutsu_mastery: state['进度·忍术熟练度'] || 0,
-      taijutsu_mastery: state['进度·体术熟练度'] || 0,
-      genjutsu_mastery: state['进度·幻术熟练度'] || 0,
-      defense_mastery: state['进度·防御熟练度'] || 0,
-      missions_done: state['进度·已完成任务'] || 0,
-      pending_breakthrough: state['进度·突破待处理'] || 0,
+      exp: state['进度·经验'] ?? 0,
+      exp_to_next: state['进度·下一级经验'] ?? 100,
+      jutsu_mastery: state['进度·忍术熟练度'] ?? 0,
+      taijutsu_mastery: state['进度·体术熟练度'] ?? 0,
+      genjutsu_mastery: state['进度·幻术熟练度'] ?? 0,
+      defense_mastery: state['进度·防御熟练度'] ?? 0,
+      missions_done: state['进度·已完成任务'] ?? 0,
+      pending_breakthrough: state['进度·突破待处理'] ?? 0,
       titles: splitStr(state['进度·称号']),
       achievements: splitStr(state['进度·成就'])
     };
 
     state.world_state = {
-      current_location: state['世界·地点'] || '木叶隐村',
-      calendar: state['世界·时间'] || '木叶48年1月1日·清晨',
-      timeline: state['世界·年代'] || '木叶48年',
-      month: state['世界·月份'] || 1,
-      weather: state['世界·天气'] || '晴'
+      current_location: state['世界·地点'] ?? '木叶隐村',
+      calendar: state['世界·时间'] ?? '木叶48年1月1日·清晨',
+      timeline: state['世界·年代'] ?? '木叶48年',
+      month: state['世界·月份'] ?? 1,
+      weather: state['世界·天气'] ?? '晴'
     };
 
     const skills = { jutsu: {}, taijutsu: {}, genjutsu: {}, support: {}, kekkei_genkai: {}, talents: {} };
@@ -282,7 +281,7 @@ class StateManager {
     }
     state.skills = skills;
 
-    const equipment = { weapons: {}, armor: {}, tools: {}, consumables: {}, ryo: state['进度·金钱'] || 500, equipped: {} };
+    const equipment = { weapons: {}, armor: {}, tools: {}, consumables: {}, ryo: state['进度·金钱'] ?? 500, equipped: {} };
     for (const key of Object.keys(state)) {
       if (key.startsWith('物品·')) {
         const parts = key.split('·');
@@ -471,250 +470,98 @@ class StateManager {
     this._stateVersion++;
   }
 
+  _deleteFlatEntity(baseKey) {
+    const deletedKeys = Object.keys(this.state)
+      .filter(stateKey => stateKey === baseKey || stateKey.startsWith(`${baseKey}·`));
+    for (const stateKey of deletedKeys) {
+      delete this.state[stateKey];
+      eventBus.emit('state:changed', { key: stateKey, value: undefined, deleted: true });
+    }
+    return deletedKeys.length;
+  }
+
+  _applyNormalizedCommand(command) {
+    if (!command) return;
+    if (command.kind === 'delete-flat-entity') {
+      this._deleteFlatEntity(command.baseKey);
+      return;
+    }
+    if (command.kind === 'delete-flat-key') {
+      if (!(command.key in this.state)) return;
+      delete this.state[command.key];
+      eventBus.emit('state:changed', { key: command.key, value: undefined, deleted: true });
+      return;
+    }
+    if (command.kind === 'relationship-update') {
+      const relationships = this.state._relationships || {};
+      const relationship = relationships[command.npc];
+      if (!relationship) return;
+      if (command.field === '互动摘要' && relationship.history && relationship.history.length > 0) {
+        relationship.history[0].summary = command.value;
+      } else if (command.field === '好感') {
+        relationship.affection = Number(command.value) || 0;
+      } else if (command.field === '信任') {
+        relationship.trust = Number(command.value) || 0;
+      } else if (command.field === '敬畏') {
+        relationship.respect = Number(command.value) || 0;
+      }
+      this.state._relationships = relationships;
+      eventBus.emit('state:changed', { key: '_relationships', value: relationships });
+      return;
+    }
+    if (command.kind === 'map-explored-update') {
+      const regions = value => (Array.isArray(value) ? value : [value])
+        .flatMap(part => String(part ?? '').split(/[，,]/))
+        .map(part => part.trim()).filter(Boolean);
+      const current = command.op === 'push' ? regions(this.state['世界·已探索区域']) : [];
+      const value = [...new Set([...current, ...regions(command.value)])].join('，');
+      this.update([{ key: '世界·已探索区域', op: '=', value }]);
+      return;
+    }
+    if (command.kind === 'map-location-assign') {
+      const map = this.state._map || { known_locations: {}, active_pins: '' };
+      if (!map.known_locations || typeof map.known_locations !== 'object' || Array.isArray(map.known_locations)) {
+        map.known_locations = {};
+      }
+      map.known_locations[command.key] = command.value;
+      this.state._map = map;
+      eventBus.emit('state:changed', { key: '_map', value: map });
+      return;
+    }
+    if (command.kind === 'map-location-remove') {
+      const map = this.state._map || { known_locations: {}, active_pins: '' };
+      if (map.known_locations && Object.hasOwn(map.known_locations, command.key)) {
+        delete map.known_locations[command.key];
+        this.state._map = map;
+        eventBus.emit('state:changed', { key: '_map', value: map });
+      }
+      this._applyNormalizedCommand({ kind: 'delete-flat-key', key: `世界·已知地点·${command.key}` });
+    }
+  }
+
   batchUpdate(vars) {
     if (!Array.isArray(vars) || vars.length === 0) return;
 
-    // B-30: 改"整批分流"为"逐条分流"——混合格式时 path 项不再被静默丢失。
-    // 平键项收集到 flatUpdates 转交给 update()；path 项走下方分支。
-
-    // Path-based protocol from secondary variable updater
-    // Maps legacy English paths to v4.0 flat Chinese keys
-    const PATH_MAP = {
-      ...STRUCTURED_SCALAR_PATH_MAP,
-      // Read old secondary-updater output without advertising this whole-collection path
-      // in the current structured-variable contract.
-      'skills.kekkei_genkai': '技能·血继限界'
-    };
-    const OP_MAP = { 'set': '=', 'add': '+', 'sub': '-' };
-
-    const flatUpdates = [];
-    const deleteFlatEntity = (baseKey) => {
-      const deletedKeys = Object.keys(this.state)
-        .filter(stateKey => stateKey === baseKey || stateKey.startsWith(`${baseKey}·`));
-      for (const stateKey of deletedKeys) {
-        delete this.state[stateKey];
-        eventBus.emit('state:changed', { key: stateKey, value: undefined, deleted: true });
-      }
-      return deletedKeys.length;
-    };
-
-    for (const rawUpdate of vars) {
-      if (!rawUpdate) continue;
-      const v = rawUpdate.path ? normalizeStructuredVariableUpdate(rawUpdate) : rawUpdate;
-
-      // Already in flat format
-      if (v.key && ['=', '+', '-'].includes(v.op)) {
-        flatUpdates.push(v);
-        continue;
-      }
-
-      if (!v.path || !v.op) continue;
-      const path = v.path;
-      const op = v.op;
-      const value = v.value;
-
-      // Collection removal protocol used by both AI prompt modes:
-      // { path: 'skills.jutsu', op: 'remove', key: '技能名' }
-      const skillCollectionMatch = path.match(/^skills\.(jutsu|taijutsu|genjutsu|support|talents|kekkei_genkai)$/);
-      if (skillCollectionMatch && op === 'remove' && v.key) {
-        const categories = {
-          jutsu: ['忍术'], taijutsu: ['体术'], genjutsu: ['幻术'],
-          support: ['支援', '辅助'], talents: ['天赋'], kekkei_genkai: ['血继限界']
-        };
-        for (const category of categories[skillCollectionMatch[1]]) {
-          deleteFlatEntity(`技能·${category}·${v.key}`);
-        }
-        continue;
-      }
-
-      const equipmentCollectionMatch = path.match(/^equipment\.(weapons|armor|tools|consumables)$/);
-      if (equipmentCollectionMatch && op === 'remove' && v.key) {
-        const typeRev = { weapons: '武器', armor: '防具', tools: '道具', consumables: '消耗品' };
-        deleteFlatEntity(`物品·${typeRev[equipmentCollectionMatch[1]]}·${v.key}`);
-        continue;
-      }
-
-      // Direct path mapping
-      if (PATH_MAP[path]) {
-        const flatOp = OP_MAP[op] || '=';
-        flatUpdates.push({ key: PATH_MAP[path], op: flatOp, value });
-        continue;
-      }
-
-      // Skills: skills.jutsu.火遁·豪火球 → 技能·忍术·火遁·豪火球·*
-      const skillsMatch = path.match(/^skills\.(jutsu|taijutsu|genjutsu|support|talents|kekkei_genkai)\.(.+?)(?:\.(.+))?$/);
-      if (skillsMatch) {
-        const typeRev = { jutsu: '忍术', taijutsu: '体术', genjutsu: '幻术', support: '支援', talents: '天赋', kekkei_genkai: '血继限界' };
-        const fieldRev = { name: '名称', rank: '等级', element: '属性', cost: '消耗', resource: '消耗资源', resource_type: '消耗资源', power: '威力', mastery: '熟练度', description: '描述', type: '类型', technique_id: '\u6570\u636e\u5e93ID', source: '\u6765\u6e90' };
-        const type = typeRev[skillsMatch[1]] || skillsMatch[1];
-        const skillName = skillsMatch[2];
-        const field = skillsMatch[3];
-
-        if (op === 'set' && !field && value !== null && typeof value === 'object' && !Array.isArray(value)) {
-          // Setting entire skill object
-          for (const [k, val] of Object.entries(value)) {
-            const zhField = fieldRev[k] || k;
-            flatUpdates.push({ key: `技能·${type}·${skillName}·${zhField}`, op: '=', value: val });
-          }
-        } else if (op === 'set' && !field && (typeof value === 'string' || typeof value === 'number')) {
-          // 字符串/数字值（如血继限界"写轮眼·二勾玉"）→ 存入 描述
-          flatUpdates.push({ key: `技能·${type}·${skillName}·描述`, op: '=', value: String(value) });
-        } else if (op === 'assign' && v.key && value !== undefined) {
-          const zhField = fieldRev[v.key] || v.key;
-          flatUpdates.push({ key: `技能·${type}·${skillName}·${zhField}`, op: '=', value });
-        } else if (field) {
-          const zhField = fieldRev[field] || field;
-          const flatOp = OP_MAP[op] || '=';
-          flatUpdates.push({ key: `技能·${type}·${skillName}·${zhField}`, op: flatOp, value });
-        } else if (op === 'remove' && !field) {
-          deleteFlatEntity(`技能·${type}·${v.key || skillName}`);
-        }
-        continue;
-      }
-
-      // Equipment: equipment.consumables.绷带 → 物品·消耗品·绷带·*
-      const eqMatch = path.match(/^equipment\.(weapons|armor|tools|consumables)\.(.+?)(?:\.(.+))?$/);
-      if (eqMatch) {
-        const typeRev = { weapons: '武器', armor: '防具', tools: '道具', consumables: '消耗品' };
-        const fieldRev = { quantity: '数量', quality: '品质', description: '描述', name: '名称', type: '类型', power: '威力', cost: '消耗', element: '属性' };
-        const type = typeRev[eqMatch[1]] || eqMatch[1];
-        const itemName = eqMatch[2];
-        const field = eqMatch[3];
-
-        if (op === 'set' && !field && value !== null && typeof value === 'object' && !Array.isArray(value)) {
-          for (const [k, val] of Object.entries(value)) {
-            const zhField = fieldRev[k] || k;
-            flatUpdates.push({ key: `物品·${type}·${itemName}·${zhField}`, op: '=', value: val });
-          }
-        } else if (field) {
-          const zhField = fieldRev[field] || field;
-          const flatOp = OP_MAP[op] || '=';
-          flatUpdates.push({ key: `物品·${type}·${itemName}·${zhField}`, op: flatOp, value });
-        } else if (op === 'remove' && !field) {
-          deleteFlatEntity(`物品·${type}·${v.key || itemName}`);
-        }
-        continue;
-      }
-
-      // Equipment equipped slots
-      const equippedMatch = path.match(/^equipment\.equipped\.(.+)$/);
-      if (equippedMatch) {
-        const slotRev = { weapon: '武器', armor: '防具', accessory1: '饰品1', accessory2: '饰品2' };
-        const slot = slotRev[equippedMatch[1]] || equippedMatch[1];
-        if (op === 'remove') {
-          const flatKey = `物品·已装备·${slot}`;
-          if (flatKey in this.state) {
-            delete this.state[flatKey];
-            eventBus.emit('state:changed', { key: flatKey, value: undefined, deleted: true });
-          }
-        } else {
-          flatUpdates.push({ key: `物品·已装备·${slot}`, op: '=', value });
-        }
-        continue;
-      }
-
-      // Reputation: progression.reputation.木叶隐村 → 进度·声望·木叶隐村
-      if (path === 'progression.reputation' && op === 'remove' && v.key) {
-        const repKey = `进度·声望·${v.key}`;
-        if (repKey in this.state) {
-          delete this.state[repKey];
-          eventBus.emit('state:changed', { key: repKey, value: undefined, deleted: true });
-        }
-        continue;
-      }
-      const repMatch = path.match(/^progression\.reputation\.(.+)$/);
-      if (repMatch) {
-        const flatOp = OP_MAP[op] || '=';
-        flatUpdates.push({ key: `进度·声望·${repMatch[1]}`, op: flatOp, value });
-        continue;
-      }
-
-      // Relationship summary UI editing fallback
-      const relMatch = (v.key || path).match(/^关系·(.+)·(互动摘要|好感|信任|敬畏)$/);
-      if (relMatch && (op === '=' || op === 'set')) {
-        const npc = relMatch[1];
-        const field = relMatch[2];
-        const rels = this.state._relationships || {};
-        if (rels[npc]) {
-          if (field === '互动摘要' && rels[npc].history && rels[npc].history.length > 0) {
-            rels[npc].history[0].summary = value;
-          } else if (field === '好感') {
-            rels[npc].affection = Number(value) || 0;
-          } else if (field === '信任') {
-            rels[npc].trust = Number(value) || 0;
-          } else if (field === '敬畏') {
-            rels[npc].respect = Number(value) || 0;
-          }
-          this.state._relationships = rels;
-          eventBus.emit('state:changed', { key: '_relationships', value: rels });
-        }
-        flatUpdates.push({ key: v.key || path, op: '=', value });
-        continue;
-      }
-
-      // World map: world_state.map.explored_regions / known_locations
-      if (path === 'world_state.map.explored_regions') {
-        if (op === 'push') {
-          const current = this.state['世界·已探索区域'] || '';
-          const parts = current ? current.split('，').filter(Boolean) : [];
-          if (!parts.includes(value)) parts.push(value);
-          flatUpdates.push({ key: '世界·已探索区域', op: '=', value: parts.join('，') });
-        } else {
-          flatUpdates.push({ key: '世界·已探索区域', op: '=', value });
-        }
-        continue;
-      }
-      const knownLocMatch = path.match(/^world_state\.map\.known_locations$/);
-      if (knownLocMatch && op === 'assign' && v.key) {
-        // Store in _map sub-object
-        const map = this.state._map || { known_locations: {}, active_pins: '' };
-        map.known_locations[v.key] = value;
-        this.state._map = map;
-        eventBus.emit('state:changed', { key: '_map', value: this.state._map });
-        continue;
-      }
-      if (knownLocMatch && op === 'remove' && v.key) {
-        const map = this.state._map || { known_locations: {}, active_pins: '' };
-        if (map.known_locations && map.known_locations[v.key]) {
-          delete map.known_locations[v.key];
-          this.state._map = map;
-          eventBus.emit('state:changed', { key: '_map', value: this.state._map });
-        }
-        continue;
-      }
-
-      // Memory sub-object updates (go to _memory)
-      if (path.startsWith('memory.') || path === 'memory') {
-        // Memory updates handled by memory-system, skip to avoid conflicts
-        continue;
-      }
-
-      // _meta path
-      if (path.startsWith('_meta.')) {
-        setValueByPath(this.state, path, value);
-        eventBus.emit('state:changed', { key: path, value });
-        continue;
-      }
-
-      // Fallback: try direct state property
-      // 内部键（_combat/_relationships/_memory 等）不接受 AI 路径直写——
-      // 曾有模型输出 {"path":"_combat","op":"set","value":true} 把战斗态污染成布尔值，
-      // 之后 _endCombat 里 combat.state='peace' 直接抛
-      // "Cannot create property 'state' on boolean 'true'"，玩家永久卡死。
-      if (path.startsWith('_')) {
-        console.warn('[StateManager] batchUpdate: reject internal path write:', path);
-        eventBus.emit('state:invalid-write', { key: path, reason: 'internal-path' });
-        continue;
-      }
-      if (!path.startsWith('skills.') && !path.startsWith('items.')) {
-        console.warn('[StateManager] batchUpdate: unrecognized path, attempting direct set:', path);
-      }
-      setValueByPath(this.state, path, value);
-      eventBus.emit('state:changed', { key: path, value });
+    const normalized = normalizeStateCommands(vars);
+    for (const { path, reason } of normalized.invalid) {
+      console.warn(`[StateManager] batchUpdate: reject ${reason}:`, path);
+      eventBus.emit('state:invalid-write', { key: path, reason });
     }
-
-    if (flatUpdates.length) this.update(flatUpdates);
-    // path 项直接改了 this.state（不经 update()），必须失效 get() 缓存
+    let pendingUpdates = [];
+    const flushUpdates = () => {
+      if (pendingUpdates.length) this.update(pendingUpdates);
+      pendingUpdates = [];
+    };
+    for (const command of normalized.sequence) {
+      if (command.kind === 'flat-update') {
+        pendingUpdates.push(command.update);
+      } else {
+        flushUpdates();
+        this._applyNormalizedCommand(command);
+      }
+    }
+    flushUpdates();
+    // Path commands mutate this.state directly, so invalidate get()'s cache.
     this._stateVersion++;
   }
 
@@ -1348,7 +1195,7 @@ class StateManager {
         metaStore.clear();
         for (const node of nodes) nodeStore.put(node);
         for (const branch of branches) branchStore.put(branch);
-        metaStore.put(meta);
+        if (meta) metaStore.put(meta);
       } catch (error) {
         try { tx.abort(); } catch { /* transaction may already be inactive */ }
         if (!settled) {

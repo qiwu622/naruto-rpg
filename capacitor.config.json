@@ -1,0 +1,18 @@
+{
+  "appId": "asia.qiwu.narutorpg",
+  "appName": "忍者手记",
+  "webDir": "public",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true,
+    "adjustMarginsForEdgeToEdge": "disable",
+    "backgroundColor": "#030406"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

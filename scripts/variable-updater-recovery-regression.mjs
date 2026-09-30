@@ -171,8 +171,14 @@ await test('structured obligations keep NPC completeness advisory while preservi
   );
   assert.equal(missingThought.valid, true, missingThought.errors.join('\n'));
 
+  const missingRelationship = variableUpdater.validateVariableUpdaterOutput(
+    valid.replace(/<relationship>[\s\S]*?<\/relationship>\n?/, ''), options
+  );
+  assert.equal(missingRelationship.valid, true);
+  assert.equal(missingRelationship.manifest.domains.relationships, 'unchanged');
+  assert.ok(missingRelationship.unmetObligations.some(item => item.includes('春野樱')));
+
   for (const [label, output, pattern] of [
-    ['missing relationship', valid.replace(/<relationship>[\s\S]*?<\/relationship>\n?/, ''), /relationships|relationship|人物关系/i],
     ['missing mission tag', valid.replace('"escort_existing":"unchanged"', '"escort_existing":"updated"'), /escort_existing.*mission/i],
     ['non-string history', valid.replace('"history":"共同完成训练。"', '"history":123'), /春野樱.*history/i],
     ['non-string thought', valid.replace('"inner_thoughts":"这次配合比预想中顺利。"', '"inner_thoughts":456'), /春野樱.*inner_thoughts/i],
@@ -648,7 +654,7 @@ await test('runtime prompt serializes update obligations and the machine-checkab
   assert.match(prompt, /canonical|规范姓名|npc.*逐字/iu);
 });
 
-await test('manifest omissions, domain mismatches, and active mission contradictions are hard errors', () => {
+await test('manifest statistics are derived locally while promised mission writes remain mandatory', () => {
   const updateObligations = {
     present_npcs: [{ npc: '春野樱' }],
     active_missions: [{ id: 'training', title: '基础训练' }]
@@ -678,7 +684,6 @@ await test('manifest omissions, domain mismatches, and active mission contradict
     base.join('\n').replace('"attributes":"updated"', '"attributes":"unchanged"'),
     base.join('\n').replace('"春野樱":"updated"', ''),
     base.join('\n').replace('"training":"unchanged"', ''),
-    base.join('\n').replace('"training":"unchanged"', '"training":"updated"'),
     base.join('\n').replace(
       '<memory>{"summary":"玩家与春野樱完成训练。"}</memory>',
       '<mission>{"id":"training","status":"progress","progress":{"note":"继续训练"}}</mission>\n<memory>{"summary":"玩家与春野樱完成训练。"}</memory>'
@@ -686,11 +691,18 @@ await test('manifest omissions, domain mismatches, and active mission contradict
   ];
   for (const output of cases) {
     const validation = variableUpdater.validateVariableUpdaterOutput(output, options);
-    assert.equal(validation.valid, false, `expected manifest failure:\n${output}\n${validation.warnings.join('\n')}`);
+    assert.equal(validation.valid, true, validation.errors.join('\n'));
+    assert.equal(validation.manifest.domains.attributes, 'updated');
+    assert.equal(validation.manifest.domains.relationships, 'updated');
   }
+  const missingMission = variableUpdater.validateVariableUpdaterOutput(
+    base.join('\n').replace('"training":"unchanged"', '"training":"updated"'), options
+  );
+  assert.equal(missingMission.valid, false);
+  assert.match(missingMission.errors.join('\n'), /training.*mission/);
 });
 
-await test('runtime obligations require request restatement and all eight audit headings in order', () => {
+await test('request restatement and audit heading variations are advisory', () => {
   const valid = [
     completeVariableThinking('继续训练'),
     obligationManifest(),
@@ -708,7 +720,8 @@ await test('runtime obligations require request restatement and all eight audit 
     )
   ]) {
     const validation = variableUpdater.validateVariableUpdaterOutput(invalid, options);
-    assert.equal(validation.valid, false, validation.errors.join('\n'));
+    assert.equal(validation.valid, true, validation.errors.join('\n'));
+    assert.ok(validation.warnings.length > 0);
   }
 });
 

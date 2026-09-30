@@ -17,7 +17,7 @@ class GameModal extends HTMLElement {
     this._onDismiss = onDismiss;
     this.shadowRoot.innerHTML = `
       <style>
-        :host { display: block; position: fixed; inset: 0; z-index: 200000; color: var(--text-primary, #e8e4d9); font-family: 'Noto Sans SC', 'Microsoft YaHei UI', 'PingFang SC', system-ui, sans-serif; }
+        :host { display: block; position: fixed; inset: 0; z-index: var(--z-modal-top); color: var(--text-primary, #e8e4d9); font-family: 'Noto Sans SC', 'Microsoft YaHei UI', 'PingFang SC', system-ui, sans-serif; }
         .overlay {
           position: fixed; inset: 0; z-index: 200000;
           display: flex; align-items: center; justify-content: center;
@@ -104,7 +104,9 @@ class GameModal extends HTMLElement {
       </div>
     `;
     this.shadowRoot.querySelector('#mo').addEventListener('click', (e) => { if (e.target.id === 'mo') this.close(); });
-    this._onKeyDown = (e) => { if (e.key === 'Escape') this.close(); };
+    this._onKeyDown = (e) => {
+      if (e.key === 'Escape' && [...document.querySelectorAll('game-modal')].at(-1) === this) this.close();
+    };
     document.addEventListener('keydown', this._onKeyDown);
     this.shadowRoot.querySelectorAll('.btn').forEach(b => {
       b.addEventListener('click', () => {
@@ -137,7 +139,7 @@ class GameModal extends HTMLElement {
         settled = true;
         resolve(value);
       };
-      (document.getElementById('app') || document.body).appendChild(m);
+      document.body.appendChild(m);
       m.show({
         title, content: `<p>${messageHtml(message)}</p>`, onDismiss: () => settle(false),
         buttons: [
@@ -157,7 +159,7 @@ class GameModal extends HTMLElement {
         settled = true;
         resolve(true);
       };
-      (document.getElementById('app') || document.body).appendChild(m);
+      document.body.appendChild(m);
       m.show({
         title, content: `<p>${messageHtml(message)}</p>`, onDismiss: settle,
         buttons: [
@@ -176,7 +178,7 @@ class GameModal extends HTMLElement {
         settled = true;
         resolve(result);
       };
-      (document.getElementById('app') || document.body).appendChild(m);
+      document.body.appendChild(m);
       const inputId = 'gm-input';
       const safeValue = escapeHtml(value);
       const safePlaceholder = escapeHtml(placeholder);
@@ -209,7 +211,7 @@ class GameModal extends HTMLElement {
         settled = true;
         resolve(value);
       };
-      (document.getElementById('app') || document.body).appendChild(modal);
+      document.body.appendChild(modal);
       modal.show({
         title,
         content: `<p>${messageHtml(message)}</p>`,
@@ -228,7 +230,8 @@ class GameModal extends HTMLElement {
 
   static variableRecovery({
     error = '', attempt = 1, canRepair = false, canApplySafe = false,
-    safeAppliedCount = 0, safeDroppedCount = 0, unmetObligations = []
+    safeAppliedCount = 0, safeDroppedCount = 0, unmetObligations = [],
+    failureKind = '', repairStage = 'full', diagnosticId = ''
   } = {}) {
     const choices = [
       { label: '跳过变量并继续', value: { action: 'skip' } },
@@ -245,9 +248,14 @@ class GameModal extends HTMLElement {
     const obligationDetail = Array.isArray(unmetObligations) && unmetObligations.length
       ? `\n仍未完成的更新义务：${unmetObligations.map(item => String(item || '').trim()).filter(Boolean).join('；')}`
       : '';
+    const failureLabel = { daily: '日报校验', state: '变量校验', 'state-and-daily': '变量与日报校验',
+      truncated: '输出截断', empty: '模型空回', transport: '模型连接' }[failureKind] || '二次变量演算';
+    const repairDetail = repairStage === 'daily' ? '\n变量与记忆已通过校验，修复只重新生成日报。'
+      : repairStage === 'state' ? '\n日报已通过校验，修复只重新生成变量与记忆。' : '';
+    const diagnosticDetail = diagnosticId ? '\n可在调试面板的“变量更新结果”查看并导出本次失败原文。' : '';
     return GameModal.choice({
-      title: `二次变量演算异常 · 第 ${Math.max(1, Number(attempt) || 1)} 次`,
-      message: `${String(error || '变量输出未通过校验')}\n\n${safeDetail}${obligationDetail}\n“重新生成”会从本回合原始上下文重新演算；“调用 AI 修复”会把被拒绝输出和校验错误交给变量模型定向修正。所有操作都在回合提交前完成；直接关闭本窗口等同于“跳过变量并继续”。`,
+      title: `${failureLabel}异常 · 第 ${Math.max(1, Number(attempt) || 1)} 次`,
+      message: `${String(error || '变量输出未通过校验')}\n\n${safeDetail}${obligationDetail}${repairDetail}${diagnosticDetail}\n“重新生成”会从本回合原始上下文重新演算；“调用 AI 修复”会携带被拒绝输出和校验错误，并保留已通过的部分。所有操作都在回合提交前完成；跳过后仍须通过回合提交检查，缺少必需产物时会回滚。直接关闭本窗口等同于选择跳过。`,
       choices,
       // Esc/backdrop is the universal "do nothing" gesture — it must never
       // write partial state; applying the safe subset requires a real click.
@@ -265,7 +273,7 @@ class GameModal extends HTMLElement {
         settled = true;
         resolve(result);
       };
-      (document.getElementById('app') || document.body).appendChild(modal);
+      document.body.appendChild(modal);
       const preview = String(displayText || '').trim();
       const errorText = String(error || '').trim();
       const body = errorText

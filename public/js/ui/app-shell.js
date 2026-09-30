@@ -15,6 +15,15 @@ import { mountTurnIllustration } from './image-studio.js';
 import { mountPresetOutputSandbox } from './preset-output-sandbox.js';
 import { createShinobiDailyTrigger } from './shinobi-daily-modal.js';
 import { atmosphereManager } from './atmosphere-manager.js';
+import { isNativeAndroidApp, isMultiplayerEntryVisible } from '../core/runtime-platform.js';
+import {
+  actionSubmissionUnavailableMessage,
+  canSubmitProjectedAction,
+  projectedNarrativeDeliveries,
+  projectedDaily,
+  projectedAuthoritativeState
+} from '../multiplayer/ui-projection.js';
+import './multiplayer-character-panel.js';
 
 class AppShell {
   constructor() {
@@ -28,6 +37,7 @@ class AppShell {
     this._agentReasoningText = '';
     this._agentReasoningAgent = null;
     this._lastSubmittedInput = '';
+    this._multiplayerSessionState = null;
   }
 
   init(container) {
@@ -41,12 +51,16 @@ class AppShell {
   }
 
   _renderShell() {
+    const multiplayerEntryVisible = isMultiplayerEntryVisible();
+    const nativeAndroid = isNativeAndroidApp();
+    this.element.classList.toggle('app-shell--android', nativeAndroid);
     this.element.innerHTML = `
       <header class="app-topbar">
         <div class="topbar-left">
-          <span class="topbar-logo"><img src="/img/logo.png" class="logo-image-small" alt="忍者手记"></span>
+          <span class="topbar-logo${nativeAndroid ? ' topbar-logo--app' : ''}"><img src="${nativeAndroid ? '/img/app-mark.png' : '/img/logo.png'}" class="${nativeAndroid ? 'app-brand-mark' : 'logo-image-small'}" alt="忍者手记">${nativeAndroid ? '<span>忍者手记</span>' : ''}</span>
         </div>
         <div class="topbar-right" aria-label="界面切换">
+          ${multiplayerEntryVisible ? '<button class="topbar-btn topbar-btn--multiplayer" id="btn-multiplayer" title="双人联机" aria-pressed="false"><span aria-hidden="true">双</span><span class="topbar-btn-label">联机</span></button><span class="topbar-divider"></span>' : ''}
           <button class="topbar-btn topbar-btn--panel" id="btn-panel" title="角色面板" aria-pressed="true">${icon('panel')}<span class="topbar-btn-label">面板</span></button>
           <span class="topbar-divider"></span>
           <button class="topbar-btn topbar-btn--developer" id="btn-developer" title="提示词查看" aria-pressed="false">${icon('developer')}<span class="topbar-btn-label">提示词查看</span></button>
@@ -63,7 +77,8 @@ class AppShell {
           <span class="topbar-divider"></span>
           <button class="topbar-btn topbar-btn--settings" id="btn-settings" title="设置">${icon('settings')}<span class="topbar-btn-label">设置</span></button>
           <span class="topbar-divider"></span>
-          <button class="topbar-btn topbar-btn--profile" id="btn-profile" title="个人中心">${icon('user')}<span class="topbar-btn-label">账户</span></button>
+          <button class="topbar-btn" id="btn-save-library" title="本地存档库：个人存档与联机房间">${icon('book-open')}<span class="topbar-btn-label">存档</span></button>
+          <button class="topbar-btn topbar-btn--profile" id="btn-profile" title="个人中心">${icon('user')}<span class="topbar-btn-label">${isNativeAndroidApp() ? '个人' : '账户'}</span></button>
         </div>
       </header>
 
@@ -87,6 +102,7 @@ class AppShell {
         </main>
         <aside class="app-panel" id="app-panel">
           <info-panel id="info-panel"></info-panel>
+          <multiplayer-character-panel id="multiplayer-character-panel" hidden></multiplayer-character-panel>
           <developer-panel id="developer-panel" style="display:none;"></developer-panel>
         </aside>
       </div>
@@ -123,9 +139,13 @@ class AppShell {
 
     textarea.addEventListener('input', () => this._resizeInput());
 
+    this.element.querySelector('#btn-multiplayer')?.addEventListener('click', () => {
+      eventBus.emit('app:open-multiplayer');
+    });
     this.element.querySelector('#btn-panel').addEventListener('click', () => this._togglePanel());
     this.element.querySelector('#btn-developer').addEventListener('click', () => this._toggleDeveloperPanel());
     this.element.querySelector('#btn-timeline').addEventListener('click', () => this._toggleSidebar());
+    this.element.querySelector('#btn-save-library')?.addEventListener('click', () => eventBus.emit('app:open-saves'));
     this.element.querySelector('#btn-mobile').addEventListener('click', () => this._toggleMobileView());
     this.element.querySelector('#btn-zen').addEventListener('click', () => this._toggleZenMode());
     this.element.querySelector('#btn-fullscreen').addEventListener('click', () => this._toggleFullscreen());
@@ -683,7 +703,9 @@ class AppShell {
       eventBus.emit('app:toast', error.message || '提交行动失败');
     } finally {
       this._isSubmitting = false;
-      if (!this._isProcessing) {
+      if (this._multiplayerSessionState) {
+        this.setMultiplayerSessionState(this._multiplayerSessionState);
+      } else if (!this._isProcessing) {
         textarea.disabled = false;
         if (sendButton) sendButton.disabled = false;
         textarea.focus();
@@ -710,6 +732,9 @@ class AppShell {
       }
     });
     if (!isProcessing) this._removeAgentProgress();
+    if (this._multiplayerSessionState) {
+      this.setMultiplayerSessionState(this._multiplayerSessionState);
+    }
   }
 
   _showAgentProgress() {
@@ -823,7 +848,7 @@ class AppShell {
     this._addSystemMessage(text, type);
   }
 
-  renderSinglePage(text, { timelineNodeId = null } = {}) {
+  renderSinglePage(text, { timelineNodeId = null, multiplayer = false } = {}) {
     this._showGame();
     const msgs = this.element.querySelector('#chat-messages');
     if (!msgs) return;
@@ -836,7 +861,7 @@ class AppShell {
     // Add combat arena if active and setting is enabled
     const combat = stateManager.getSub('_combat');
     const tacticalCombat = stateManager.getSub('_ui').settings.tacticalCombat;
-    if (combat?.is_active && tacticalCombat) {
+    if (!multiplayer && combat?.is_active && tacticalCombat) {
       const wrap = document.createElement('div');
       const arena = document.createElement('combat-arena');
       wrap.appendChild(arena);
@@ -852,6 +877,37 @@ class AppShell {
   restoreChatHistory(history = [], fallbackMessage = '', { timelineNodeId = null } = {}) {
     // Single page paradigm: we ignore the array of history and just use the fallbackMessage (which is node.clean_response)
     this.renderSinglePage(fallbackMessage || '本回没有记录任何回忆...', { timelineNodeId });
+  }
+
+  renderMultiplayerPublication(turn) {
+    const deliveries = projectedNarrativeDeliveries(turn);
+    if (!deliveries.length) return;
+    this.renderSinglePage(deliveries.map(delivery => delivery.text).join('\n\n'), { multiplayer: true });
+    const projection = projectedAuthoritativeState(turn);
+    const content = this.element.querySelector('#chat-messages .chat-content');
+    const summary = document.createElement('section');
+    summary.dataset.multiplayerPublication = turn.turn_id;
+    summary.style.cssText = 'margin:24px 0;padding:16px;border:1px solid rgba(198,156,109,.4);border-radius:12px;background:rgba(10,14,20,.85);color:#f4eadc;font:14px/1.8 var(--font-body,sans-serif)';
+    const actor = projection?.actors?.[projection.viewer_seat];
+    const labels = { chakra: '查克拉', mental: '精神力', stamina: '体力', vitality: '生命力', money: '资金' };
+    const values = (actor?.attributes?.resources ?? []).map(item =>
+      `${labels[item.resource_id] ?? item.resource_id} ${item.current}${item.resource_id === 'money' ? '' : ` / ${item.maximum}`}`);
+    const text = document.createElement('p');
+    text.textContent = `第 ${turn.turn_no} 回合 · 变量已同步${projection?.shared_world?.calendar?.display_date ? ` · ${projection.shared_world.calendar.display_date}` : ''}\n${values.join('　')}`;
+    text.style.whiteSpace = 'pre-wrap';
+    summary.append(text);
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'btn'; button.textContent = '查看角色与变量';
+    button.dataset.multiplayerVariables = 'true';
+    button.addEventListener('click', () => {
+      this._setRightPanelMode('info');
+      const panel = this.element.querySelector('#app-panel');
+      panel?.classList.remove('app-panel--collapsed'); panel?.classList.add('panel-open');
+      this.element.querySelector('#multiplayer-character-panel')?.openTab('attributes');
+    });
+    summary.append(button); content.append(summary);
+    const daily = projectedDaily(turn);
+    this._mountShinobiDaily(Array.isArray(daily) ? daily.at(-1)?.daily : daily);
   }
 
   _showToast(text) {
@@ -1795,7 +1851,8 @@ class AppShell {
   }
 
   openInfoPanel(tab = 'attributes') {
-    const panel = this.element?.querySelector('#info-panel');
+    const multiplayerPanel = this.element?.querySelector('#multiplayer-character-panel');
+    const panel = this._multiplayerSessionState ? multiplayerPanel : this.element?.querySelector('#info-panel');
     if (!panel) return { opened: false, area: 'info-panel', tab };
     const result = typeof panel.openTab === 'function'
       ? panel.openTab(tab)
@@ -1860,8 +1917,14 @@ class AppShell {
     if (!panel) return;
     panel.dataset.mode = mode;
     const info = panel.querySelector('#info-panel');
+    const multiplayerInfo = panel.querySelector('#multiplayer-character-panel');
     const dev = panel.querySelector('#developer-panel');
-    if (info) info.style.display = mode === 'developer' ? 'none' : '';
+    const multiplayerActive = Boolean(this._multiplayerSessionState);
+    if (info) info.style.display = mode === 'developer' || multiplayerActive ? 'none' : '';
+    if (multiplayerInfo) {
+      multiplayerInfo.hidden = mode === 'developer' || !multiplayerActive;
+      multiplayerInfo.style.display = mode === 'developer' || !multiplayerActive ? 'none' : '';
+    }
     if (dev) dev.style.display = mode === 'developer' ? '' : 'none';
     this._syncRightPanelButtons();
   }
@@ -1999,8 +2062,8 @@ class AppShell {
       <div class="api-setup">
         <div class="api-layout">
           <section class="api-hero" aria-label="开局引导">
-            <div class="api-setup-title"><img src="/img/logo.png" class="logo-image-large" alt="忍者手记"></div>
-            <div class="api-setup-subtitle">${fromSettings ? '重新校准通灵契约，切换叙事核心与模型' : '从火影之路开始，感受火之意志和爱与羁绊的力量'}</div>
+            <div class="api-setup-title${isNativeAndroidApp() ? ' api-setup-title--app' : ''}"><img src="${isNativeAndroidApp() ? '/img/app-mark.png' : '/img/logo.png'}" class="${isNativeAndroidApp() ? 'app-brand-mark' : 'logo-image-large'}" alt="忍者手记">${isNativeAndroidApp() ? '<h1 class="app-brand-name">忍者手记</h1>' : ''}</div>
+            <div class="api-setup-subtitle">${fromSettings ? '重新校准通灵契约，切换叙事核心与模型' : isNativeAndroidApp() ? '写下属于你的忍者故事' : '从火影之路开始，感受火之意志和爱与羁绊的力量'}</div>
             <div class="api-feature-row">
               <span>自动时间线</span>
               <span>模型自选</span>
@@ -2016,7 +2079,7 @@ class AppShell {
             <div class="import-card">
               <div>
                 <strong>异地续写</strong>
-                <span>导入时间线 JSON，直接恢复角色、分支和聊天记录</span>
+                <span>导入旧 JSON / gzip 到存档库，保留原进度后选择读取</span>
               </div>
               <button type="button" class="btn btn-secondary btn-sm" id="btn-import-save">导入存档</button>
               <input type="file" id="timeline-import-file" accept="${TIMELINE_FILE_ACCEPT}" hidden />
@@ -2090,6 +2153,47 @@ class AppShell {
 
   showGame() {
     this._showGame();
+  }
+
+  setMultiplayerSessionState(state) {
+    this._multiplayerSessionState = state?.room?.lifecycle === 'ACTIVE' ? state : null;
+    const active = Boolean(this._multiplayerSessionState);
+    this.element?.classList.toggle('app-shell--multiplayer', active);
+    const topButton = this.element?.querySelector('#btn-multiplayer');
+    const panelButton = this.element?.querySelector('#btn-panel');
+    const multiplayerInfo = this.element?.querySelector('#multiplayer-character-panel');
+    topButton?.setAttribute('aria-pressed', String(active));
+    if (topButton) topButton.title = active ? '联机进行中 · 打开状态悬浮窗' : '双人联机';
+    if (panelButton) panelButton.title = active ? '我的联机角色' : '角色面板';
+    multiplayerInfo?.setSessionState?.(this._multiplayerSessionState);
+    this._setRightPanelMode(this.element?.querySelector('#app-panel')?.dataset.mode || 'info');
+    const textarea = this.element?.querySelector('#chat-input');
+    const sendButton = this.element?.querySelector('#btn-send');
+    if (!active) {
+      if (textarea && !this._isProcessing && !this._isSubmitting) textarea.disabled = false;
+      if (textarea) textarea.placeholder = '提笔写下你的决断...';
+      if (sendButton && !this._isProcessing && !this._isSubmitting) sendButton.disabled = false;
+      return;
+    }
+    const value = this._multiplayerSessionState;
+    const seat = value.room.viewer_seat;
+    const turn = value.turn;
+    const otherSeat = seat === 'A' ? 'B' : 'A';
+    const other = turn?.actions?.[otherSeat];
+    const canSubmit = canSubmitProjectedAction(value);
+    const unavailableMessage = actionSubmissionUnavailableMessage(value);
+    if (textarea) {
+      textarea.disabled = !canSubmit || this._isProcessing || this._isSubmitting;
+      textarea.placeholder = canSubmit
+        ? (other?.locked ? '对方已发送行动，写下你的决断…' : '写下本回合联机行动…')
+        : unavailableMessage;
+    }
+    if (sendButton) {
+      sendButton.disabled = !canSubmit || this._isProcessing || this._isSubmitting;
+      sendButton.title = canSubmit ? '发送并锁定联机行动' : unavailableMessage;
+    }
+    const turnStatus = this.element?.querySelector('#status-turn');
+    if (turnStatus && turn?.turn_no) turnStatus.textContent = `联机 · 第 ${turn.turn_no} 回合`;
   }
 
   getShell() { return this.element; }

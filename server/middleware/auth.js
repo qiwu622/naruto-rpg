@@ -25,6 +25,7 @@ export async function requireAuth(req, res, next) {
   if (config.auth.bypass) {
     req.user = { id: 'dev_user', username: 'dev_tester', avatar: '' };
     req.authSource = 'bypass';
+    req.authExpiresAt = Infinity;
     return next();
   }
   const credential = extractCredential(req);
@@ -50,6 +51,7 @@ export async function requireAuth(req, res, next) {
 
     req.user = user;
     req.authSource = credential.source;
+    req.authExpiresAt = Number.isFinite(decoded.exp) ? decoded.exp * 1000 : null;
     next();
   } catch (err) {
     console.error('[AUTH] Token verification failed:', err.message);

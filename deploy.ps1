@@ -6,11 +6,18 @@ param(
   [string]$ReleaseVersion = '',
   [switch]$ConfirmProduction,
   [switch]$DryRun,
-  [switch]$SkipBuild
+  [switch]$SkipBuild,
+  [switch]$KeepPackage
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# CMD, Node and desktop launchers can inherit PowerShell 7 module paths. The
+# Windows PowerShell 5.1 entry must use its own Utility functions, including
+# Import-PowerShellDataFile and Get-FileHash, rather than a bundled PS7 module.
+if ($PSVersionTable.PSVersion.Major -le 5) {
+  Import-Module ([IO.Path]::Combine($PSHOME, 'Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1')) -Force
+}
 
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PackageJsonPath = Join-Path $ProjectDir 'package.json'
@@ -220,7 +227,7 @@ function Copy-ProductionBackendSources {
   foreach ($File in Get-ChildItem -LiteralPath $ServerRoot -Recurse -File) {
     $Relative = $File.FullName.Substring($ServerRootPrefix.Length).Replace('\', '/')
 
-    if ($File.Extension -ne '.js') { continue }
+    if ($File.Extension -notin @('.js', '.sql')) { continue }
 
     # Never package server\data or runtime records under server\db.
     $IsRuntimeData = $Relative.StartsWith('data/', [StringComparison]::OrdinalIgnoreCase) -or
@@ -247,6 +254,9 @@ function Copy-ProductionBackendSources {
     'js/core/narrative-artifact.js',
     'js/core/image-studio/contracts.js',
     'js/core/continuity-ledger.js',
+    'js/systems/opening-draft.js',
+    'js/systems/combat-level.js',
+    'js/multiplayer/opening-draft-bridge.js',
     'js/utils/format.js'
   )) {
     $SourceFile = Join-Path $ProjectDir $SharedModule
@@ -255,6 +265,9 @@ function Copy-ProductionBackendSources {
     New-Item -ItemType Directory -Force -Path $DestinationFolder | Out-Null
     Copy-Item -LiteralPath $SourceFile -Destination $DestinationFile -Force
   }
+  # Package the complete shared source tree: multiplayer also imports canon
+  # data/worldbook modules, and future relative imports must remain resolvable.
+  Copy-Item -LiteralPath (Join-Path $ProjectDir 'js') -Destination $Destination -Recurse -Force
 }
 
 function Assert-PackageContents {
@@ -304,8 +317,18 @@ function Assert-PackageContents {
     'backend/js/core/narrative-artifact.js',
     'backend/js/core/image-studio/contracts.js',
     'backend/js/core/continuity-ledger.js',
+    'backend/js/systems/opening-draft.js',
+    'backend/js/systems/combat-level.js',
+    'backend/js/multiplayer/opening-draft-bridge.js',
     'backend/js/utils/format.js',
+    'backend/js/data/worldbook/runtime-resolver.js',
+    'backend/server/multiplayer/persistence/migrations/0001-initial-schema.sql',
+    'backend/server/multiplayer/persistence/migrations/0008-room-opening-drafts.sql',
     'ops/systemd/naruto-rpg.service.d/limits.conf',
+    'ops/systemd/naruto-rpg.service.d/runtime.conf',
+    'ops/systemd/naruto-rpg.service.d/cloud-slots.conf',
+    'ops/apply-release.py',
+    'release-manifest.json',
     'ops/sysctl/90-naruto-rpg-memory.conf'
   )) {
     if ($Entries -notcontains $Required) { throw "部署包缺少后端文件：$Required" }
@@ -345,9 +368,15 @@ try {
   Set-Location $ProjectDir
 
   if (-not $SkipBuild) {
-    $NpmCommand = Resolve-CommandPath @('npm.cmd', 'npm')
     $BuildTask = if ($Mode -eq 'staging') { 'build:deploy' } else { 'build' }
-    Invoke-NativeChecked $NpmCommand @('run', $BuildTask) '部署构建失败'
+    if ($ProjectDir -match '^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)(\\.*)$') {
+      $TaskDistro = $Matches[1]
+      $TaskLinuxPath = $Matches[2].Replace('\', '/')
+      Invoke-NativeChecked 'wsl.exe' @('-d', $TaskDistro, '--cd', $TaskLinuxPath, 'npm', 'run', $BuildTask) 'WSL 项目构建失败'
+    } else {
+      $NpmCommand = Resolve-CommandPath @('npm.cmd', 'npm')
+      Invoke-NativeChecked $NpmCommand @('run', $BuildTask) '部署构建失败'
+    }
   }
 
   New-Item -ItemType Directory -Force -Path $StaticDir | Out-Null
@@ -366,7 +395,14 @@ try {
   $SysctlPayloadDir = Join-Path $PayloadDir 'ops\sysctl'
   New-Item -ItemType Directory -Force -Path $SystemdPayloadDir, $SysctlPayloadDir | Out-Null
   Copy-Item -LiteralPath (Join-Path $ProjectDir 'deploy\systemd\naruto-rpg.service.d\limits.conf') -Destination $SystemdPayloadDir -Force
+  Copy-Item -LiteralPath (Join-Path $ProjectDir 'deploy\systemd\naruto-rpg.service.d\runtime.conf') -Destination $SystemdPayloadDir -Force
+  Copy-Item -LiteralPath (Join-Path $ProjectDir 'deploy\systemd\naruto-rpg.service.d\cloud-slots.conf') -Destination $SystemdPayloadDir -Force
+  Copy-Item -LiteralPath (Join-Path $ProjectDir 'deploy\apply-release.py') -Destination (Join-Path $PayloadDir 'ops\apply-release.py') -Force
   Copy-Item -LiteralPath (Join-Path $ProjectDir 'deploy\sysctl\90-naruto-rpg-memory.conf') -Destination $SysctlPayloadDir -Force
+
+  $NginxPayloadDir = Join-Path $PayloadDir 'ops\nginx'
+  New-Item -ItemType Directory -Force -Path $NginxPayloadDir | Out-Null
+  Copy-Item -LiteralPath (Join-Path $ProjectDir 'deploy\nginx\naruto-rpg-android-download.conf') -Destination $NginxPayloadDir -Force
 
   if ($Mode -eq 'staging') {
     $NginxPayloadDir = Join-Path $PayloadDir 'ops\nginx'
@@ -374,6 +410,8 @@ try {
     Copy-Item -LiteralPath (Join-Path $ProjectDir 'deploy\nginx\naruto-rpg-staging.conf') -Destination $NginxPayloadDir -Force
   }
 
+  $NodeCommand = Resolve-CommandPath @('node.exe', 'node')
+  Invoke-NativeChecked $NodeCommand @((Join-Path $ProjectDir 'scripts\deploy-manifest.mjs'), $PayloadDir, $Mode, $Version, $DeploymentId) '部署清单或源码同步校验失败'
   $Tar = Resolve-TarCommand
   $CreateFlag = if ($DryRun) { '-cf' } else { '-czf' }
   Invoke-NativeChecked $Tar.Command ($Tar.ExtraArguments + @($CreateFlag, $ArchivePath, '-C', $PayloadDir, '.')) '创建部署包失败'
@@ -406,6 +444,7 @@ try {
   $RemoteArchivePart = "$RemoteArchive.part"
   $RemoteRelease = "/tmp/naruto-rpg-release-$Mode-$DeploymentId"
   $ArchiveSha256 = (Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+  Invoke-NativeChecked $NodeCommand @((Join-Path $ProjectDir 'scripts\deploy-manifest.mjs'), '--check-source', $PayloadDir) '打包之后源码已变化，请重新构建发布'
 
   Invoke-NativeWithRetry `
     -Command $ScpCommand `
@@ -424,78 +463,10 @@ try {
   $RemoteSteps = @(
     'set -eu',
     $FinalizeRemoteUpload,
-    "rm -rf '$RemoteRelease'",
-    "mkdir -p '$RemoteRelease' '$($Target.TargetDir)'",
-    "tar xzf '$RemoteArchive' -C '$RemoteRelease'",
-    "test -s '$RemoteRelease/static/index.html'",
-    "cp -a '$RemoteRelease/static/.' '$($Target.TargetDir)/'",
-    "rm -rf '$($Target.TargetDir)/server' '$($Target.TargetDir)/public'",
-    "rm -f '$($Target.TargetDir)/.env' '$($Target.TargetDir)/.env.example' '$($Target.TargetDir)/package.json' '$($Target.TargetDir)/package-lock.json'",
-    "test ! -e '$($Target.TargetDir)/server'",
-    "chown -R www-data:www-data '$($Target.TargetDir)'"
+    "mkdir -p '$RemoteRelease'",
+    "if test ! -s '$RemoteRelease/release-manifest.json'; then tar xzf '$RemoteArchive' -C '$RemoteRelease'; fi",
+    "python3 '$RemoteRelease/ops/apply-release.py' --mode '$Mode' --build '$Version'"
   )
-
-  if ($Mode -eq 'staging') {
-    $StagingNginxConfig = '/etc/nginx/sites-enabled/naruto-rpg-staging'
-    $StagingNginxPayload = "$RemoteRelease/ops/nginx/naruto-rpg-staging.conf"
-    $StagingNginxBackup = "$RemoteRelease/naruto-rpg-staging.conf.before"
-    $StagingNginxMissing = "$RemoteRelease/naruto-rpg-staging.conf.was-missing"
-    $RemoteSteps += @(
-      "test -s '$StagingNginxPayload'",
-      "if ! cmp -s '$StagingNginxPayload' '$StagingNginxConfig'; then if test -f '$StagingNginxConfig'; then cp '$StagingNginxConfig' '$StagingNginxBackup'; else touch '$StagingNginxMissing'; fi; install -m 0644 '$StagingNginxPayload' '$StagingNginxConfig'; if ! nginx -t || ! systemctl reload nginx; then if test -f '$StagingNginxBackup'; then install -m 0644 '$StagingNginxBackup' '$StagingNginxConfig'; else rm -f '$StagingNginxConfig'; fi; nginx -t; systemctl reload nginx; exit 1; fi; else nginx -t; fi",
-      "nginx -T 2>&1 | grep -Fq 'auth_request /_staging_auth;'"
-    )
-  } else {
-    $RemoteSteps += 'nginx -t'
-  }
-
-  if ($Target.RestartBackend) {
-    $RemoteSteps += @(
-      "test -s '$RemoteRelease/backend/server/index.js'",
-      "test -s '$RemoteRelease/backend/js/core/timeline-save-schema.js'",
-      "test -s '$RemoteRelease/backend/js/core/shinobi-daily.js'",
-      "test -s '$RemoteRelease/backend/js/core/narrative-artifact.js'",
-      "test -s '$RemoteRelease/backend/js/core/image-studio/contracts.js'",
-      "test -s '$RemoteRelease/backend/js/core/continuity-ledger.js'",
-      "test -s '$RemoteRelease/backend/js/utils/format.js'",
-      "test -s '$RemoteRelease/ops/systemd/naruto-rpg.service.d/limits.conf'",
-      "test -s '$RemoteRelease/ops/sysctl/90-naruto-rpg-memory.conf'",
-      "mkdir -p '/opt/naruto-rpg/server' '/opt/naruto-rpg/js'",
-      "cp -a '$RemoteRelease/backend/server/.' '/opt/naruto-rpg/server/'",
-      "cp -a '$RemoteRelease/backend/js/.' '/opt/naruto-rpg/js/'",
-      "cp '$RemoteRelease/backend/package.json' '$RemoteRelease/backend/package-lock.json' '/opt/naruto-rpg/'",
-      "cd '/opt/naruto-rpg' && npm install --omit=dev --silent",
-      "chmod 600 '/opt/naruto-rpg/.env' 2>/dev/null || true",
-      "chown -R www-data:www-data '/opt/naruto-rpg'",
-      "install -D -m 0644 '$RemoteRelease/ops/systemd/naruto-rpg.service.d/limits.conf' '/etc/systemd/system/naruto-rpg.service.d/limits.conf'",
-      "install -m 0644 '$RemoteRelease/ops/sysctl/90-naruto-rpg-memory.conf' '/etc/sysctl.d/90-naruto-rpg-memory.conf'",
-      'systemctl daemon-reload',
-      'sysctl -p /etc/sysctl.d/90-naruto-rpg-memory.conf',
-      'systemctl restart naruto-rpg',
-      'systemctl is-active --quiet naruto-rpg',
-      "systemctl show naruto-rpg --property=MemoryHigh --value | grep -Fxq '268435456'",
-      "systemctl show naruto-rpg --property=MemoryMax --value | grep -Fxq '402653184'",
-      "systemctl show naruto-rpg --property=MemorySwapMax --value | grep -Fxq '134217728'",
-      "sysctl -n vm.swappiness | grep -Fxq '10'",
-      'ready=; for attempt in $(seq 1 30); do if curl --fail --silent --output /dev/null --max-time 2 http://127.0.0.1:3000/health/ready; then ready=1; break; fi; sleep 1; done; test "$ready" = 1'
-    )
-  }
-
-  $RemoteSteps += @(
-    "grep -Fq '?v=$Version' '$($Target.TargetDir)/index.html'",
-    "grep -Fq '?v=$Version' '$($Target.TargetDir)/login.html'",
-    "grep -Fq '$ReleaseVersion' '$($Target.TargetDir)/version.json'",
-    "curl --fail --silent --show-error --max-time 30 --resolve '$($Target.VerifyResolve)' '$($Target.VerifyUrl)' | grep -Fq '?v=$Version'"
-  )
-  if ($Mode -eq 'staging') {
-    $StagingHeaders = "$RemoteRelease/staging-root.headers"
-    $RemoteSteps += @(
-      "curl --fail --silent --show-error --output /dev/null --dump-header '$StagingHeaders' --max-time 30 --resolve '$($Target.VerifyResolve)' '$($Target.PublicUrl)'",
-      "tr -d '\r' < '$StagingHeaders' | grep -Eq '^HTTP/[^ ]+ 302([[:space:]]|$)'",
-      "tr -d '\r' < '$StagingHeaders' | grep -Fxi 'location: $($Target.VerifyUrl)'",
-      "tr -d '\r' < '$StagingHeaders' | grep -Fxi 'x-staging: true'"
-    )
-  }
   # The server throttles rapid consecutive SSH sessions. Keep the verified
   # archive until one complete deployment attempt is acknowledged so retries
   # remain idempotent after an authentication-time disconnect.
@@ -509,7 +480,8 @@ try {
     -MaxDelaySeconds 30
   Write-Output "UPLOAD_SHA256=$ArchiveSha256"
 
-  $RemoteCleanupCommand = "rm -rf '$RemoteRelease' '$RemoteArchive' '$RemoteArchivePart'"
+  # Keep receipt/log/manifest for recovery and uncertain SSH outcomes.
+  $RemoteCleanupCommand = "python3 '$RemoteRelease/ops/apply-release.py' --mode '$Mode' --build '$Version' --cleanup && rm -f '$RemoteArchive' '$RemoteArchivePart'"
   Start-Sleep -Seconds 12
   try {
     Invoke-NativeWithRetry `
@@ -535,8 +507,9 @@ try {
   Write-Error "部署失败：$($_.Exception.Message)" -ErrorAction Continue
 } finally {
   Set-Location $ProjectDir
-  Remove-SafeTemporaryPath $WorkDir
-  if (Test-Path -LiteralPath $ArchivePath) {
+  if ($KeepPackage) { Write-Output "PACKAGE_DIRECTORY=$WorkDir" }
+  else { Remove-SafeTemporaryPath $WorkDir }
+  if (-not $KeepPackage -and (Test-Path -LiteralPath $ArchivePath)) {
     Remove-SafeTemporaryPath $ArchivePath
   }
   if (-not $Succeeded) {

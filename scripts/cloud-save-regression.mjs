@@ -236,12 +236,28 @@ await test('a snapshot factory that queues another save cannot create two runner
   assert.equal(nestedResult.savedVersion, 2);
 });
 
-await test('all app cloud-save triggers share the scheduler and gzip download goes straight to import', async () => {
+await test('app automatic cloud-save triggers share the scheduler and profile management uses the archive library', async () => {
   const source = await readFile(new URL('../js/app.js', import.meta.url), 'utf8');
   assert.match(source, /cloudSave\.scheduleQuickSave\('默认云存档'/);
   assert.doesNotMatch(source, /cloudSave\.quickSave\(/);
-  assert.match(source, /const file = await cloudSave\.downloadSave\(saves\[0\]\.id\)/);
+  assert.match(source, /eventBus\.request\('app:open-saves', \{ cloud: true \}\)/);
   assert.doesNotMatch(source, /JSON\.stringify\(fullSave\.save_data\)/);
+});
+
+await test('metadata-only rename and storage remain compatible with older servers', async () => {
+  const calls = [];
+  await withFetch(async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.endsWith('/metadata') || url === '/api/saves/storage') return jsonResponse({}, { status: 404 });
+    return jsonResponse({ id: 'old-slot' });
+  }, async () => {
+    const client = new CloudSaveClient();
+    assert.equal(await client.getStorage(), null);
+    assert.equal((await client.renameSave('old-slot', '旧服务器改名')).id, 'old-slot');
+  });
+  assert.equal(calls.at(-1).options.method, 'PUT');
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body), { slot_name: '旧服务器改名' });
+  assert.equal(calls.some(call => call.options.body instanceof FormData), false);
 });
 
 console.log(`\n${passed} cloud save regression tests passed.`);

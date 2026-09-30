@@ -38,12 +38,16 @@ class MapModal extends HTMLElement {
     const s = stateManager.get();
     const currentLoc = stateManager.get('世界·地点') || '木叶隐村';
     const exploredRaw = stateManager.get('世界·已探索区域') || '';
-    const explored = exploredRaw ? exploredRaw.split(',').map(x => x.trim()).filter(Boolean) : ['火之国', '木叶隐村'];
-    const known = {};
+    const explored = exploredRaw ? exploredRaw.split(/[，,]/).map(x => x.trim()).filter(Boolean) : ['火之国', '木叶隐村'];
+    const known = Object.create(null);
     const pins = [];
     for (const [k, v] of Object.entries(s)) {
       if (k.startsWith('世界·已知地点·')) known[k.slice(8)] = v;
       if (k.startsWith('世界·标记·')) pins.push(v);
+    }
+    const locations = s._map?.known_locations;
+    if (locations && typeof locations === 'object' && !Array.isArray(locations)) {
+      Object.assign(known, locations);
     }
 
     const currentCoord = findLocation(currentLoc);
@@ -488,10 +492,10 @@ class MapModal extends HTMLElement {
     return `
       <div class="intel-section">
         <div class="intel-section-title">打探到的情报 (${entries.length})</div>
-        ${entries.map(([name, desc]) => `
+        ${entries.map(([name, location]) => `
           <div class="intel-known">
             <div class="intel-known-name">${escHtml(name)}</div>
-            <div class="intel-known-desc">${escHtml(String(desc))}</div>
+            <div class="intel-known-desc">${escHtml(String(location && typeof location === 'object' ? location.desc ?? location.description ?? '' : location ?? ''))}</div>
           </div>`).join('')}
       </div>`;
   }

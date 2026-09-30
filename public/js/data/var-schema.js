@@ -387,6 +387,11 @@ export function normalizeStructuredVariableUpdate(update) {
   if (typeof normalized.path === 'string') normalized.path = normalized.path.trim();
   if (typeof normalized.op === 'string') normalized.op = normalized.op.trim().toLowerCase();
   if (typeof normalized.key === 'string') normalized.key = normalized.key.trim();
+  // Resolve flat state aliases before type validation and parser conversion.
+  // Structured remove/assign keys name entities or fields and must stay literal.
+  if (normalized.key && ['=', '+', '-'].includes(normalized.op)) {
+    normalized.key = resolveAlias(normalized.key);
+  }
   if (Object.prototype.hasOwnProperty.call(EVIDENCE_CONTAINER_HINTS, normalized.path)
     && Object.prototype.hasOwnProperty.call(STRUCTURED_OPERATION_FROM_WRAPPER, normalized.op)) {
     let targetKey = typeof normalized.key === 'string' ? resolveAlias(normalized.key) : '';
@@ -414,6 +419,42 @@ export function normalizeStructuredVariableUpdate(update) {
     }
   }
   return normalized;
+}
+
+// Ordered exceptions precede broad prefixes. Both manifest validation and the
+// model's domain reference use these rules after resolving the actual state key.
+const VARIABLE_UPDATE_DOMAIN_RULES = Object.freeze([
+  { domain: 'equipment', exact: ['进度·金钱'], description: '金钱（统一使用 equipment.ryo；旧金钱路径与扁平别名也归此领域）' },
+  { domain: 'missions', exact: ['玩家·当前目标'], description: '当前目标（player.current_goal）' },
+  { domain: 'world', prefixes: ['world_state.', '世界·'], description: 'world_state.*，包括时间、地点与地图' },
+  { domain: 'attributes', prefixes: ['attributes.', 'progression.', '属性·', '进度·'], description: 'attributes.* 与除金钱外的 progression.*，包括经验、熟练度和声望' },
+  { domain: 'skills', prefixes: ['skills.', '技能·'], description: 'skills.*，包括技能、天赋与血继' },
+  { domain: 'equipment', prefixes: ['equipment.', '物品·'], description: 'equipment.*，包括物品与装备槽' },
+  { domain: 'attributes', prefixes: ['player.', '玩家·'], description: '除当前目标外的 player.*，包括姓名、忍阶与声望标签' }
+]);
+
+export function getVariableUpdateDomain(update) {
+  const normalized = normalizeStructuredVariableUpdate(update);
+  if (!recordValue(normalized)) return null;
+  const path = String(normalized.path || normalized.key || '').trim();
+  const target = resolveAlias(Object.prototype.hasOwnProperty.call(STRUCTURED_SCALAR_PATH_MAP, path)
+    ? STRUCTURED_SCALAR_PATH_MAP[path]
+    : path);
+  return VARIABLE_UPDATE_DOMAIN_RULES.find(rule => (
+    rule.exact?.includes(target) || rule.prefixes?.some(prefix => target.startsWith(prefix))
+  ))?.domain || null;
+}
+
+export function getVariableUpdateDomainPrompt() {
+  const groups = new Map();
+  for (const rule of VARIABLE_UPDATE_DOMAIN_RULES) {
+    if (!groups.has(rule.domain)) groups.set(rule.domain, []);
+    groups.get(rule.domain).push(rule.description);
+  }
+  return '[update_manifest.domains 归属表]\n'
+    + '按最终写入的规范字段分类，不按只读证据分组或审计标题分类；同一字段的不同路径和别名必须归入同一领域。\n'
+    + [...groups].map(([domain, descriptions]) => `- ${domain}：${descriptions.join('；')}。`).join('\n')
+    + '\n- <mission>、<relationship>、<combat>、<event> 分别归 missions、relationships、combat、events；<memory> 不改变以上领域状态。';
 }
 
 export function calendarMonthFromValue(value) {
@@ -661,7 +702,9 @@ export function getStructuredVariableContractPrompt() {
 - 地图地点：world_state.map.known_locations 只允许 assign/remove + key；assign value 必须含 x、y、desc、tier。探索区域 world_state.map.explored_regions 使用 push 字符串，或 set 字符串数组。
 - 技能：skills.(jutsu|taijutsu|genjutsu|support).准确名称。新建用 set 完整对象，必须含 name/rank/element/resource_type/cost/power/mastery/description；单字段使用对象路径 assign + key，或字段路径 set/add/sub。天赋与血继 skills.(talents|kekkei_genkai).准确名称 新建必须含 name/rank/mastery/description。
 - 物品：equipment.(weapons|armor|tools|consumables).准确名称。新建用 set 完整对象，必须含 quantity/quality/description；quantity 用 set/add/sub，其他字段用字段路径 set。物品对象不支持 assign。
-- 删除完整技能或物品必须对父集合使用 remove + key。`;
+- 删除完整技能或物品必须对父集合使用 remove + key。
+
+${getVariableUpdateDomainPrompt()}`;
 }
 
 export function validate(key, value) {

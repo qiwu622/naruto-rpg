@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as imageStudioController from '../js/ui/image-studio-controller.js';
+import {
+  ImageSettingsStore,
+  normalizeImageSettings as normalizeCoreImageSettings
+} from '../js/core/image-studio/settings.js';
+import { ImageStudioSettings } from '../js/ui/image-studio.js';
 
 const uiSource = readFileSync(new URL('../js/ui/image-studio.js', import.meta.url), 'utf8');
 
@@ -103,7 +108,7 @@ await test('NovelAI UI exposes token, model, sampler, scheduler, dimensions, and
   for (const field of [
     'novelai.apiUrl', 'novelai.apiKey', 'novelai.model', 'novelai.sampler',
     'novelai.noiseSchedule', 'novelai.steps', 'novelai.width', 'novelai.height',
-    'novelai.scale', 'novelai.cfgRescale', 'novelai.qualityToggle'
+    'novelai.scale', 'novelai.cfgRescale', 'novelai.qualityToggle', 'novelai.artistPrompt'
   ]) {
     assert.match(uiSource, new RegExp(`name=["']${field.replace('.', '\\.')}`));
   }
@@ -127,6 +132,79 @@ await test('NovelAI UI settings preserve manual future model IDs and generation 
   assert.equal(normalized.providers.novelai.noiseSchedule, 'exponential');
   assert.equal(normalized.providers.novelai.qualityToggle, false);
   assert.equal(normalized.providers.novelai.cfgRescale, 0.25);
+});
+
+await test('NovelAI artist tags preserve weights and line breaks through both settings normalizers', () => {
+  const artistPrompt = '  {artist:sample_one}, [artist:sample_two]\n1.2::artist:sample_three::  ';
+  for (const normalize of [imageStudioController.normalizeImageSettings, normalizeCoreImageSettings]) {
+    assert.equal(normalize({}).providers.novelai.artistPrompt, '');
+    assert.equal(normalize({ providers: { nai: { artistPrompt } } }).providers.novelai.artistPrompt, artistPrompt);
+    assert.equal(normalize({ providers: { nai: { artistPrompt }, novelai: { artistPrompt: '' } } })
+      .providers.novelai.artistPrompt, '', 'clearing the canonical field must override an old alias profile');
+    for (const invalid of [null, 17, ['artist:sample'], { artist: 'sample' }]) {
+      assert.equal(normalize({ providers: { novelai: { artistPrompt: invalid } } })
+        .providers.novelai.artistPrompt, '');
+    }
+  }
+});
+
+await test('NovelAI artist textarea escapes content and explains when it is appended', () => {
+  const element = new ImageStudioSettings();
+  element._settings.providers.novelai.artistPrompt = '{artist:sample}\n</textarea><script>injected()</script>';
+  const markup = element._providerHtml('novelai');
+  assert.match(markup, /<textarea[^>]*name="novelai\.artistPrompt"[^>]*rows="3"/);
+  assert.match(markup, /\{artist:sample\}\n&lt;\/textarea&gt;&lt;script&gt;injected\(\)&lt;\/script&gt;/);
+  assert.doesNotMatch(markup, /<script>/);
+  assert.match(markup, /自动追加到正向提示词，留空不追加/);
+});
+
+await test('NovelAI artist textarea saves, reloads and clears through the UI controller and settings store', async () => {
+  const values = new Map();
+  const storage = {
+    getItem: key => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, String(value))
+  };
+  const store = new ImageSettingsStore({ storage });
+  const element = new ImageStudioSettings();
+  element._settings.activeProviderId = 'novelai';
+  const fields = new Map([
+    ['activeProviderId', { value: 'novelai' }],
+    ['turnMode', { value: 'manual' }],
+    ['promptMode', { value: 'main-contract' }]
+  ]);
+  for (const [id, prefix] of [
+    ['openai-compatible', 'openai'], ['novelai', 'novelai'], ['comfyui', 'comfy'], ['a1111', 'a1111']
+  ]) {
+    for (const [key, value] of Object.entries(element._settings.providers[id])) {
+      fields.set(`${prefix}.${key}`, { value: typeof value === 'string' ? value : String(value), checked: value === true });
+    }
+  }
+  element.shadowRoot = {
+    querySelector: selector => fields.get(selector.match(/^\[name="([^"]+)"\]$/)?.[1]) || null,
+    querySelectorAll: () => []
+  };
+  const commands = [];
+  element.controller = new imageStudioController.ImageStudioUIController({
+    read(query) { assert.equal(query.type, 'settings'); return store.load(); },
+    execute(command) {
+      commands.push(command.type);
+      assert.equal(command.type, 'configure');
+      return store.save(command.settings);
+    }
+  }, { saveWorldbook: () => {} });
+  const artistPrompt = '{artist:sample_one}, 0.8::artist:sample_two::\n[artist:sample_three]';
+  fields.get('novelai.artistPrompt').value = artistPrompt;
+  await element._save();
+  assert.equal(element._tone, 'success');
+  assert.equal((await element.controller.settings()).providers.novelai.artistPrompt, artistPrompt);
+  assert.equal(new ImageSettingsStore({ storage }).load().providers.novelai.artistPrompt, artistPrompt);
+
+  fields.get('novelai.artistPrompt').value = '';
+  await element._save();
+  assert.equal(element._tone, 'success');
+  assert.equal((await element.controller.settings()).providers.novelai.artistPrompt, '');
+  assert.equal(new ImageSettingsStore({ storage }).load().providers.novelai.artistPrompt, '');
+  assert.deepEqual(commands, ['configure', 'configure']);
 });
 
 if (failures.length) {

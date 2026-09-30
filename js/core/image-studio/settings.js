@@ -15,6 +15,7 @@ export const NOVELAI_PROVIDER_DEFAULTS = Object.freeze({
   apiKey: '',
   apiKeyHeader: 'Authorization',
   model: NOVELAI_IMAGE_MODELS[0].id,
+  artistPrompt: '',
   sampler: 'k_euler_ancestral',
   noiseSchedule: 'karras',
   steps: 28,
@@ -152,6 +153,7 @@ export function normalizeImageSettings(input = {}) {
   for (const provider of Object.values(normalized.providers)) {
     if (provider.type === 'novelai') {
       provider.apiKeyHeader = 'Authorization';
+      provider.artistPrompt = typeof provider.artistPrompt === 'string' ? provider.artistPrompt : '';
       continue;
     }
     if (!['openai', 'openai-compatible'].includes(provider.type)) continue;

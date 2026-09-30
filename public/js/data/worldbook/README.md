@@ -28,7 +28,10 @@
 - 写作、变量更新和 NPC 上下文只能使用 `toRuntimeWorldbookEntry()` 或 `WORLD_BOOK_V2_RUNTIME_ENTRIES`，不得直接序列化 `WORLD_BOOK_V2_ENTRIES`；后者含迁移审计需要的旧原文。
 - `validity.until` 为不包含边界。例如木叶 51—63 年迁移为 `from=K051-01-01`、`until=K064-01-01`。
 - 旧角色条目会保留身份、性格、目标、弱点、说话方式、行为边界、安全外貌和年代状态。受污染的具体外貌段单独隔离，不会因此删除整名角色。
-- 旧自定义条目通过 `migrateCustomWorldbookEntriesV1ToV2()` 迁移为 `legacy_trusted_public`，常驻且启用；内容安全净化仍不可绕过。
+- 旧自定义条目通过 `migrateCustomWorldbookEntriesV1ToV2()` 迁移为 `legacy_trusted_public`；这只是知识来源标记，不得改变启用开关或触发模式。关闭和隔离状态优先于常驻。
+- `activation.js` 统一导入与触发语义：绿灯需命中主关键词，并满足启用的次关键词条件；蓝灯可无关键词；手动条目不自动注入。标题和正文相似度不能替代自定义条目的关键词命中。同名自定义条目不合并内容。
+- 自定义条目（包括蓝灯）和内置可选条目共享 `maxEntries` / `budget` 上限；预算按序列化字符计，单条超长也不能越限。固定内置核心规则使用原有保留空间；`budget_used_chars` / `budget_skipped_ids` 用于诊断。
+- 旧版本导入时已丢弃的蓝灯标记或次关键词条件无法推断。缺少模式的条目按绿灯解释；用户可在编辑器设置模式或重新导入原文件。关闭状态和已有主关键词在加载时直接生效。
 - `source_fragments` 保存每个 V1 片段的原文和明确处置，仅供编辑器迁移审计，禁止进入模型提示词。
 
 写作原则：

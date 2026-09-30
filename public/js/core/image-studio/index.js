@@ -6,6 +6,7 @@ import { createImageStore } from './storage.js';
 import { ImageWorldbookStore, mergeImageWorldbooks, renderImageWorldbookPrompts } from './worldbook.js';
 import { decryptApiKey, encryptApiKey } from '../../utils/api-crypto.js';
 import { stateManager } from '../state-manager.js';
+import { usesProjectServerFeatures } from '../runtime-platform.js';
 
 const TERMINAL_STATES = new Set(['succeeded', 'failed', 'cancelled', 'interrupted', 'blocked']);
 const ACTIVE_STATES = new Set(['queued', 'planning', 'generating', 'staging', 'uploading', 'binding']);
@@ -151,6 +152,7 @@ export class ImageStudio {
     this.worldbookStore = worldbookStore;
     this.adapters = adapterRegistry;
     this.cloud = cloudGallery;
+    this.cloudEnabled = usesProjectServerFeatures();
     this.autoStart = autoStart;
     this.listeners = new Set();
     this.controllers = new Map();
@@ -185,7 +187,7 @@ export class ImageStudio {
     }
     // Best-effort replay for references that could not be released while the
     // browser was offline or closing. It must never block the image feature.
-    void this._flushCloudReferenceOutbox();
+    if (this.cloudEnabled) void this._flushCloudReferenceOutbox();
     if (this.autoStart) this._schedule();
     return this;
   }
@@ -374,6 +376,10 @@ export class ImageStudio {
 
   async _releaseCloudReference(assetId, jobId = null) {
     const id = this._cloudReferenceOutboxId(assetId);
+    if (!this.cloudEnabled) {
+      await this.store.delete('outbox', id).catch(() => {});
+      return null;
+    }
     try {
       await this.cloud.setActiveJobReference(assetId, false);
       await this.store.delete('outbox', id);
@@ -556,19 +562,21 @@ export class ImageStudio {
         version_group_id: job.versionGroupId, source_job_id: job.id,
         provider: job.providerType, model: provider.model || '', active_job_referenced: true
       };
-      job = await this._updateJob(job, { state: 'uploading' });
-      try {
-        const uploaded = await this.cloud.upload({
-          blob: generated.blob, autoEvict: settings.autoEviction, signal: controller.signal,
-          metadata: assetMetadata
-        });
-        cloudAsset = uploaded.asset;
-        assetId = cloudAsset.id;
-        activeCloudAssetId = cloudAsset.id;
-        await this._rememberCloudReference(activeCloudAssetId, job.id);
-      } catch (error) {
-        if (error?.name === 'AbortError' || controller.signal.aborted) throw error;
-        cloudError = error;
+      if (this.cloudEnabled) {
+        job = await this._updateJob(job, { state: 'uploading' });
+        try {
+          const uploaded = await this.cloud.upload({
+            blob: generated.blob, autoEvict: settings.autoEviction, signal: controller.signal,
+            metadata: assetMetadata
+          });
+          cloudAsset = uploaded.asset;
+          assetId = cloudAsset.id;
+          activeCloudAssetId = cloudAsset.id;
+          await this._rememberCloudReference(activeCloudAssetId, job.id);
+        } catch (error) {
+          if (error?.name === 'AbortError' || controller.signal.aborted) throw error;
+          cloudError = error;
+        }
       }
       const beforeStaging = await this.store.get('jobs', job.id);
       if (controller.signal.aborted || beforeStaging?.cancelRequested) {
@@ -580,7 +588,7 @@ export class ImageStudio {
         versionGroupId: job.versionGroupId, purpose: job.target.kind === 'turn' ? 'turn-illustration' : 'portrait',
         mimeType: generated.mimeType, width: generated.width, height: generated.height,
         sizeBytes: generated.blob.size, createdAt: new Date().toISOString(), protected: false,
-        cloudState: cloudAsset ? 'synced' : 'upload-blocked', cloudAssetId: cloudAsset?.id || null,
+        cloudState: cloudAsset ? 'synced' : (this.cloudEnabled ? 'upload-blocked' : 'local-only'), cloudAssetId: cloudAsset?.id || null,
         contentUrl: cloudAsset?.contentUrl || null, thumbnailUrl: cloudAsset?.thumbnailUrl || null,
         metadata: cloudAsset?.metadata || assetMetadata, provenance: {
           adapter: job.providerType, model: provider.model || '', parameters,
@@ -686,7 +694,7 @@ export class ImageStudio {
     ));
     if (!staged.ok) return { status: 'stale', binding: staged.current };
     let binding = staged.current;
-    if (asset.cloudAssetId) {
+    if (this.cloudEnabled && asset.cloudAssetId) {
       let cloudSelectionState = 'synced';
       let cloudSelectionError = null;
       let selectionFailure = null;
@@ -714,7 +722,7 @@ export class ImageStudio {
 
   async _select(command) {
     let asset = await this.store.get('asset_cache', command.assetId);
-    if (!asset) {
+    if (!asset && this.cloudEnabled) {
       const resolved = await this.cloud.resolve([command.assetId]);
       asset = normalizeCloudAsset(resolved.assets?.[0]);
       if (asset) await this.store.put('asset_cache', asset);
@@ -758,7 +766,7 @@ export class ImageStudio {
     ));
     if (!staged.ok) return { status: 'stale', target, binding: staged.current };
     let tombstone = staged.current;
-    if (detachedAsset?.cloudAssetId) {
+    if (this.cloudEnabled && detachedAsset?.cloudAssetId) {
         let cloudSelectionState = 'synced';
         let cloudSelectionError = null;
         let selectionFailure = null;
@@ -842,7 +850,7 @@ export class ImageStudio {
     const asset = await this.store.get('asset_cache', assetId);
     if (!asset || asset.kind !== 'asset') throw new Error('图片不存在');
     const next = { ...asset, protected: protectedValue };
-    if (asset.cloudAssetId) await this.cloud.protect(asset.cloudAssetId, protectedValue);
+    if (this.cloudEnabled && asset.cloudAssetId) await this.cloud.protect(asset.cloudAssetId, protectedValue);
     await this.store.put('asset_cache', next);
     this._emit({ type: 'asset.changed', asset: next });
     return next;
@@ -861,7 +869,7 @@ export class ImageStudio {
         throw error;
       }
     }
-    if (asset.cloudAssetId) await this.cloud.delete(asset.cloudAssetId);
+    if (this.cloudEnabled && asset.cloudAssetId) await this.cloud.delete(asset.cloudAssetId);
     await this.store.delete('asset_cache', assetId);
     await this.store.delete('blobs', assetId);
     this._emit({ type: 'asset.deleted', assetId, asset });
@@ -869,6 +877,7 @@ export class ImageStudio {
   }
 
   async _retryPendingCloudSelection(target, records) {
+    if (!this.cloudEnabled) return null;
     if (typeof this.cloud.reconcileSelections !== 'function') return null;
     const key = imageTargetKey(target);
     const binding = records.find(record => record.kind === 'binding' && record.targetKey === key);
@@ -912,6 +921,7 @@ export class ImageStudio {
     let [records, jobs] = await Promise.all([this.store.getAll('asset_cache'), this.store.getAll('jobs')]);
     let cloudResult = null;
     try {
+      if (!this.cloudEnabled) throw null;
       await this._retryPendingCloudSelection(target, records);
       records = await this.store.getAll('asset_cache');
       cloudResult = await this.cloud.list({ ...filtersForTarget(target), limit: 500 });
@@ -980,6 +990,7 @@ export class ImageStudio {
     let cloud = [];
     let cloudTotal = 0;
     try {
+      if (!this.cloudEnabled) throw null;
       const result = await this.cloud.list({ ...normalizedFilters, limit: Math.min(500, offset + limit) });
       cloud = result.items.map(asset => normalizeCloudAsset(asset)).filter(Boolean);
       cloudTotal = Math.max(cloud.length, Number(result.total) || 0);
@@ -994,7 +1005,10 @@ export class ImageStudio {
   }
 
   async _quota() {
-    try { return await this.cloud.quota(); }
+    try {
+      if (!this.cloudEnabled) throw null;
+      return await this.cloud.quota();
+    }
     catch {
       const assets = (await this.store.getAll('asset_cache')).filter(record => record.kind === 'asset');
       return {
@@ -1008,6 +1022,7 @@ export class ImageStudio {
     const record = await this.store.get('blobs', assetId);
     if (record?.blob) return record.blob;
     const asset = await this.store.get('asset_cache', assetId);
+    if (!this.cloudEnabled) throw new Error('本地图片内容不存在');
     if (asset?.cloudAssetId || asset?.contentUrl) return this.cloud.content(asset.cloudAssetId || assetId, variant);
     return this.cloud.content(assetId, variant);
   }

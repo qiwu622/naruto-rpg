@@ -10,7 +10,8 @@ const sharedDirectories = [
   { name: 'js', publicOnly: [] },
   { name: 'css', publicOnly: [] },
   { name: 'img', publicOnly: ['login-bg.png', 'login-logo.png'] },
-  { name: 'assets', publicOnly: [] }
+  { name: 'assets', publicOnly: [] },
+  { name: 'app', publicOnly: [] }
 ];
 
 await fs.mkdir(publicDir, { recursive: true });

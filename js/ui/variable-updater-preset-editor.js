@@ -25,7 +25,7 @@ class VariableUpdaterPresetEditor extends HTMLElement {
     const entries = this._preset?.entries || [];
     this.shadowRoot.innerHTML = `
       <style>
-        :host { position:fixed; inset:0; z-index:100002; display:flex; align-items:center; justify-content:center; padding:20px; box-sizing:border-box; color:#e8e4d9; font-family:'Noto Sans SC',system-ui,sans-serif; background:rgba(3,5,8,.94); backdrop-filter:blur(10px); }
+        :host { position:fixed; inset:0; z-index:calc(var(--z-fullscreen) + 2); display:flex; align-items:center; justify-content:center; padding:20px; box-sizing:border-box; color:#e8e4d9; font-family:'Noto Sans SC',system-ui,sans-serif; background:rgba(3,5,8,.94); backdrop-filter:blur(10px); }
         :host([embedded]) { position:relative; inset:auto; z-index:auto; width:100%; height:100%; padding:0; background:transparent; backdrop-filter:none; }
         :host([embedded]) .editor { width:100%; height:100%; border:0; border-radius:0; box-shadow:none; }
         .editor { width:min(1040px,100%); height:min(88vh,900px); display:flex; flex-direction:column; overflow:hidden; background:#0d1117; border:1px solid rgba(198,156,109,.24); border-radius:12px; box-shadow:0 24px 80px rgba(0,0,0,.55); }

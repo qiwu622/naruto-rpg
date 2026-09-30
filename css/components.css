@@ -62,6 +62,9 @@
 
 .btn-sm { padding: 6px 12px; font-size: var(--text-xs); }
 .btn-lg { padding: 14px 28px; font-size: var(--text-md); }
+.btn-xs { padding: 4px 10px; font-size: 11px; letter-spacing: 0.5px; border-radius: var(--r-sm); gap: 4px; }
+.btn-icon { width: 34px; height: 34px; padding: 0; flex: 0 0 auto; }
+.btn-icon.btn-xs { width: 28px; height: 28px; }
 
 /* ── Form Controls (极简线条) ──── */
 .form-group { margin-bottom: var(--sp-5); }
@@ -173,6 +176,24 @@
   display: flex;
   justify-content: center;
   align-items: center;
+}
+
+.topbar-logo--app {
+  gap: 8px;
+  white-space: nowrap;
+  font-family: var(--font-title);
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+.topbar-logo--app .app-brand-mark { width: 30px; height: 30px; object-fit: contain; }
+.api-setup-title--app { display: grid; justify-items: center; gap: 14px; }
+.api-setup-title--app .app-brand-mark { width: 116px; height: 116px; object-fit: contain; }
+.app-brand-name { color: var(--text-primary); font-size: 28px; letter-spacing: 6px; }
+.app-shell--android .app-topbar { gap: 12px; }
+.app-shell--android .topbar-left { flex-shrink: 0; }
+.app-shell--android .topbar-right { flex: 1 1 0; min-width: 0; max-width: none; }
+.app-shell--android .app-center--setup {
+  background: linear-gradient(145deg, rgba(16,18,26,0.97), rgba(7,10,16,0.98) 65%, rgba(30,22,20,0.97));
 }
 
 .logo-image-small {
@@ -325,7 +346,7 @@
 }
 
 .desktop-lyrics {
-  position: fixed; bottom: 12vh; left: 50%; transform: translateX(-50%); z-index: 99999;
+  position: fixed; bottom: 12vh; left: 50%; transform: translateX(-50%); z-index: var(--z-lyrics);
   padding: 24px 48px; background: rgba(var(--ink-deep-rgb), 0.75); backdrop-filter: var(--blur-xl); -webkit-backdrop-filter: var(--blur-xl);
   border: 1px solid var(--border-subtle); border-radius: var(--r-xl);
   box-shadow: var(--shadow-lg); text-align: center; min-width: 480px; max-width: calc(100vw - 24px);

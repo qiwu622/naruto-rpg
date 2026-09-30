@@ -313,6 +313,9 @@ class MessagePipeline {
       const decision = await eventBus.request('pipeline:variable-recovery-decision', {
         error: String(error?.message || error || '未知变量错误'),
         code: String(error?.code || ''),
+        failureKind: String(error?.failureKind || ''),
+        repairStage: String(error?.repairContext?.stage || 'full'),
+        diagnosticId: String(error?.attemptDiagnostic?.id || ''),
         attempt: Math.max(1, Number(attempt) || 1),
         canRepair: Boolean(rejectedOutput),
         canApplySafe,
@@ -684,6 +687,7 @@ class MessagePipeline {
       let secondaryThinkContent = '';
       let secondaryCorrectionInstruction = '';
       let secondaryRepairCandidate = '';
+      let secondaryRepairContext = null;
 
       const applySecondaryResponse = (response, recoveryNote = '') => {
         const payload = typeof response === 'string' ? { output: response, shinobiDaily: null } : (response || {});
@@ -713,6 +717,7 @@ class MessagePipeline {
           updateObligations,
           correctionInstruction: secondaryCorrectionInstruction,
           repairCandidate: secondaryRepairCandidate,
+          repairContext: secondaryRepairContext,
           forceEnabled: agentModeActivated
         });
 
@@ -730,14 +735,17 @@ class MessagePipeline {
           // A later repair attempt may regress only the daily contract. Keep the
           // latest already-validated edition until a newer valid one replaces it.
           if (err?.shinobiDaily) shinobiDaily = err.shinobiDaily;
+          if (err?.repairContext) secondaryRepairContext = err.repairContext;
           retryCount++;
           const candidateRecovery = err?.recovery || (err?.safeOutput
             ? { output: err.safeOutput, appliedCount: 0, droppedCount: 0, errors: [] }
             : null);
           if (err?.code === 'VARIABLE_UPDATER_OUTPUT_INCONSISTENT' && retryCount < maxRetries) {
             secondaryCorrectionInstruction = err.message;
-            secondaryRepairCandidate = '';
-            eventBus.emit('pipeline:warning', { warning: '变量自检与实际标签不一致，正在自动重新演算。' });
+            secondaryRepairCandidate = String(err?.failedOutput || '') || secondaryRepairCandidate;
+            const target = secondaryRepairContext?.stage === 'daily' ? '日报'
+              : secondaryRepairContext?.stage === 'state' ? '变量与记忆' : '失败输出';
+            eventBus.emit('pipeline:warning', { warning: `正在自动修复${target}，已通过校验的部分保留在回合草稿中。` });
             continue;
           }
           const decision = await this._requestVariableRecoveryDecision({
@@ -749,6 +757,7 @@ class MessagePipeline {
           if (decision.action === 'regenerate') {
             secondaryCorrectionInstruction = '';
             secondaryRepairCandidate = '';
+            secondaryRepairContext = null;
             eventBus.emit('pipeline:warning', { warning: '正在重新生成本回合二次变量。' });
             continue;
           }
@@ -1092,7 +1101,7 @@ class MessagePipeline {
 
   async _runSecondaryVariableUpdate({
     userInput, enrichedInput, state, narrativeResponse, updateObligations = null,
-    correctionInstruction = '', repairCandidate = '', forceEnabled = false
+    correctionInstruction = '', repairCandidate = '', repairContext = null, forceEnabled = false
   }) {
     const currentState = stateManager.get() || state || {};
     const updaterEvidence = this._compileUpdaterEvidence({
@@ -1136,6 +1145,7 @@ class MessagePipeline {
       updateObligations: updaterEvidence.update_obligations || updateObligations,
       correctionInstruction,
       repairCandidate,
+      repairContext,
       onClient: (client) => { this._secondaryClient = client; },
       onShinobiDaily: (daily) => { shinobiDaily = daily; }
     });

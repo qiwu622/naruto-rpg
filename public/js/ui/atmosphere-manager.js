@@ -154,7 +154,7 @@ class AtmosphereManager {
     const flashEl = document.createElement('div');
     flashEl.style.cssText = `
       position: fixed; inset: 0; background: ${color}; 
-      z-index: 9999; pointer-events: none; opacity: 1;
+      z-index: var(--z-atmosphere); pointer-events: none; opacity: 1;
       transition: opacity ${duration}ms var(--ease-shunshin);
     `;
     (document.getElementById('app') || document.body).appendChild(flashEl);

@@ -610,7 +610,7 @@ class CanonDatabaseEditor extends HTMLElement {
   }
 
   _styles() { return `
-    :host{position:fixed;inset:0;z-index:100003;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(3,4,6,.9);color:#e8e4d9;font-family:'Noto Sans SC',system-ui,sans-serif;box-sizing:border-box}
+    :host{position:fixed;inset:0;z-index:calc(var(--z-fullscreen) + 3);display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(3,4,6,.9);color:#e8e4d9;font-family:'Noto Sans SC',system-ui,sans-serif;box-sizing:border-box}
     :host([embedded]){position:relative;inset:auto;z-index:auto;width:100%;height:100%;padding:0;background:transparent}
     :host([embedded]) .db-shell{width:100%;height:100%;border:0;border-radius:0;box-shadow:none}
     .db-shell{box-sizing:border-box;width:min(1320px,100%);height:min(880px,100%);display:flex;flex-direction:column;background:#0b0e13;border:1px solid rgba(198,156,109,.24);border-radius:8px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.55)}
