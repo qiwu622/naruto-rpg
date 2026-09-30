@@ -297,8 +297,8 @@ class AppShell {
       this._updateStreaming('', '终稿完成 · 正在复检最终正文…');
     });
 
-    // Agent 模式：终审前的 writer-outline/critic 流只进入代理详情；
-    // 只有终审通过后启动的 final-writer 可以进入正文流。
+    // Agent 模式：writer-outline/critic 流只进入代理详情；
+    // 只有 final-writer 的输出进入正文流。
     eventBus.on('agent:stream', ({ agent, chunk }) => {
       if (isNarrativeReviewEnabled(stateManager.getAPIConfig() || {})) return;
       if (agent !== 'final-writer') return;
@@ -311,7 +311,7 @@ class AppShell {
       this._updateStreaming(instructionParser.cleanupPartialResponse(this._agentStreamText));
     });
 
-    // 仅收集终审后 final-writer 的推演摘要；详纲和审查过程留在代理详情中。
+    // 仅收集 final-writer 的推演摘要；详纲和建议留在代理详情中。
     eventBus.on('agent:reasoning', ({ agent, chunk }) => {
       if (agent !== 'final-writer') return;
       if (!chunk) return;

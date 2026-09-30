@@ -766,7 +766,7 @@ await test('rolling story plan refreshes on in-game day changes, not morning-to-
   }, '继续', plan), true);
 });
 
-await test('double character-agent failure produces an audited director fallback, never silent action', async () => {
+await test('double character-agent failure omits optional material instead of inventing a passive action', async () => {
   const pipeline = new AgentPipeline({
     pipeline: { timelineSystem: null, getTurnEvidenceView: () => ({ current_state: {} }) },
     memorySystem: null
@@ -785,12 +785,11 @@ await test('double character-agent failure produces an audited director fallback
     outline: { beats: [{ scene: '训练场', participants: ['春野樱'] }] },
     storyPlan: samplePlan()
   });
-  assert.equal(decision.provenance, 'director-fallback');
-  assert.match(decision.fallbackReason, /native character failed/);
-  assert.match(decision.fallbackReason, /compatibility character failed/);
+  assert.equal(decision, null);
+  assert.equal(pipeline.peekPendingCharacterMemoryDelta(), null);
 });
 
-await test('final audit rejects verbatim leakage of an NPC private thought', () => {
+await test('private-thought text overlap is advisory while private inputs remain filtered upstream', () => {
   const pipeline = new AgentPipeline({
     pipeline: { timelineSystem: null, getTurnEvidenceView: () => ({ current_state: {} }) },
     memorySystem: null
@@ -807,8 +806,9 @@ await test('final audit rejects verbatim leakage of an NPC private thought', () 
     involvedNPCs: ['春野樱'],
     reviews: new Map()
   });
-  assert.equal(audit.valid, false);
-  assert.match(audit.errors.join('\n'), /私有想法/);
+  assert.equal(audit.valid, true);
+  assert.match(audit.warnings.join('\n'), /私有想法/);
+  assert.deepEqual(audit.errors, []);
 });
 
 await test('commit audit verifies actual variable, memory, daily and story-plan stages', () => {

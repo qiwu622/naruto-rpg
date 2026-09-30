@@ -469,7 +469,8 @@ class AgentRunner {
   }
 
   _buildWriterConstraint(extraContext, state) {
-    let constraint = '\n\n【Agent 写作约束】\n\n';
+    let constraint = '\n\n【Agent 写作参考】\n\n';
+    constraint += '大纲、角色素材和审查意见都是建议，请结合当前事实与玩家主预设取舍、调整。遗漏内部编号或未使用某条素材不影响写作；无需让每个 NPC 都出场。不合理的行动诉求在故事中转化为合理的尝试、阻力或结果。只呈现故事，勿把审核结论、代理流程或内部编号写入正文。\n\n';
 
     if (extraContext.sceneBrief) {
       constraint += '## 无行动场景简报（事实与参与者，不是行为脚本）\n';
@@ -482,12 +483,12 @@ class AgentRunner {
     }
     
     // 1. 大纲结构化展示（不用裸JSON）
-    const approvedOutline = extraContext.writingOutline || extraContext.outline;
-    if (approvedOutline?.beats) {
+    const outline = extraContext.writingOutline || extraContext.outline;
+    if (outline?.beats) {
       constraint += extraContext.writingOutline
-        ? '## 已通过终审的详细写作大纲\n'
+        ? '## 详细写作大纲（可按剧情需要调整）\n'
         : '## 叙事大纲\n';
-      for (const beat of approvedOutline.beats) {
+      for (const beat of outline.beats) {
         constraint += `\n### Beat ${beat.id}: ${beat.summary || ''}\n`;
         if (beat.scene) constraint += `场景: ${beat.scene}\n`;
         if (beat.tension) constraint += `张力: ${beat.tension}\n`;
@@ -515,10 +516,13 @@ class AgentRunner {
           constraint += '对话:\n' + beat.dialogue.map(d => `- ${d}`).join('\n') + '\n';
         }
         if (beat._reviews?.length) {
-          constraint += '⚠️ 必须修正:\n' + beat._reviews.map(review => `- ${formatConstraintItem(review)}`).join('\n') + '\n';
+          constraint += '改进建议:\n' + beat._reviews.map(review => `- ${formatConstraintItem(review)}`).join('\n') + '\n';
         }
       }
       constraint += '\n';
+    }
+    if (outline?.advisories?.length) {
+      constraint += '## 素材使用建议\n' + outline.advisories.map(item => `- ${formatConstraintItem(item)}`).join('\n') + '\n\n';
     }
 
     if (extraContext.writingOutline?.variableEvidence?.length) {
@@ -527,7 +531,7 @@ class AgentRunner {
         + '\n\n';
     }
     if (extraContext.writingOutline?.finalChecks?.length) {
-      constraint += '## 终稿核对条件\n'
+      constraint += '## 终稿核对参考\n'
         + extraContext.writingOutline.finalChecks.map(item => `- ${formatConstraintItem(item)}`).join('\n')
         + '\n\n';
     }
@@ -538,9 +542,8 @@ class AgentRunner {
       for (const review of extraContext.reviews) {
         constraint += `\n### ${review.agent}\n`;
 
-        // 硬约束（必须修正的问题）
-        if (review.agent === 'hard-constraints' && review.constraints?.length) {
-          constraint += '⚠️ 必须修正的问题:\n';
+        if (review.agent === 'writing-guidance' && review.constraints?.length) {
+          constraint += '改进建议:\n';
           for (const c of review.constraints) {
             constraint += `- ${c}\n`;
           }
@@ -548,10 +551,10 @@ class AgentRunner {
         }
 
         if (review.score != null) constraint += `评分: ${review.score}/10\n`;
-        if (review.suggestions?.length) {
+        if (Array.isArray(review.suggestions) && review.suggestions.length) {
           constraint += '建议:\n' + review.suggestions.map(suggestion => `- ${formatConstraintItem(suggestion)}`).join('\n') + '\n';
         }
-        if (review.issues?.length) {
+        if (Array.isArray(review.issues) && review.issues.length) {
           constraint += '问题:\n' + review.issues.map(issue => `- ${formatConstraintItem(issue)}`).join('\n') + '\n';
         }
       }
@@ -560,14 +563,11 @@ class AgentRunner {
 
     // 3. 角色档案（结构化注入，不是JSON）
     if (extraContext.characterInputs?.length) {
-      constraint += '## 角色档案（必须在正文中体现）\n';
+      constraint += '## 角色参考素材（按剧情需要选用，可合理补充）\n';
       for (const char of extraContext.characterInputs) {
         const name = char.npcName || '未知';
         constraint += `\n### ${name}\n`;
         if (char.decisionId) constraint += `- 决策来源: ${char.decisionId} (${char.provenance || 'character-agent'})\n`;
-        if (char.provenance === 'director-fallback' && char.fallbackReason) {
-          constraint += `- 导演降级原因: ${char.fallbackReason}\n`;
-        }
         if (char.action) constraint += `- 行为: ${char.action}\n`;
         if (char.dialogue) constraint += `- 对话: "${char.dialogue}"\n`;
         if (char.moodShift) constraint += `- 情绪变化: ${char.moodShift}\n`;

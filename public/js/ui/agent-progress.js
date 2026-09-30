@@ -9,9 +9,8 @@ const STAGES = [
   { key: 'review_outline',   kanji: '明', label: '逻辑洞察' },
   { key: 'character_agents', kanji: '演', label: '人物行动' },
   { key: 'writing',          kanji: '织', label: '详纲编织' },
-  { key: 'review_draft',     kanji: '炼', label: '详纲校验' },
-  { key: 'polish',           kanji: '修', label: '详纲修订' },
-  { key: 'final_audit',      kanji: '审', label: '详纲终审' },
+  { key: 'review_draft',     kanji: '炼', label: '详纲建议' },
+  { key: 'final_audit',      kanji: '议', label: '整理建议' },
   { key: 'final_write',      kanji: '文', label: '正文定稿' },
   { key: 'continuity_updater', kanji: '账', label: '变量结算' },
   { key: 'archive',          kanji: '封', label: '记忆封印' }
@@ -211,11 +210,11 @@ class AgentProgress extends HTMLElement {
   }
 
   _onCharacterFallback(event) {
-    this._pushRuntimeLine(`角色降级 · ${event?.npc || 'unknown'} · 已记录审计`);
+    this._pushRuntimeLine(`角色素材暂缺 · ${event?.npc || 'unknown'} · 由作家结合场景续写`);
   }
 
   _onAudit(event) {
-    this._pushRuntimeLine(`审计 · ${event?.valid ? '通过' : '未通过'} · ${event?.warnings?.length || 0} 条警告`);
+    this._pushRuntimeLine(`正文检查 · ${event?.valid ? '可继续' : '交付异常'} · ${event?.warnings?.length || 0} 条参考意见`);
   }
 
   // 提示词 KV 缓存命中率：DeepSeek 返回 prompt_cache_hit/miss_tokens 或
@@ -283,8 +282,8 @@ class AgentProgress extends HTMLElement {
       'critic-detail': '审查 · 细节',
       'critic-style': '审查 · 风格',
       'critic-writing-outline': '审查 · 详细写作大纲',
-      'critic-writing-outline-final': '终审 · 详细写作大纲',
-      'critic-outline-search': '终审 · 历史检索'
+      'critic-writing-outline-final': '建议 · 详细写作大纲',
+      'critic-outline-search': '建议 · 历史检索'
     };
     return map[id] || id;
   }

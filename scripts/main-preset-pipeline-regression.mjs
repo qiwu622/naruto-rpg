@@ -186,7 +186,7 @@ assert.equal(agentMessages.filter(message => (
   message.content === IMPORTED_PRESET_OUTPUT_COMPATIBILITY_PROMPT
 )).length, 1);
 const importedWriterConstraint = String(agentMessages.find(message => (
-  String(message.content || '').includes('【Agent 写作约束】')
+  String(message.content || '').includes('【Agent 写作参考】')
 ))?.content || '');
 assert.match(importedWriterConstraint, /不要额外生成项目默认 <reasoning>/);
 assert.match(importedWriterConstraint, /篇幅、文风与输出格式完全遵循用户导入预设/);

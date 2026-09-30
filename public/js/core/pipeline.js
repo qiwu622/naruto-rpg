@@ -566,7 +566,7 @@ class MessagePipeline {
 
       // 调用策略在回合开始时冻结，避免生成职责与提交职责在中途切换。
       // Agent 模式无条件启用二次变量更新：writing-outline 先产出详纲，
-      // final-writer 只有在详纲终审通过后才出正文，标签由后续二次模型产出。
+      // final-writer 结合详纲和建议生成正文，标签由后续二次模型产出。
       // 若 agent 已用连续性更新代理产出标签(agentSelfUpdater)，则不剥离、由 createNarrativeArtifact 直接应用。
       const updaterEnabledTurn = updaterOwnedTurn;
       let mainDailyResult = null;
@@ -1174,10 +1174,10 @@ class MessagePipeline {
     const storyPlanPresent = Boolean(storyPlan?.schema === 'naruto.story-arc-plan/v1'
       && Array.isArray(storyPlan.days) && storyPlan.days.length === 3);
 
-    if (!agentAudit?.valid) errors.push('正文与角色来源审计未通过');
+    if (!agentAudit?.valid) errors.push('正文交付结构校验未通过');
     if (!narrativePresent) errors.push('缺少可见正文');
     if (!memoryRecorded) errors.push('回合记忆尚未更新');
-    if (!storyPlanPresent) errors.push('三日条件故事计划未写入待提交状态');
+    if (!storyPlanPresent) warnings.push('三日条件故事计划暂缺，可在后续回合补充');
     if (updaterEnabled && !secondarySuccess) errors.push('二次变量阶段未完成');
     if (!variableStagePresent) {
       const message = updaterEnabled ? '二次变量输出未形成可解析结构' : '主模型变量结构缺失';
@@ -1191,7 +1191,7 @@ class MessagePipeline {
     for (const decision of agentAudit?.envelope?.characterDecisions || []) {
       const privateThought = String(decision?.private?.thought || '').trim();
       if (privateThought.length >= 8 && String(displayResponse || '').includes(privateThought)) {
-        errors.push(`最终正文泄露 ${decision.npc || 'NPC'} 的角色代理私有想法`);
+        warnings.push(`最终正文与 ${decision.npc || 'NPC'} 的角色代理私有想法有文字重合，请结合剧情核对`);
       }
     }
 
@@ -1244,7 +1244,7 @@ class MessagePipeline {
         role: 'system',
         content: `[命名 NPC 的角色代理决定 · 仅可观察投影]\n${JSON.stringify(
           characterDecisions.map(toWriterCharacterDecision)
-        )}\n复检器只能润色这些决定的呈现，不得为 NPC 新增或替换未经角色代理支持的行动与台词。`
+        )}\n这些是可选写作素材，可结合既有设定补充合理的人物反应与台词，无需逐一使用所有素材。`
       });
     }
     let transaction = null;

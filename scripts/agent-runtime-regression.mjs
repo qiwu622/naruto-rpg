@@ -726,9 +726,10 @@ await test('writing stays an outline until final review, then prose and variable
   assert.equal(auditCalls, 2, 'outline and final narrative must each be audited once');
 });
 
-await test('character batch failure aborts before the writing-outline stage', async () => {
+await test('unavailable character material still reaches prose and continuity updates', async () => {
   const hostPipeline = { getTurnEvidenceView: () => ({ current_state: {}, evidence: [] }) };
   const pipeline = new AgentPipeline({ pipeline: hostPipeline, memorySystem: null });
+  pipeline._shouldRefreshStoryPlan = () => false;
   let writerCalls = 0;
   pipeline.contextBroker.preflight = async () => ({
     domains: { dialogue: { items: [] }, world: { items: [] } },
@@ -745,8 +746,10 @@ await test('character batch failure aborts before the writing-outline stage', as
     writerCalls++;
     return validWritingOutline();
   };
-  pipeline._reviewDraft = async () => new Map();
-  pipeline._reviewFinalOutput = async () => new Map();
+  pipeline._reviewWritingOutline = async () => new Map();
+  pipeline._reviewWithSearch = async () => null;
+  pipeline._writeFinalText = async () => '卡卡西抬眼看向来人。';
+  pipeline._appendContinuityUpdates = async (_state, _input, text) => text;
   pipeline._auditFinalOutput = () => ({
     schema: 'naruto.agent-audit/v1',
     valid: true,
@@ -762,14 +765,13 @@ await test('character batch failure aborts before the writing-outline stage', as
     '世界·地点': '木叶隐村',
     '世界·时间': 'K048-01-01',
     '系统·回合数': 1,
-    _meta: { active_branch: 'branch_main', current_node_id: 'node:test' },
+    _meta: { active_branch: 'branch_material_missing', current_node_id: 'node:test' },
     _agent_story_plan: validStoryPlan(),
     _relationships: { '旗木卡卡西': { location: '木叶隐村' } }
-  }, '继续', () => {}, false, false, []).then(() => 'resolved', error => error);
+  }, '继续', () => {}, false, false, []);
 
-  assert.ok(outcome instanceof Error, 'character batch failure must reject the turn');
-  assert.match(outcome.message, /character batch failed/);
-  assert.equal(writerCalls, 0, 'writing-outline must not run without complete character decisions');
+  assert.equal(outcome, '卡卡西抬眼看向来人。');
+  assert.equal(writerCalls, 1, 'missing optional character material must not block the writer');
 });
 
 await test('character agents use bounded concurrency and preserve NPC order', async () => {
@@ -808,7 +810,7 @@ await test('character agents use bounded concurrency and preserve NPC order', as
   ]);
 });
 
-await test('character batch stops queued agents after the first failure', async () => {
+await test('character batch skips one failed material and preserves the remaining NPC order', async () => {
   const pipeline = new AgentPipeline({
     pipeline: { getTurnEvidenceView: () => ({ current_state: {}, evidence: [] }) },
     memorySystem: null
@@ -827,14 +829,10 @@ await test('character batch stops queued agents after the first failure', async 
     };
   };
   const names = ['旗木卡卡西', '宇智波佐助', '春野樱', '日向雏田'];
-  await assert.rejects(
-    pipeline._runCharacterAgents({}, '继续', names, { id: 'scene:test' }, { beats: [] }, validStoryPlan()),
-    /character batch failure/
-  );
-  // 并发 2：仅点起卡卡西与佐助；失败后排队任务（春野樱、日向雏田）不得启动。
-  assert.ok(started.length < names.length, `queued agents must not start after a failure (started=${started.length})`);
-  assert.equal(started.includes('春野樱'), false, 'agent queued after the failure must not start');
-  assert.equal(started.includes('日向雏田'), false, 'agent queued after the failure must not start');
+  const inputs = await pipeline._runCharacterAgents({}, '继续', names, { id: 'scene:test' }, { beats: [] }, validStoryPlan());
+  assert.deepEqual(started, names);
+  assert.deepEqual(inputs.map(item => item.npc), names.slice(1));
+  assert.deepEqual(pipeline._characterDecisions.map(item => item.npc), names.slice(1));
 });
 
 await test('character batch cancellation stops queued agents immediately', async () => {
@@ -947,20 +945,24 @@ await test('planning writer cannot inherit prose delivery instructions before fi
   );
   const finalPrompt = finalMessages.map(message => message.content).join('\n');
   assert.match(finalPrompt, /MAIN_PROSE_CONTRACT_SENTINEL/);
-  assert.match(finalPrompt, /已通过终审的详细写作大纲/);
+  assert.match(finalPrompt, /详细写作大纲（可按剧情需要调整）/);
   assert.match(finalPrompt, /900-1500/);
 });
 
-await test('writing outline contract rejects prose fields and missing CharacterDecision refs', () => {
-  assert.throws(() => normalizeWritingOutlineResult({
+await test('writing outline tolerates extra fields and missing references without forcing every NPC into prose', () => {
+  const withExtra = normalizeWritingOutlineResult({
     ...validWritingOutline(['decision:卡卡西']),
     beats: [{ ...validWritingOutline(['decision:卡卡西']).beats[0], action: '卡卡西抬手。' }]
-  }, { decisionIds: ['decision:卡卡西'] }), /prose\/action fields/);
+  }, { decisionIds: ['decision:卡卡西'] });
+  assert.equal(withExtra.beats[0].action, undefined);
+  assert.ok(withExtra.advisories.length);
 
-  assert.throws(() => normalizeWritingOutlineResult(
+  const withoutRefs = normalizeWritingOutlineResult(
     validWritingOutline(),
     { decisionIds: ['decision:卡卡西'] }
-  ), /omits CharacterDecision/);
+  );
+  assert.deepEqual(withoutRefs.beats[0].decisionRefs, []);
+  assert.ok(withoutRefs.advisories.length);
 
   const accepted = normalizeWritingOutlineResult(
     validWritingOutline(['decision:卡卡西']),
@@ -979,7 +981,7 @@ await test('agent writer defers variable tags to the secondary updater', () => {
     'writer must receive the defer-to-secondary instruction');
 });
 
-await test('critic-search error findings fail the final audit', () => {
+await test('critic-search error findings remain nonblocking writing advice', () => {
   const pipeline = new AgentPipeline({
     pipeline: { getTurnEvidenceView: () => ({ current_state: {}, evidence: [] }) },
     memorySystem: null
@@ -1003,9 +1005,11 @@ await test('critic-search error findings fail the final audit', () => {
     ])
   });
   assert.ok(
-    report.errors.some(error => /critic-search.*时间线冲突/.test(error)),
-    JSON.stringify(report.errors)
+    report.warnings.some(warning => /critic-search.*时间线冲突/.test(warning)),
+    JSON.stringify(report.warnings)
   );
+  assert.equal(report.valid, true);
+  assert.deepEqual(report.errors, []);
 });
 
 await test('outline audit accepts the planning artifact while final narrative audit rejects it', () => {
@@ -1153,7 +1157,7 @@ await test('stage cache persists across pipeline instances and clears on success
   });
   const state = { '系统·回合数': 1, _meta: { active_branch: 'branch_main' } };
   const userInput = '继续';
-  assert.match(AGENT_PIPELINE_REVISION, /writing-outline/);
+  assert.equal(AGENT_PIPELINE_REVISION, 'narrative-soft-guidance-v2');
 
   const p1 = mkPipeline();
   const { entry } = p1._beginStageCache(state, userInput);
@@ -1194,7 +1198,7 @@ await test('continuity updater without tags leaves text unchanged and unmarked',
   assert.equal(pipeline2.didAgentProduceUpdaterTags(), false);
 });
 
-await test('unavailable final preset and character reviewer is an audit error', () => {
+await test('unavailable final reviewer is a diagnostic warning', () => {
   const pipeline = new AgentPipeline({
     pipeline: { getTurnEvidenceView: () => ({ current_state: {}, evidence: [] }) },
     memorySystem: null
@@ -1208,12 +1212,13 @@ await test('unavailable final preset and character reviewer is an audit error', 
     reviews: new Map([['final-preset-and-character', { success: false, error: 'reviewer offline' }]])
   });
   assert.ok(
-    report.errors.some(error => /final-preset-and-character.*reviewer offline/.test(error)),
-    JSON.stringify(report.errors)
+    report.warnings.some(warning => /final-preset-and-character.*reviewer offline/.test(warning)),
+    JSON.stringify(report.warnings)
   );
+  assert.equal(report.valid, true);
 });
 
-await test('mandatory final reviewer rejects unusable success payloads', () => {
+await test('unusable review payloads and explicit rejection do not veto narrative', () => {
   const pipeline = new AgentPipeline({
     pipeline: { getTurnEvidenceView: () => ({ current_state: {}, evidence: [] }) },
     memorySystem: null
@@ -1239,9 +1244,11 @@ await test('mandatory final reviewer rejects unusable success payloads', () => {
       reviews: new Map([['final-preset-and-character', fixture.result]])
     });
     assert.ok(
-      report.errors.some(error => error.includes('final-preset-and-character')),
-      `${fixture.label}: ${JSON.stringify(report.errors)}`
+      report.warnings.some(warning => warning.includes('final-preset-and-character')),
+      `${fixture.label}: ${JSON.stringify(report.warnings)}`
     );
+    assert.equal(report.valid, true);
+    assert.deepEqual(report.errors, []);
   }
 });
 
@@ -1311,7 +1318,7 @@ await test('NPC provenance matches relationship aliases and excludes the player 
   assert.deepEqual(playerMentions, [], '玩家的主键与别名都不应进入 NPC 来源审计');
 });
 
-await test('writer-introduced known NPC without a character decision fails final audit', () => {
+await test('writer may introduce a known NPC without a separate character decision', () => {
   const pipeline = new AgentPipeline({
     pipeline: { getTurnEvidenceView: () => ({ current_state: {}, evidence: [] }) },
     memorySystem: null
@@ -1332,9 +1339,11 @@ await test('writer-introduced known NPC without a character decision fails final
     ]])
   });
   assert.ok(
-    report.errors.some(error => error.includes('character decision missing for 旗木卡卡西')),
-    JSON.stringify(report.errors)
+    report.warnings.some(warning => warning.includes('character decision missing for 旗木卡卡西')),
+    JSON.stringify(report.warnings)
   );
+  assert.equal(report.valid, true);
+  assert.equal(report.checks.npcProvenance, false);
 });
 
 await test('nearest future plot context does not schedule an extra guardian agent', async () => {

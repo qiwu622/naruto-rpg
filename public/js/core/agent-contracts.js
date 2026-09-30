@@ -249,21 +249,21 @@ export function auditTurnEnvelope(envelope, requirements = {}) {
     : [];
   const refs = new Set(normalized?.characterDecisionRefs || []);
   for (const decision of decisions) {
-    if (!refs.has(decision.id)) errors.push(`writer provenance missing for ${decision.npc}`);
+    if (!refs.has(decision.id)) warnings.push(`writer provenance missing for ${decision.npc}`);
     if (decision.provenance === 'director-fallback') {
       warnings.push(`director fallback used for ${decision.npc}: ${decision.fallbackReason}`);
     }
   }
   for (const npc of textList(requirements.requiredNpcs, { maxItems: 64, maxChars: 80 })) {
-    if (!decisions.some(item => item.npc === npc)) errors.push(`character decision missing for ${npc}`);
+    if (!decisions.some(item => item.npc === npc)) warnings.push(`character decision missing for ${npc}`);
   }
   if (requirements.requireVariables && !normalized?.staged?.variableUpdates) {
     errors.push('staged variable updates are missing');
   }
   if (requirements.requireMemory && !normalized?.staged?.memory) errors.push('staged memory is missing');
   if (requirements.requireDaily && !normalized?.staged?.shinobiDaily) errors.push('staged Shinobi Daily is missing');
-  if (requirements.requireStoryPlan && !normalized?.storyPlan) errors.push('three-day story plan is missing');
-  if (requirements.presetCompliant === false) errors.push('preset review failed');
+  if (requirements.requireStoryPlan && !normalized?.storyPlan) warnings.push('three-day story plan is missing');
+  if (requirements.presetCompliant === false) warnings.push('preset review suggested changes');
 
   return Object.freeze({
     schema: AGENT_CONTRACT_SCHEMAS.auditReport,
@@ -272,7 +272,7 @@ export function auditTurnEnvelope(envelope, requirements = {}) {
     warnings: Object.freeze([...new Set(warnings)]),
     checks: Object.freeze({
       narrative: Boolean(narrative),
-      npcProvenance: !errors.some(item => item.includes('character decision') || item.includes('provenance')),
+      npcProvenance: ![...errors, ...warnings].some(item => item.includes('character decision') || item.includes('provenance')),
       variables: !requirements.requireVariables || Boolean(normalized?.staged?.variableUpdates),
       memory: !requirements.requireMemory || Boolean(normalized?.staged?.memory),
       shinobiDaily: !requirements.requireDaily || Boolean(normalized?.staged?.shinobiDaily),
