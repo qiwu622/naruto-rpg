@@ -35,3 +35,14 @@ NARUTO_ANDROID_ADB=/path/to/adb ANDROID_SERIAL=emulator-5554 \
 ```
 
 上述原生验证使用专用模拟器；没有把桌面模拟手机视口当作实体手机验证。
+
+## 发布与回读
+
+- 正式站 3.5.3 / build `2610011612` 已发布；552 个部署文件验证通过，服务返回 `ready`，运行数据保留。回滚备份为 `/var/backups/naruto-rpg/full-production-v3.5.3-2610011612-210648/`。
+- 网站 APK 与版本清单原子切换至 30503；正式站、测试站登录页的下载区都更新为 3.5.3，并展示可展开的更新公告。本次全量网页部署对象为正式站。
+- [GitHub v3.5.3](https://github.com/qiwu622/naruto-rpg/releases/tag/v3.5.3) 已发布 APK、SHA-256 文件和更新说明；附件的 GitHub digest 与上述测试包一致。
+- 服务器使用正常 HTTPS 从公开下载 URL 完整读回 27,186,270 字节，SHA-256 与测试包一致。安卓下载发布备份为 `/var/backups/naruto-rpg/android-20261001-163624-1924626/`。
+- 浏览器已验证正式站移动/桌面和测试站移动下载入口、公告展开、匿名更新清单及断点下载响应。**本机浏览器完整文件传输超时，因此完整浏览器下载回归没有通过**；日志见 `reports/mobile-settings-fix/site-download-production.log`。服务器完整 HTTPS 回读和 GitHub 附件校验不能替代这项客户端验证。
+- 下载回归脚本增加明确超时和失败记录，避免网络阻塞时无限等待；`NARUTO_BROWSER_PROXY` 可指定测试代理，`NARUTO_SITE_ORIGINS` 可筛选检查站点，默认仍检查两站。测试代理仅用于本机，未加入游戏或 APK；模拟器临时代理已清除。
+
+无需重新开档；安卓玩家使用同签名的新 APK 覆盖安装，不先卸载旧版，以保留本地存档。
