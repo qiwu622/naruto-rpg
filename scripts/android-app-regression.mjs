@@ -77,9 +77,9 @@ assert.equal(update.downloadUrl, ANDROID_APP_DOWNLOAD_URL);
 assert.equal(updateRequests[0].url, ANDROID_UPDATE_MANIFEST_URL);
 assert.equal(updateRequests[0].options.cache, 'no-store');
 assert.equal(updates.hasKnownUpdate(), true);
-assert.equal(updates.isAutomaticPromptDisabled(), false);
-updates.disableAutomaticPrompt();
-assert.equal(updates.isAutomaticPromptDisabled(), true, 'declining permanently disables automatic prompts');
+assert.equal(updates.shouldPromptAutomatically(), true);
+updates.snoozeAutomaticPrompt();
+assert.equal(updates.shouldPromptAutomatically(), false, 'later postpones this version, not every future update');
 assert.equal(
   new AndroidAppUpdateService({ storage, nativeCheck: () => true }).hasKnownUpdate(),
   true,

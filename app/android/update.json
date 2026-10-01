@@ -1,6 +1,14 @@
 {
   "platform": "android",
-  "version": "3.5.1",
-  "versionCode": 30501,
-  "apkUrl": "https://www.qiwu.asia/app/android/naruto-rpg.apk"
+  "version": "3.5.3",
+  "versionCode": 30503,
+  "apkUrl": "https://www.qiwu.asia/app/android/naruto-rpg.apk",
+  "publishedAt": "2026-10-01",
+  "releaseNotes": [
+    "修复安卓设置页的触摸滚动，横屏、键盘弹出时也能查看设置项。",
+    "角色子代理改由 Agent 按本轮剧情需要选择，不再遍历全部角色关系。",
+    "启动、返回前台和网络恢复时自动检测更新，支持稍后提醒与手动检查。",
+    "更新提示展示更新内容和公告；安卓包同步包含叙事审核软约束修复。"
+  ],
+  "announcement": "本次为体验与稳定性更新，无需重新开档。安卓玩家请下载新版 APK 覆盖安装，勿卸载旧版以免清除本地存档。网站与 App 的联机入口继续隐藏。"
 }

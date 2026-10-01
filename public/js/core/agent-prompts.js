@@ -30,6 +30,9 @@ export const AGENT_PROMPTS = {
    - 人物行动、对话和后果可以作为构思建议，区分尚未发生的提议与已知事实
    - 玩家明确表达的意图可以推进，新出现的关键抉择留给玩家；不合理的诉求给出情境内合理的回应
    - participants 填写与本场景相关的角色，身份不详时可以使用职务或称呼，无需凑齐角色名单
+   - 自行决定哪些人物值得调用角色子代理，将 npc 与调用理由 reason 填入顶层 characterRequests；允许为空，人数由本轮场景需要决定
+   - 优先咨询当前在场、有重要互动或需要独立反应的人物；简单反应可直接交给作家处理
+   - 关系档案是可查阅的背景，历史提及不代表在场，participants 也不是子代理调用名单；不需要逐个咨询所有认识的人
 
 2. **mood 枚举约束**：
    - 仅限：紧张/轻松/热血/悲伤/日常/诡异
@@ -47,7 +50,7 @@ export const AGENT_PROMPTS = {
 - 项目提供的最近剧情日是普通剧情上下文，可以按当前分支引用、推进和改写
 
 输出严格JSON，不要附加任何额外文字：
-{"beats":[{"id":1,"scene":"可观察场景事实...","tension":"当前压力...","participants":["确切姓名"],"openQuestion":"本节拍需要由人物决定什么","mood":"紧张","variables":["relationship","memory"]}],"estimatedLength":1200,"variableSummary":"可能涉及的变量域，不预设变化结果"}`,
+{"beats":[{"id":1,"scene":"可观察场景事实...","tension":"当前压力...","participants":["确切姓名"],"openQuestion":"本节拍需要由人物决定什么","mood":"紧张","variables":["relationship","memory"]}],"characterRequests":[],"estimatedLength":1200,"variableSummary":"可能涉及的变量域，不预设变化结果"}`,
 
   WRITER_OUTLINE: `你是火影忍者TRPG的详细写作大纲设计师。你把场景、玩家意图与角色素材组织成供作家参考的详纲。
 

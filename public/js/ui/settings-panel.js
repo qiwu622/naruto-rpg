@@ -708,6 +708,13 @@ class SettingsPanel extends HTMLElement {
 
   }
 
+  _getScrollContainer() {
+    const layout = this.shadowRoot.querySelector('.layout');
+    return layout && /auto|scroll/.test(getComputedStyle(layout).overflowY)
+      ? layout
+      : this.shadowRoot.querySelector('.content');
+  }
+
   _selectSection(section, { focus = true, anchor = '' } = {}) {
     const button = this.shadowRoot.querySelector(`.tab-btn[data-section="${section}"]`)
       || this.shadowRoot.querySelector('.tab-btn');
@@ -716,7 +723,7 @@ class SettingsPanel extends HTMLElement {
     this.shadowRoot.querySelectorAll('.tab-btn').forEach(item => item.classList.toggle('active', item === button));
     this.shadowRoot.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
     this.shadowRoot.getElementById(button.dataset.target)?.classList.add('active');
-    const content = this.shadowRoot.querySelector('.content');
+    const content = this._getScrollContainer();
     if (content) content.scrollTop = 0;
     const target = anchor
       ? [...this.shadowRoot.querySelectorAll('[data-anchor]')].find(item => item.dataset.anchor === anchor)
@@ -752,7 +759,7 @@ class SettingsPanel extends HTMLElement {
     for (const id of String(button.dataset.targets || '').split(',').filter(Boolean)) {
       this.shadowRoot.getElementById(id)?.classList.add('active');
     }
-    const content = this.shadowRoot.querySelector('.content');
+    const content = this._getScrollContainer();
     if (content) content.scrollTop = 0;
     const resourceTarget = this._resourceId
       ? [...this.shadowRoot.querySelectorAll('[data-resource-id]')].find(item => item.dataset.resourceId === this._resourceId)
@@ -886,11 +893,14 @@ class SettingsPanel extends HTMLElement {
   _mountCreatorEditor(editor, { opener = null } = {}) {
     const layer = this.shadowRoot.querySelector('.workbench-editor-layer');
     if (!layer) return;
-    const content = this.shadowRoot.querySelector('.content');
+    const content = this._getScrollContainer();
+    const layout = this.shadowRoot.querySelector('.layout');
     this._editorContext = {
       opener,
       scrollTop: content?.scrollTop || 0
     };
+    if (content) content.scrollTop = 0;
+    layout?.classList.add('editor-open');
     editor.setAttribute('embedded', '');
     layer.replaceChildren(editor);
     layer.classList.add('active');
@@ -899,6 +909,7 @@ class SettingsPanel extends HTMLElement {
     this._editorObserver = new MutationObserver(() => {
       if (!layer.children.length) {
         layer.classList.remove('active');
+        layout?.classList.remove('editor-open');
         this.shadowRoot.querySelectorAll('.tab-btn').forEach(button => { button.disabled = false; });
         const context = this._editorContext;
         this._editorContext = null;

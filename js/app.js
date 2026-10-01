@@ -33,6 +33,7 @@ import { isNativeAndroidApp, usesProjectServerFeatures, isMultiplayerEntryVisibl
 import {
   ANDROID_APP_DOWNLOAD_URL,
   ANDROID_APP_VERSION,
+  formatAndroidUpdateMessage,
   appUpdateService
 } from './core/app-update.js';
 
@@ -247,35 +248,50 @@ class NarutoRPGApp {
   _scheduleAppUpdateCheck() {
     if (!isNativeAndroidApp() || this._appUpdateCheckScheduled) return false;
     this._appUpdateCheckScheduled = true;
-    setTimeout(() => {
-      void this._checkAppUpdate({ automatic: true }).catch(error => {
+    this._stopAppUpdateChecks = appUpdateService.startAutomaticChecks({
+      onResult: result => this._presentAppUpdate(result, { automatic: true }),
+      onError: error => {
         console.warn('[AppUpdate] Automatic update check failed:', error.message);
-      });
-    }, 0);
+      }
+    });
     return true;
   }
 
   async _checkAppUpdate({ automatic = false } = {}) {
     const result = await appUpdateService.check();
+    return this._presentAppUpdate(result, { automatic });
+  }
+
+  async _presentAppUpdate(result, { automatic = false } = {}) {
     this._refreshProfileUpdateIndicator(result);
     if (!result.updateAvailable) return result;
-    if (automatic && appUpdateService.isAutomaticPromptDisabled()) return result;
+    if (automatic && (!appUpdateService.shouldPromptAutomatically(result)
+      || this.pipeline?.isProcessing || this._saveTransition || document.visibilityState === 'hidden')) return result;
+    if (this._appUpdatePromptOpen) return result;
 
-    const accepted = await customElements.get('game-modal').confirm({
-      title: '发现 Android App 新版本',
-      message: `当前版本 ${result.currentVersion}，最新版本 ${result.latestVersion}。是否前往下载更新？`,
-      okLabel: '前往更新',
-      cancelLabel: '暂不更新'
-    });
-    if (accepted) await appUpdateService.openDownload();
-    else if (automatic) appUpdateService.disableAutomaticPrompt();
+    this._appUpdatePromptOpen = true;
+    try {
+      const accepted = await customElements.get('game-modal').confirm({
+        title: `Android ${result.latestVersion} 更新公告`,
+        message: formatAndroidUpdateMessage(result),
+        okLabel: '下载更新',
+        cancelLabel: '稍后提醒'
+      });
+      if (accepted) await appUpdateService.openDownload();
+      else appUpdateService.snoozeAutomaticPrompt(result);
+    } finally { this._appUpdatePromptOpen = false; }
     return result;
   }
 
   _refreshProfileUpdateIndicator(result = appUpdateService.getLastResult()) {
+    const available = result?.updateAvailable === true;
+    const profileButton = document.getElementById('btn-profile');
+    if (isNativeAndroidApp() && profileButton) {
+      profileButton.dataset.updateAvailable = String(available);
+      profileButton.title = available ? '个人中心 · 发现新版本' : '个人中心';
+    }
     const root = this._profileModal?.shadowRoot;
     if (!root) return;
-    const available = result?.updateAvailable === true;
     const dot = root.querySelector('#pf-app-update-dot');
     if (dot) dot.hidden = !available;
     const status = root.querySelector('#pf-app-update-status');

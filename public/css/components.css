@@ -190,6 +190,11 @@
 .api-setup-title--app .app-brand-mark { width: 116px; height: 116px; object-fit: contain; }
 .app-brand-name { color: var(--text-primary); font-size: 28px; letter-spacing: 6px; }
 .app-shell--android .app-topbar { gap: 12px; }
+.app-shell--android #btn-profile[data-update-available="true"] { position: relative; }
+.app-shell--android #btn-profile[data-update-available="true"]::after {
+  content: ''; position: absolute; top: 6px; right: 6px; width: 7px; height: 7px;
+  border-radius: 50%; background: #eb613f; box-shadow: 0 0 0 2px #10161d;
+}
 .app-shell--android .topbar-left { flex-shrink: 0; }
 .app-shell--android .topbar-right { flex: 1 1 0; min-width: 0; max-width: none; }
 .app-shell--android .app-center--setup {

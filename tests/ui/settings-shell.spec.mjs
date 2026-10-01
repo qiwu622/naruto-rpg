@@ -167,7 +167,7 @@ test('project support stays optional and exposes safe Afdian and WeChat methods'
   await expect(settings.locator('.actions > [data-action="save"]')).toBeHidden();
   await expect(settings.locator('.actions > [data-action="close"]')).toHaveText('关闭');
   await expect(settings.locator('.support-story')).toContainText('忍者手记是一款由个人独立开发并持续维护的开源 RPG 项目');
-  await expect(settings.locator('.support-story')).toContainText('近1000 注册用户');
+  await expect(settings.locator('.support-story')).toContainText('注册用户');
   await expect(settings.locator('.support-use-list li')).toHaveText([
     '项目服务器及运行环境维护',
     '新玩法与功能开发',

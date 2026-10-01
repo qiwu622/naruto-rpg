@@ -17,7 +17,7 @@ class GameModal extends HTMLElement {
     this._onDismiss = onDismiss;
     this.shadowRoot.innerHTML = `
       <style>
-        :host { display: block; position: fixed; inset: 0; z-index: var(--z-modal-top); color: var(--text-primary, #e8e4d9); font-family: 'Noto Sans SC', 'Microsoft YaHei UI', 'PingFang SC', system-ui, sans-serif; }
+        :host { display: block; position: fixed; inset: 0; z-index: var(--z-modal-top, 200000); color: var(--text-primary, #e8e4d9); font-family: 'Noto Sans SC', 'Microsoft YaHei UI', 'PingFang SC', system-ui, sans-serif; }
         .overlay {
           position: fixed; inset: 0; z-index: 200000;
           display: flex; align-items: center; justify-content: center;

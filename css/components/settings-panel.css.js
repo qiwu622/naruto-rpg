@@ -76,7 +76,7 @@
         }
         
         .content {
-          flex: 1 1 auto; overflow-y: auto; overflow-x: hidden;
+          flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden;
           padding: 32px 48px 40px; scrollbar-width: none;
         }
         .content::-webkit-scrollbar { display: none; }
@@ -517,7 +517,8 @@
             rgba(3,4,6,.82);
         }
         .panel {
-          width: min(760px, calc(100vw - 32px)); height: calc(100dvh - 32px); max-height: none;
+          width: min(760px, calc(100vw - 32px)); height: calc(100vh - 32px); height: calc(100dvh - 32px); max-height: none;
+          box-sizing: border-box;
           border-radius: 14px; border-color: rgba(232,228,217,.13);
           background:
             linear-gradient(145deg, rgba(255,255,255,.025), transparent 34%),
@@ -529,7 +530,7 @@
           background: linear-gradient(180deg, transparent, rgba(235,97,63,.78) 18%, rgba(198,156,109,.46) 72%, transparent);
         }
         .panel.creator {
-          width: calc(100vw - 24px); height: calc(100dvh - 24px); max-width: 1680px;
+          width: calc(100vw - 24px); height: calc(100vh - 24px); height: calc(100dvh - 24px); max-width: 1680px;
           margin: auto; border-radius: 12px;
           box-shadow: 0 28px 100px rgba(0,0,0,.56), 0 0 0 1px rgba(255,255,255,.02) inset;
         }
@@ -622,7 +623,7 @@
         }
 
         @media(max-width: 768px) {
-          .panel, .panel.creator { width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; border: none; }
+          .panel, .panel.creator { width: 100vw; height: 100vh; height: 100dvh; max-height: 100vh; max-height: 100dvh; margin: 0; border-radius: 0; border: none; }
           .backdrop { padding: 0; }
           .head { min-height: 64px; padding: max(8px, env(safe-area-inset-top)) 10px 8px 14px; }
           .title { font-size: 16px; gap: 8px; }
@@ -631,7 +632,10 @@
           .head-actions { gap: 5px; }
           .workbench-link { min-height: 44px; padding: 8px 10px; font-size: 10px; }
           .close { width: 44px; height: 44px; }
-          .layout { flex-direction: column; }
+          /* One touch scroller keeps navigation and fields reachable even when
+             the Android keyboard leaves only a short WebView viewport. */
+          .layout { display: block; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+          .layout.editor-open { overflow: hidden; }
           .sidebar, .creator .sidebar {
             width: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
             flex: 0 0 auto; border-right: none; border-bottom: 1px solid rgba(255,255,255,.06);
@@ -641,7 +645,7 @@
           .tab-btn { min-height: 44px; white-space: normal; padding: 9px 5px; text-align: center; font-size: 10px; letter-spacing: 0; }
           .support-tab { margin-top: 0; }
           .tab-btn.active::before { width: 100%; height: 3px; top: auto; bottom: 0; left: 0; }
-          .content, .creator .content { padding: 18px 16px 26px; }
+          .content, .creator .content { padding: 18px 16px 26px; overflow: visible; }
           .connection-strip { top: -18px; margin: -18px -16px 18px; padding: 9px 16px; }
           .pane-grid { grid-template-columns: 1fr; }
           .variable-grid { grid-template-columns: 1fr; gap: 10px; }

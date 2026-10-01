@@ -44,6 +44,9 @@ try {
   }
   run('shell', 'cmd', 'overlay', 'disable', cutout);
   run('shell', 'settings', 'put', 'system', 'user_rotation', '0');
+  // Instrumentation has destroyed earlier activities; restart before attaching
+  // so CDP cannot select a retained, zero-sized WebView from a completed test.
+  run('shell', 'am', 'force-stop', 'asia.qiwu.narutorpg');
   run('shell', 'am', 'start', '-n', 'asia.qiwu.narutorpg/.MainActivity');
   let socket;
   for (let i = 0; i < 40 && !socket; i++) {
@@ -54,6 +57,7 @@ try {
   forward = run('forward', 'tcp:0', 'localabstract:' + socket).trim();
   browser = await chromium.connectOverCDP('http://127.0.0.1:' + forward, { noDefaults: true });
   const page = browser.contexts()[0].pages()[0];
+  await page.waitForFunction(() => innerWidth > 0 && innerHeight > innerWidth);
   await page.waitForSelector('api-config-form #settings-api-url');
   const fullHeight = await page.evaluate(() => innerHeight);
   await page.locator('api-config-form #settings-api-url').click();

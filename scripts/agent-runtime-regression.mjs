@@ -738,6 +738,7 @@ await test('unavailable character material still reaches prose and continuity up
     durationMs: 0
   });
   pipeline._generateOutline = async () => ({
+    characterRequests: [{ npc: '旗木卡卡西', reason: '回应玩家' }],
     beats: [{ id: 1, scene: '木叶街道', participants: ['旗木卡卡西'] }]
   });
   pipeline._reviewOutline = async () => new Map();
@@ -1157,7 +1158,7 @@ await test('stage cache persists across pipeline instances and clears on success
   });
   const state = { '系统·回合数': 1, _meta: { active_branch: 'branch_main' } };
   const userInput = '继续';
-  assert.equal(AGENT_PIPELINE_REVISION, 'narrative-soft-guidance-v2');
+  assert.equal(AGENT_PIPELINE_REVISION, 'narrative-agent-selection-v3');
 
   const p1 = mkPipeline();
   const { entry } = p1._beginStageCache(state, userInput);

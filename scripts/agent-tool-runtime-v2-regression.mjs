@@ -719,32 +719,31 @@ await test('TurnEnvelope audit records explicit director fallbacks', () => {
   assert.match(audit.warnings.join('\n'), /director fallback used/);
 });
 
-await test('participant extraction keeps known/combat/mentioned NPCs and drops strangers', () => {
+await test('character delegation follows the planner selection instead of presence or relationship heuristics', () => {
   const pipeline = new AgentPipeline({
     pipeline: { timelineSystem: null, getTurnEvidenceView: () => ({ current_state: {} }) },
     memorySystem: null
   });
-  // 陌生 NPC(无关系、非战斗、未被点名)即使出现在场景简报/outliner 中也不授予角色代理；
-  // 例如 canon 毕业场景 SCN-P1-START-GRAD-01 的漩涡鸣人/海野伊鲁卡/本届毕业生。
+  // 即使关系表里还没有，也可由模型按当前场景选择需要咨询的人物。
   const unknown = pipeline._extractInvolvedNPCs({
     participants: ['测试玩家', '春野樱', '漩涡鸣人', '海野伊鲁卡', '本届毕业生']
   }, {
+    characterRequests: [{ npc: '日向雏田', reason: '新角色的独立回应' }],
     beats: [{ participants: ['日向雏田'] }]
   }, {
     '玩家·姓名': '测试玩家',
     _combat: { enemy_name: '水木' }
   }, '继续');
-  // 只有战斗敌人(水木)进入；场景简报里的陌生角色与 outliner 新增的日向雏田都被过滤。
-  assert.deepEqual(unknown, ['水木']);
+  assert.deepEqual(unknown, ['日向雏田']);
 
-  // 已认识(关系档案)与玩家明确点名的角色进入角色代理。
+  // 已认识、战斗对手、简报和玩家点名都不再自动触发调用。
   const known = pipeline._extractInvolvedNPCs({
     participants: ['测试玩家', '春野樱']
   }, { beats: [{ participants: [] }] }, {
     '玩家·姓名': '测试玩家',
     _relationships: { '伊鲁卡': {} }
   }, '春野樱你在吗');
-  assert.deepEqual([...known].sort(), ['伊鲁卡', '春野樱']);
+  assert.deepEqual(known, []);
 });
 
 await test('rolling story plan refreshes on in-game day changes, not morning-to-afternoon changes', () => {

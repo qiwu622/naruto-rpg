@@ -25,7 +25,7 @@ import {
 } from './main-preset-compatibility.js';
 
 export const CHARACTER_MEMORY_DELTA_SCHEMA = 'naruto.character-memory-delta/v1';
-export const AGENT_PIPELINE_REVISION = 'narrative-soft-guidance-v2';
+export const AGENT_PIPELINE_REVISION = 'narrative-agent-selection-v3';
 
 // 阶段断点续跑缓存：键 = branch|回合|输入哈希；值 = { complete, data }。
 // 回合失败时保留缓存，用户重试时复用上方已完成阶段，从失败阶段直接续跑。
@@ -74,6 +74,12 @@ function normalizeOutlineResult(result) {
   return {
     estimatedLength: Math.max(400, Number(result?.estimatedLength) || 1200),
     variableSummary: cleanMemoryText(result?.variableSummary, 800),
+    // Optional requests chosen by the planner, never inferred from the relationship roster.
+    characterRequests: (Array.isArray(result?.characterRequests) ? result.characterRequests : [])
+      .map(item => ({
+        npc: cleanMemoryText(typeof item === 'string' ? item : (typeof item?.npc === 'string' ? item.npc : ''), 80),
+        reason: cleanMemoryText(typeof item === 'object' ? item?.reason : '', 500)
+      })).filter(item => item.npc),
     beats: source.map((beat, index) => ({
       id: index + 1,
       scene: cleanMemoryText(beat.scene, 1200),
@@ -447,6 +453,7 @@ class AgentPipeline {
 
   _stageCacheKey(state, userInput) {
     const promptFingerprint = hashAgentInput([
+      resolveAgentSystemPrompt('OUTLINER'),
       resolveAgentSystemPrompt('WRITER_OUTLINE'),
       resolveAgentSystemPrompt('WRITER')
     ].join('\n'));
@@ -642,7 +649,7 @@ class AgentPipeline {
     const involvedNPCs = this._extractInvolvedNPCs(sceneBrief, outline, state, userInput);
     if (involvedNPCs.length > 0 && !cached.complete.has('character_agents')) {
       const t4 = Date.now();
-      onProgress('character_agents', `角色代理运行中 (${involvedNPCs.length})...`);
+      onProgress('character_agents', `按需调用 ${involvedNPCs.length} 位角色：${involvedNPCs.join('、')}`);
       try {
         characterInputs = await this._runCharacterAgents(
           state,
@@ -904,9 +911,8 @@ class AgentPipeline {
 
     const recentDialogue = (preflight?.domains?.dialogue?.items || [])
       .slice(0, 6).map(item => item.summary).join('\n');
-    // 角色代理只授予“确实被点名”的角色：玩家输入或近期对话明确提到。
-    // 不再依据“关系档案里 location 与玩家同一地点”判定在场——那会把整片区域的
-    // 常驻 NPC 每回合都拉进角色代理，即使他们并不在当前场景。
+    // 点名人物是供规划 Agent 判断的线索，不是确认在场或自动委派的依据。
+    // 不根据关系档案的同一区域位置枚举常驻 NPC。
     for (const [name] of Object.entries(state?._relationships || {})) {
       if (String(userInput || '').includes(name) || recentDialogue.includes(name)) addParticipant(name);
     }
@@ -1124,7 +1130,7 @@ class AgentPipeline {
     const rawResult = await this.runner.run('outliner', {
       state,
       userInput,
-      taskPrompt: `请根据当前状态规划场景与世界回应，人物反应可作为建议，尚未发生的行动与结果不作为既成事实。${hint}${directionContext ? `\n\n${directionContext}` : ''}${feedbackText}`,
+      taskPrompt: `请根据当前状态规划场景与世界回应，人物反应可作为建议，尚未发生的行动与结果不作为既成事实。自行决定本轮是否需要角色子代理，并在 characterRequests 中列出需要调用的 npc 与 reason；可以为空，人数由场景需要决定。关系档案、历史提及和 participants 都是参考，不是必须调用的名单。优先选择当前在场且其独立反应对本轮有帮助的人物。${hint}${directionContext ? `\n\n${directionContext}` : ''}${feedbackText}`,
       extraContext: {
         sceneBrief,
         storyPlan,
@@ -1142,7 +1148,7 @@ class AgentPipeline {
     this._assertPlannerOutputSafe(rawResult, 'outliner');
     const result = normalizeOutlineResult(rawResult);
 
-    return result.beats.length ? result : normalizeOutlineResult({ beats: [{
+    return result.beats.length ? result : normalizeOutlineResult({ ...result, beats: [{
       scene: sceneBrief?.location || state?.['世界·地点'] || '当前场景',
       participants: sceneBrief?.participants || [],
       openQuestion: cleanMemoryText(userInput, 600)
@@ -2015,28 +2021,24 @@ class AgentPipeline {
   // ── 角色代理 ──
 
   _extractInvolvedNPCs(sceneBrief, outline, state, userInput) {
-    // 角色代理是昂贵的子代理，只授予“可靠在场/已知”的角色：
-    // 关系档案已认识、当前战斗敌人、或玩家输入明确点名的 NPC。
-    // 场景简报里凭空出现的陌生 NPC（例如 canon 毕业场景 SCN-P1-START-GRAD-01 的
-    // 漩涡鸣人/水木/海野伊鲁卡/本届毕业生）不再授予角色代理。
-    const known = new Set(Object.keys(state?._relationships || {}));
-    const enemy = cleanMemoryText(state?._combat?.enemy_name, 80);
-    const inputText = String(userInput || '');
-    const npcSet = new Set();
-    if (enemy) npcSet.add(enemy);
-    for (const name of sceneBrief?.participants || []) {
-      const trimmed = String(name || '').trim();
-      if (known.has(trimmed) || inputText.includes(trimmed)) npcSet.add(trimmed);
+    // The planner chooses whom to consult, including choosing nobody. Known,
+    // mentioned, present and combat characters are not an automatic fan-out.
+    const requests = normalizeOutlineResult(outline).characterRequests;
+    const aliases = new Map();
+    for (const [name, relationship] of Object.entries(state?._relationships || {})) {
+      for (const alias of Array.isArray(relationship?.aliases) ? relationship.aliases : []) {
+        if (typeof alias === 'string') aliases.set(alias.trim(), name);
+      }
     }
-    for (const name of Object.keys(state?._relationships || {})) npcSet.add(String(name || '').trim());
-    const playerName = state['玩家·姓名'];
+    // An exact identity takes precedence over somebody else's alias.
+    for (const name of Object.keys(state?._relationships || {})) aliases.set(name, name);
+    const npcSet = new Set();
+    for (const { npc } of requests) npcSet.add(aliases.get(npc) || npc);
+    const playerName = state?.['玩家·姓名'];
     if (playerName) npcSet.delete(playerName);
     npcSet.delete('玩家');
-    return [...npcSet].filter(name => (
-      name.length >= 2
-      && name.length <= 40
-      && !/^(?:主角|路人|路人A|中忍|下忍|上忍|守卫|敌人|众人|村民|本届毕业生)$/.test(name)
-    ));
+    npcSet.delete('主角');
+    return [...npcSet];
   }
 
   async _runCharacterAgents(state, userInput, npcNames, sceneBrief, outline, storyPlan) {
