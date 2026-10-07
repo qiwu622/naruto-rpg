@@ -4,6 +4,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createToolResultBudget } from '../../js/core/tool-result-budget.js';
 import { isNativeAndroidApp } from '../../js/core/runtime-platform.js';
 import { fetchAI } from '../../js/core/native-ai-fetch.js';
+import { applyDeepSeekRequest, deepSeekSdkUsage, isDeepSeekMode, prepareDeepSeekMessages, DEEPSEEK_URL } from '../../js/core/deepseek-mode.js';
 
 export const version = 'naruto-agent-sdk/v1';
 
@@ -16,7 +17,7 @@ function headerValue(headers, name) {
 function normalizeBaseUrl(value, backend) {
   const fallback = backend === 'claude'
     ? 'https://api.anthropic.com/v1'
-    : 'https://api.openai.com/v1';
+    : backend === 'deepseek' ? DEEPSEEK_URL : 'https://api.openai.com/v1';
   const raw = String(value || fallback).trim().replace(/\/+$/, '');
   return raw
     .replace(/\/chat\/completions$/i, '')
@@ -76,6 +77,10 @@ function createModel(config = {}) {
     apiKey: config.apiKey || 'proxy-managed',
     fetch,
     includeUsage: true,
+    ...(isDeepSeekMode(config) ? {
+      transformRequestBody: body => applyDeepSeekRequest(body, config),
+      convertUsage: deepSeekSdkUsage
+    } : {}),
     supportsStructuredOutputs: config.supportsStructuredOutputs === true
   });
   return provider.chatModel(config.model);
@@ -168,7 +173,7 @@ export async function runAgent({
   safeEvent(onEvent, { type: 'agent-start', agent: definition.id || 'naruto-agent' });
   try {
     const callOptions = {
-      messages,
+      messages: isDeepSeekMode(config) ? prepareDeepSeekMessages(messages) : messages,
       abortSignal: signal,
       onStepStart: event => safeEvent(onEvent, {
         type: 'step-start', step: event?.stepNumber ?? trace.length
@@ -176,7 +181,8 @@ export async function runAgent({
       onStepEnd: event => safeEvent(onEvent, {
         type: 'step-end',
         finishReason: event?.finishReason || null,
-        toolCallCount: event?.toolCalls?.length || 0
+        toolCallCount: event?.toolCalls?.length || 0,
+        usage: event?.usage || null
       })
     };
     let text = '';

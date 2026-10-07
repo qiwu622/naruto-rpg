@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { config } from './config.js';
 import { getUser, initDb } from './db/index.js';
 import authRouter, { ensureCsrfCookie } from './auth/discord.js';
+import appLinkRouter from './auth/app-link.js';
 import savesRouter from './api/saves.js';
 import aiProxyRouter, { aiProxyAdmission, getProxyAgent } from './api/ai-proxy.js';
 import musicFavoritesRouter from './api/music-favorites.js';
@@ -182,6 +183,9 @@ const staticLimiter = rateLimit({
 // 4. 路由挂载
 const defaultJsonParser = express.json({ limit: '2mb' });
 
+// App polling has its own budget; it must not consume Discord's login budget.
+app.use('/auth/app', rateLimit({ windowMs: 60_000, max: 60, message: { error: '连接请求过多，请稍后重试' } }),
+  express.json({ limit: '4kb' }), express.urlencoded({ extended: false, limit: '4kb' }), appLinkRouter);
 app.use('/auth', authLimiter, defaultJsonParser, authRouter);
 if (multiplayerRuntime) {
   const multiplayerRouter = createRepositoryBackedMultiplayerHttpRouter({

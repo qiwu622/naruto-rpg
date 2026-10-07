@@ -164,8 +164,8 @@ try {
 
   await page.evaluate(() => eventBus.request('app:open-saves', { kind: ROOM_SAVE_KIND }));
   const library = page.locator('naruto-save-library').last();
-  assert.equal(await page.locator('#btn-multiplayer').count(), 0);
-  assert.equal(await library.getByRole('button', { name: '重新进入', exact: true }).count(), 0);
+  assert.equal(await page.locator('#btn-multiplayer').count(), 1);
+  assert.equal(await library.getByRole('button', { name: '重新进入', exact: true }).count(), 2);
   await library.getByRole('button', { name: '查看快照', exact: true }).first().click();
   await library.locator('#preview').waitFor({ state: 'visible' });
   assert.match(await library.locator('#preview').innerText(), /村口传来脚步声/);
@@ -227,19 +227,25 @@ try {
   assert.equal(await page.evaluate(async () => (await localSaveLibrary.readPackage(roomEntry.id, ROOM_SAVE_KIND, localRoomHistory.owner)).checksum.value), savedBefore);
   ok('history reconnect routes to the original room; exit-without-save preserves the last snapshot');
 
-  const pausedEntry = await page.evaluate(async () => {
+  const restoredEntry = await page.evaluate(async () => {
     localStorage.setItem('naruto_multiplayer_last_room:save-test-a', 'room:save-test');
-    authClient._checked = false; authClient._user = null;
+    authClient._checked = true; authClient._user = { id: 'save-test-a' };
+    const checkAuth = authClient.checkAuth;
+    authClient.checkAuth = async () => authClient._user;
+    const scheduled = app._scheduleMultiplayerRestore();
+    const opened = await eventBus.request('app:open-multiplayer');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    authClient.checkAuth = checkAuth;
     return {
-      scheduled: app._scheduleMultiplayerRestore(),
-      opened: await eventBus.request('app:open-multiplayer'),
+      scheduled,
+      opened: Boolean(opened),
       remembered: localStorage.getItem('naruto_multiplayer_last_room:save-test-a')
     };
   });
-  assert.equal(pausedEntry.scheduled, false);
-  assert.equal(pausedEntry.opened, null);
-  assert.equal(pausedEntry.remembered, 'room:save-test');
-  ok('public entry and automatic reconnect stay hidden without erasing the remembered room');
+  assert.equal(restoredEntry.scheduled, true);
+  assert.equal(restoredEntry.opened, true);
+  assert.equal(restoredEntry.remembered, 'room:save-test');
+  ok('public entry and automatic reconnect are available without erasing the remembered room');
 
   await page.reload();
   const durable = await page.evaluate(async () => {

@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="zh-CN" data-release-version="3.6.0">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101113">
+  <meta name="description" content="忍者手记 v3.6.0 更新公告与历史版本说明。">
+  <title>更新公告 · 忍者手记 v3.6.0</title>
+  <style>
+    :root { color-scheme:dark; --ink:#101113; --paper:#ede6d9; --muted:#aaa49c; --gold:#d7b17a; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; scroll-padding-top:32px; }
+    body { margin:0; background:radial-gradient(ellipse at 80% 0, #39291e70, transparent 50%),var(--ink); color:var(--paper); font:16px/1.85 system-ui,"Microsoft YaHei",sans-serif; }
+    a { color:var(--gold); text-underline-offset:4px; }
+    a:focus-visible,summary:focus-visible { outline:2px solid var(--gold); outline-offset:5px; }
+    .wrap { width:min(1080px,100%); margin:auto; padding:32px 28px calc(64px + env(safe-area-inset-bottom)); }
+    .top { display:flex; align-items:center; justify-content:space-between; gap:20px; border-bottom:1px solid #ffffff14; padding-bottom:24px; }
+    .brand { font:600 22px/1.2 Georgia,"Songti SC",serif; letter-spacing:2px; text-decoration:none; color:var(--paper); }
+    .pill { display:inline-flex; justify-content:center; padding:8px 18px; border:1px solid #d7b17a48; border-radius:9px; text-decoration:none; }
+    .hero { padding:58px 0 40px; }
+    .eyebrow { margin:0; color:var(--gold); font-size:12px; letter-spacing:3px; }
+    h1 { margin:12px 0; font:600 clamp(32px,5vw,52px)/1.3 Georgia,"Songti SC",serif; letter-spacing:1px; }
+    .hero p { color:var(--muted); margin:12px 0 20px; }
+    .links { display:flex; gap:10px; flex-wrap:wrap; }
+    .primary { background:#b04a31; color:#fff0e3; border-color:#d87553; }
+    .layout { display:grid; grid-template-columns:210px minmax(0,1fr); gap:40px; align-items:start; }
+    nav { position:sticky; top:24px; padding:20px 0; }
+    nav p { color:var(--muted); font-size:12px; letter-spacing:2px; }
+    nav a { display:block; padding:7px 0; font-size:14px; text-decoration:none; color:#c6beb2; }
+    nav a:hover { color:var(--gold); }
+    article { min-width:0; padding:24px 30px 36px; background:#17191be0; border:1px solid #ffffff12; border-radius:16px; overflow-wrap:anywhere; }
+    article>h2 { color:var(--paper); font-size:22px; line-height:1.5; margin:38px 0 16px; padding-top:24px; border-top:1px solid #ffffff12; }
+    article>h2:first-of-type { margin-top:24px; }
+    h3 { color:var(--gold); font-size:18px; }
+    p { margin:12px 0; }
+    ul { padding-left:23px; }
+    li { margin:10px 0; color:#d0c9bf; }
+    li::marker { color:#a77b47; }
+    strong { font-weight:650; color:#f1e6d2; }
+    code { background:#0003; border:1px solid #ffffff12; border-radius:4px; padding:2px 5px; font:13px/1.5 ui-monospace,monospace; }
+    .callout { margin:12px 0; padding:12px 16px; border-left:2px solid var(--gold); background:#d7b17a0a; color:#c8bda8; }
+    .muted { color:var(--muted); font-size:13px; }
+    .history { margin-top:48px; }
+    .history h2 { font-size:24px; }
+    details { border:1px solid #ffffff14; border-radius:10px; background:#17191b; margin:12px 0; }
+    summary { cursor:pointer; padding:16px 20px; }
+    summary span { margin-left:8px; color:var(--paper); font-weight:600; }
+    summary time { float:right; color:var(--muted); font-size:13px; }
+    .history-content { padding:0 24px 20px; }
+    footer { padding-top:32px; margin-top:32px; border-top:1px solid #ffffff14; color:var(--muted); font-size:13px; }
+    @media(max-width:760px) { .wrap { padding:24px 18px calc(40px + env(safe-area-inset-bottom)); } .hero { padding:32px 0 28px; } .layout { display:block; } nav { position:static; padding:0 0 20px; } nav p { display:none; } nav a { display:inline-block; margin:0 8px 8px 0; border:1px solid #ffffff14; border-radius:7px; padding:4px 9px; font-size:12px; } article { padding:16px 20px 24px; } article>h2 { font-size:20px; } .links .pill { flex:1 1 auto; } }
+    @media(prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top"><a class="brand" href="/">忍者手记</a><a class="pill" href="/">进入游戏 ↗</a></header>
+    <section class="hero" aria-labelledby="title">
+      <p class="eyebrow">RELEASE NOTES · 2026-10-07</p>
+      <h1 id="title">v3.6.0 · 更新公告</h1>
+      <p>每一次更新，都记录在这里。查看本次变化、升级说明与历史版本。</p>
+      <div class="links"><a class="pill primary" href="https://www.qiwu.asia/app/android/naruto-rpg.apk">下载安卓最新版</a><a class="pill" href="https://github.com/qiwu622/naruto-rpg/releases/tag/v3.6.0">GitHub 版本</a><a class="pill" href="#history">历史公告 ↓</a></div>
+    </section>
+    <div class="layout">
+      <nav aria-label="本次更新目录"><p>本次更新</p><a href="#section-1">🤝 联机重新开放</a>
+<a href="#section-2">⚔️ 可选战术回合战斗</a>
+<a href="#section-3">📚 存档减负与云同步</a>
+<a href="#section-4">📱 安卓接入现有云端账号</a>
+<a href="#section-5">🧠 记忆、变量与回合反馈</a>
+<a href="#section-6">🔥 NPC 成长与灵希修复</a>
+<a href="#section-7">💰 DeepSeek 专用适配</a>
+<a href="#section-8">✨ 界面与输入</a>
+<a href="#section-9">🛠️ 稳定性修复</a>
+<a href="#section-10">📥 更新与存档说明</a></nav>
+      <article aria-label="v3.6.0 更新内容"><p class="callout">网页正式站、测试站与安卓 App 同步更新 · 2026 年 10 月 7 日</p>
+<p class="callout"><strong>联机重新开放｜战术战斗｜存档减负｜安卓云端｜记忆纠错</strong></p>
+<h2 id="section-1">🤝 联机重新开放</h2>
+<ul>
+<li>顶栏恢复 <strong>联机入口</strong>，可以进入房间历史、重连上次房间。</li>
+<li>大厅、创建 / 加入房间、房间历史、开局、聊天、角色资料与退出确认统一为 <strong>深墨色＋暖金色</strong> 风格。</li>
+<li>优化桌面、手机和窄浮窗的布局、表单、按钮与状态提示，支持键盘切换标签和调整窗口。</li>
+<li>悬浮窗支持 <strong>拖动、缩放、收起、归位</strong>，改善手机安全区与快速缩放；输入时若挡住输入框，会自动收起。</li>
+<li>补全模型对物品新增、消耗、装备与移除的格式说明，减少反复修正。</li>
+</ul>
+<h2 id="section-2">⚔️ 可选战术回合战斗</h2>
+<p><strong>在顶部「战斗」或设置中手动开启。默认仍以正文游玩。</strong></p>
+<ul>
+<li>沿用角色已有忍术、属性与背包，本地结算先制、命中、伤害、查克拉消耗和持续状态，再由正文演绎结果。</li>
+<li>查克拉上限参与忍术输出，剩余查克拉用于支付消耗；资源不足时可尝试弱化施术。</li>
+<li>全新月夜战场、象牙纸色指令区与朱红确认按钮，支持 <strong>4 个自定义快捷招式、招式预览、忍具、自由行动与战报</strong>。</li>
+<li>开启后由 AI 根据实际交锋登记战况；攻击词不会直接触发开战，未交锋时显示等待状态。</li>
+<li>关闭面板同时停用面板专用提示词；玩家自定义预设保持原样，已记录战况会保留。</li>
+<li>修复防御 / 观察 / 撤离被误认作自由战术；结算随正文与记忆一起保存，失败回滚，重试保留原判定；切磋失去作战能力不再自动死亡。</li>
+</ul>
+<h2 id="section-3">📚 存档减负与云同步</h2>
+<ul>
+<li>存档库新增 <strong>「轻量续玩副本」</strong>：自选保留回合数，先保留原档，再创建所选线路的近期正文、日报与回退点副本。</li>
+<li><strong>历史记忆与角色关系继续保留</strong>，不会自动切换当前游戏；副本可继续游玩、创建 IF 线、导入 / 导出及上传 / 下载云端。</li>
+<li>本地和云端卡片展示轻量副本的正文与回退范围，避免误以为包含全部历史。</li>
+<li>修复安卓和网页导出大存档时误报 <strong>「解压后超过 200 MiB」</strong>；直接导出已保存的完整文件，保留节点、IF 线和校验信息。</li>
+<li>优化大档历史节点处理与分块序列化，降低导出时的内存峰值。</li>
+<li>云同步显示进度、失败与重试入口；遇到版本冲突可 <strong>保留双方副本</strong>，避免静默覆盖其他设备的进度。</li>
+<li>切换存档或账号时取消旧同步队列，修复旧上传完成后错误提示最新进度已同步。</li>
+</ul>
+<h2 id="section-4">📱 安卓接入现有云端账号</h2>
+<ul>
+<li>在 <strong>个人中心 / 存档库</strong> 启用云端，通过系统浏览器核对连接码并授权，继续使用网站现有账号。</li>
+<li>安卓联机使用原生云端请求与实时事件连接，未登录时引导连接账号，保留本地进度。</li>
+<li>云端账号、存档管理与同步共用网页功能，提供连接状态、重试、暂停和退出账号入口。</li>
+<li>云端检查后台执行，列表加载不锁住本地操作；断网、超时或登录失效仍可保存、读档和操作本地游戏。</li>
+<li>回合先保存在本机；<strong>已开启自动同步</strong> 时，连接恢复后继续备份待同步进度。</li>
+<li>登录凭证由 Android Keystore 加密保存，不进入游戏存档或导出文件。</li>
+<li>云端服务可选；模型生成仍需要玩家配置的 AI 接口及网络连接。</li>
+</ul>
+<h2 id="section-5">🧠 记忆、变量与回合反馈</h2>
+<ul>
+<li>正文下新增可折叠 <strong>「回合结果」</strong>，查看变量、记忆、日报、本地保存结果，以及实际记录的阶段耗时和重试次数。</li>
+<li>回执随节点保存，回看历史可查看；旧档缺失记录时明确显示未记录。</li>
+<li>记忆面板支持 <strong>搜索、查看来源、纠正、否定、置顶和撤销</strong>；修订影响当前线路后续检索与摘要，原历史节点保持原样。</li>
+<li>在已有后续的旧节点修订记忆时，会保留原线路并创建 IF 线。</li>
+<li><strong>未选择的行动选项不再被当作已发生事件</strong> 写入正文上下文、变量更新、Agent 检索和本地记忆；界面仍显示选项。</li>
+<li>修复同回合物品获得、消耗、移除与重建的顺序，避免误扣数量或误删整个物品。</li>
+<li>恢复置顶记忆与相关事实读取；深度整理保留未送入本次模型的条目及未处理的关系历史。</li>
+</ul>
+<h2 id="section-6">🔥 NPC 成长与灵希修复</h2>
+<ul>
+<li>NPC 成长不再被忍阶基准截断；明确恢复时可正确恢复当前资源，更新单个忍术或查克拉属性不再覆盖其他能力。</li>
+<li>档案刷新最新战斗属性、忍术和综合战力，保留滚动位置与肖像操作；后续交战使用最新档案。</li>
+<li>修复生成、变量更新或后台人物摘要期间切换存档 / 节点 / IF 线后，旧结果写进新进度的问题。</li>
+<li>灵希切档时停止旧请求、清理本轮未确认提案；兼容模式复用相同工具操作结果，减少重复执行。</li>
+<li>修复灵希浮窗重新打开后消息、提案和流式回复不刷新，以及已执行操作却显示未修改的问题。</li>
+</ul>
+<h2 id="section-7">💰 DeepSeek 专用适配</h2>
+<p>在 API 设置选择 <strong>「DeepSeek 专用 · 缓存优化」</strong>，<strong>默认关闭</strong>。</p>
+<ul>
+<li>仅开启后调整项目动态事实与检索记忆的位置，保留稳定规则前缀；未开启时沿用原有上下文组成、消息顺序与推理参数。</li>
+<li>支持关闭 / 低 / 高 / 最高思考档位，随 API 方案保存；网页、安卓、变量更新与 Agent 共用适配。</li>
+<li>不删减正文、历史记忆或玩家预设；缓存效果取决于实际请求和供应商返回数据。</li>
+<li>增加缓存命中、未命中与思考 token 统计，设置页可查看最近用量报告；专用模式普通正文空回复不再自动付费重发。</li>
+</ul>
+<h2 id="section-8">✨ 界面与输入</h2>
+<ul>
+<li>新增 <strong>网站更新公告页</strong>，登录页与游戏设置可查看本次完整公告及历史版本；此后正式更新会同步网站公告。</li>
+<li>精修正文阅读遮罩、顶栏、侧栏、属性分区、朱红按钮和手机输入区；保留字体、文字配色与自定义背景设置。</li>
+<li>装备品质、玩家 / NPC 忍阶、忍术与任务等级新增 <strong>沿轮廓移动的分级流光</strong>；高阶增加扫光，支持系统减少动态效果。</li>
+<li>统一回合结果卡、云同步状态与记忆卷宗样式，改善窄屏阅读、冲突操作与键盘交互。</li>
+<li>输入框旁新增 <strong>「回车发送 / 回车换行」</strong> 切换，记住本机选择；<code>Shift + Enter</code> 换行，<code>Ctrl / ⌘ + Enter</code> 发送。</li>
+<li>修复中文输入法选字误发送、组合快捷键重复发送和角色面板关闭无响应。</li>
+<li>修复 API 设置下拉菜单错误向上展开、遮挡相邻选项的问题。</li>
+</ul>
+<h2 id="section-9">🛠️ 稳定性修复</h2>
+<ul>
+<li>修复部分导入预设的展示正则将正文清空后，变量更新完成时 <strong>正文消失、只剩思维链和日报</strong> 的问题；展示为空时回退到清理后的正文。</li>
+<li>改善联机 SQLite 原生驱动回收稳定性，补充压力回归；自部署环境要求 <strong>Node.js 22+</strong>，已有数据库格式保持兼容。</li>
+<li>改善发布包校验、后端就绪检查、失败恢复与测试站独立更新流程。</li>
+</ul>
+<h2 id="section-10">📥 更新与存档说明</h2>
+<p><strong>旧存档可继续使用，无需重新开档。</strong></p>
+<p class="callout">安卓请下载新版 APK <strong>覆盖安装</strong>，不要卸载旧版，以免清除本地存档。轻量副本只保留所选线路近期正文和回退点，需要完整历史时请保留原档并导出备份。网页与 App 的本地存档各自保存，跨端使用云端或文件导入 / 导出。</p>
+<ul>
+<li><a href="https://www.qiwu.asia/" target="_blank" rel="noopener noreferrer">正式站</a></li>
+<li><a href="https://www.qiwu.asia/announcements.html" target="_blank" rel="noopener noreferrer">网站更新公告</a></li>
+<li><a href="https://www.qiwu.asia:8080/" target="_blank" rel="noopener noreferrer">测试站</a></li>
+<li><a href="https://www.qiwu.asia/app/android/naruto-rpg.apk" target="_blank" rel="noopener noreferrer">安卓 APK</a></li>
+<li><a href="https://github.com/qiwu622/naruto-rpg/releases/tag/v3.6.0" target="_blank" rel="noopener noreferrer">GitHub 更新与下载</a></li>
+</ul>
+<p class="muted">感谢大家的反馈。本次公告汇总 v3.5.3 之后的新增功能与修复。</p></article>
+    </div>
+    <section class="history" id="history"><h2>历史版本</h2><p class="muted">本次完整公告与之前版本的更新记录。</p>
+    <details><summary><span>v3.5.3</span><time>2026-10-01</time></summary>
+      <div class="history-content"><ul>
+<li>修复安卓设置页滚动，分类与内容共用触摸滚动区，横屏、键盘弹出时仍能访问设置；切换页面与关闭编辑器后正确恢复位置。</li>
+<li>角色子代理由大纲 Agent 按场景自主选择，可不调用或选择多位人物，不再自动遍历所有关系、历史提及与战斗角色。</li>
+<li>安卓启动、返回前台与网络恢复时自动检测更新；“稍后提醒”只延后当前版本一天，手动检查始终可用。</li>
+<li>更新弹窗展示版本、更新内容与公告，网站下载区同步发布公告；安卓包包含 3.5.2 的叙事审核软约束修复。</li>
+<li>现有存档继续兼容。安卓玩家请覆盖安装新版，避免卸载清除本地数据；联机入口继续隐藏。</li>
+</ul></div>
+    </details>
+    <details><summary><span>v3.5.2</span><time>2026-10-01</time></summary>
+      <div class="history-content"><ul>
+<li>角色素材引用、人物覆盖和模型审查改为写作建议，避免正文因缺少内部编号或审核意见而反复失败。</li>
+<li>作家沿用玩家预设的篇幅和文风；可选角色素材失败时跳过，不编造角色的默认动作。</li>
+</ul></div>
+    </details>
+    <details><summary><span>v3.5.1</span><time>2026-09-30</time></summary>
+      <div class="history-content"><ul>
+<li>暂时隐藏联机入口及自动重连，已有房间记录仍可查看、导出和管理。</li>
+<li>重做存档库，统一时间线管理入口；支持保留旧档、导入导出、IF 线创建与切换，并与云端存档管理联动。</li>
+<li>修复导入世界书后关闭条目和未触发绿灯条目被全量注入的问题，完善触发条件和上下文预算。</li>
+<li>完善变量指令规范化、分阶段修复与错误诊断，减少无效重复重试；加强日报与回合状态结算。</li>
+<li>完善 NovelAI 官方接口兼容与连接诊断，新增可保存的画师串设置。</li>
+<li>网站提供安卓 3.5.1 测试包下载；App 复用网页游戏代码，修复系统栏、刘海和键盘遮挡，采用原创软件图标。</li>
+<li>修复全量更新脚本，补齐静态资源、共享模块及数据库迁移，加入哈希核验、备份和失败回退。</li>
+</ul></div>
+    </details>
+    <details><summary><span>v3.5.0</span><time>2026-08-11</time></summary>
+      <div class="history-content"><h3>灵希 Agent 助手</h3>
+<ul>
+<li>新增独立灵希助手、角色动画、可拖动宠物与桌面对话框、新开对话确认以及有界上下文；可单独选择已保存的 API 方案，且不会把密钥写入模型消息或会话存储。</li>
+<li>新增项目能力目录与工具系统。灵希可读取公开存档状态、正史、忍术数据库、世界书、时间线、云存档、图片图库和设置摘要，并能导航到白名单界面。</li>
+<li>剧情、开局和世界书相关生成必须在同一轮先完成对应检索；检索结果必须与用户请求或当前项目证据相关，未检索或检索不相关时拒绝提交内容。</li>
+<li>新增设置、变量修复、开局、人设、世界书、剧情方向、装备、物品、任务、普通行动、战斗动作、时间线、云存档、图片生成和图库操作适配器。</li>
+<li>少量、可逆、无费用的白名单设置可后台应用；删除、覆盖、剧情推进、开局初始化、云存档和外部生图等操作必须显示精确影响并由确认界面点击批准，不再要求手动输入 <code>yes</code>。</li>
+</ul>
+<h3>音乐与媒体</h3>
+<ul>
+<li>新增腾讯音乐目录搜索与本站同源音频代理，移除酷我渠道；代理校验歌曲标识、重定向目标、响应大小和音频类型，避免 Mixed Content 与直接跨站播放问题。</li>
+<li>播放前使用 Range 请求和音频文件头预检。候选不可播放时先尝试同歌其他版本，再自动换歌；浏览器手势拦截不会被误判为坏歌。</li>
+<li>灵希打开歌曲后自动显示默认缩小的音乐悬浮窗，支持拖动、展开、关闭、上一首、播放/暂停和下一首，整个过程不再打开设置面板。</li>
+</ul>
+<h3>叙事与 Agent 管道</h3>
+<ul>
+<li>Agent 模式调整为“场景节拍 → 详细写作大纲 → 多重终审 → 最终正文 → 连续性结算”。终审前禁止生成正文，正文定稿后不再交给未审查的润色模型改写剧情结构。</li>
+<li>新增结构化写作大纲、角色决定来源校验、玩家行动边界、自然停止点、变量证据和最终完整性审计，并支持可检索的时间、记忆、正史与世界书一致性审查。</li>
+<li>加强阶段缓存与失败续跑、工具结果预算、流式事件和兼容降级，减少重试时重复调用与超长工具结果挤占上下文。</li>
+<li>严格单模型提示词明确要求推理块先闭合、机器标签只放正文之后，并给出唯一 <code>&lt;state_update&gt;</code> 的固定格式，降低偶发漏标签和截断导致的整回合失败。</li>
+</ul>
+<h3>时间线、剧情方向与领域操作</h3>
+<ul>
+<li>新增按分支保存的未来剧情方向，可设置目标、禁区、节奏、角色羁绊、伏笔与条件分支；方向变化会使旧规划失效并触发重新规划。</li>
+<li>加强时间线维护检查点、分支切换、主线升格、IF 分支删除、重推衍和并发状态校验；过期提案会在写入前失效，失败操作可回滚且不覆盖同时发生的新提交。</li>
+<li>装备、消耗品、任务和战斗操作统一通过真实领域系统结算，避免绕过数量、属性加成、奖励、统计和时间线记录。</li>
+</ul>
+<h3>平台、缓存与稳定性</h3>
+<ul>
+<li>服务端 AI 代理新增可配置的上游 429 重试预算，完善流式中断、并发准入、响应上限和后端健康检查。</li>
+<li>Service Worker 对 API、认证、非 GET 和代码模块执行明确的缓存旁路或重新验证；测试站 Nginx 对 JS/CSS/MJS 和 <code>sw.js</code> 禁用陈旧缓存。</li>
+<li>新增灵希逻辑回归、浏览器交互回归、音乐代理回归、剧情方向回归和 Service Worker 缓存回归，并纳入统一测试命令。</li>
+</ul>
+<h3>兼容性</h3>
+<ul>
+<li>现有本地存档、云存档、世界书、自定义预设和图片资产继续兼容，无需重新开档。</li>
+<li>音乐只保留腾讯目录；已保存的酷我来源不会再被解析。</li>
+</ul></div>
+    </details>
+    <details><summary><span>v3.1.0</span><time>2026-08-06</time></summary>
+      <div class="history-content"><h3>Agent 模式核心升级</h3>
+<ul>
+<li><strong>并发与稳定性</strong>：Agent 并发上限提升到 10(可配置),角色代理并入有界并发闸门;服务端 AI 代理并发闸门可配置(默认每用户 10/全局 32),不再被自己的限流打成 429。</li>
+<li><strong>思维链可视化</strong>:捕获 DeepSeek <code>reasoning_content</code>/Claude thinking,主模型思维链内联展示,子模型推演面板可点击查看每个子代理的思考过程、完整输出与工具步骤;流式时保持展开、按 500ms 刷新。</li>
+<li><strong>写作解耦</strong>:主模型(Writer)只输出正文,变量/记忆/日报由后续二次变量更新与专属的连续性更新代理产出(人物关系含心理 <code>inner_thoughts</code> 与历史 <code>history</code>);正文 900-1500 字、文风遵循预设。</li>
+<li><strong>审查与修复闭环</strong>:大纲审查发现问题自动重生成;终审通过才提交,审查不通过才触发一轮修复重写并复审;新增可搜索的剧情合理性审查(时间/记忆一致性)。</li>
+<li><strong>阶段断点续跑</strong>:某环节失败重试时,从失败阶段直接续跑,复用上方已完成的正确环节,不再重走全流程。</li>
+<li><strong>工具兼容降级</strong>:模型不支持工具调用时,自动降级到无工具普通对话,不再报 404 中止。</li>
+<li><strong>提示词缓存优化</strong>:稳定前缀前置(证据/约束后置),适配 DeepSeek 自动前缀缓存;面板显示缓存命中率。</li>
+</ul>
+<h3>新功能</h3>
+<ul>
+<li><strong>多 API 方案</strong>:设置面板与开局契约可保存/切换多套 API 地址/密钥/模型。</li>
+<li><strong>人设方案</strong>:开局向导可保存多份人设、开局前切换;个人中心可查看/删除已存人设。</li>
+<li><strong>AI 不再自动超时</strong>:文本生成由用户手动停止;nginx 反代 /api 超时放宽。</li>
+</ul>
+<h3>修复</h3>
+<ul>
+<li>角色代理不再拉入陌生/不在场 NPC(仅已认识、战斗敌人或玩家点名)。</li>
+<li>思维链 100% 误显示、子代理展开被打断、&quot;缺少可见正文&quot;误报、记忆/日报缺失导致整回合失败等问题。</li>
+</ul></div>
+    </details>
+    <details><summary><span>v3.0.0</span><time>2026-07-24</time></summary>
+      <div class="history-content"><h3>核心升级</h3>
+<ul>
+<li><strong>完整正史运行时</strong>：重建 K001-K086 项目时间线，覆盖 HIST、P1、P2、BOR 四个时代，共 385 个剧情日、786 个场景和 2894 个原子事件；加入当前日证据投影、未来剧情隔离与分支事件记账。</li>
+<li><strong>正史忍术数据库</strong>：引入 741 条规范忍术记录，统一术名、类别、等级、资源类型、消耗、威力、使用条件和角色技能映射；原创忍术与正史忍术采用不同来源标记。</li>
+<li><strong>证据链叙事管道</strong>：新增严格单次调用与增强模式、可见主模型推演、二次变量模型自检、可选二阶段正文复检、提示词调用追踪，以及正文、结构标签和私有审校数据的隔离。</li>
+<li><strong>连续性与安全提交</strong>：新增不可变连续性账本、回合证据编译、角色记忆增量和原子回合提交；生成、复检或变量更新失败时不再污染时间线和存档。</li>
+<li><strong>私有绘图工作室</strong>：支持 OpenAI 兼容接口、A1111/Forge、ComfyUI，提供世界书绘图上下文、回合插图、人物肖像、版本图库、云端同步、恢复与配额保护。</li>
+</ul>
+<h3>剧情数据库 (项目时间线)</h3>
+<ul>
+<li><strong>四时代全覆盖</strong>：K001-K086 年份体系，HIST (历史奠基)、P1 (疾风传前)、P2 (疾风传)、BOR (博人传) 四个时代完整覆盖</li>
+<li><strong>20 个时间线分片</strong>：HIST-ANNUAL-FOUNDATIONS, P1-START-WAVES, P1-SASUKE, P1-EXAM-CRUSH, P1-TSUNADE, P2-AKATSUKI-ITACHI-JIRAIYA, P2-BROTHERS-PAIN, P2-WAR-CLIMAX 等</li>
+<li><strong>86 份年份状态文件</strong>：每年记录 140+ 角色年龄/生日/状态变化</li>
+<li><strong>剧情规模</strong>：385 个剧情日、786 个场景、2894 个原子事件</li>
+<li><strong>28 个漫画篇章摘要</strong>：涵盖波之国、中忍考试、佐助追回、纲手搜索、晓组织、佩恩、第四次忍界大战、辉夜等全部主线</li>
+<li><strong>AI 可见性控制</strong>：只读取当前日证据，未来剧情被严格隔离；玩家改变原作事件后记录分支结果</li>
+</ul>
+<h3>忍术数据库 (规范忍术)</h3>
+<ul>
+<li><strong>741 条正史忍术</strong>：覆盖 NARUTO 漫画第 1-700 话全部已知忍术</li>
+<li><strong>统一字段</strong>：术名(正/繁)、别名、等级(D/C/B/A/S)、类型(忍术/幻术/体术/支援)、属性(火/风/雷/土/水/阴/阳/阴阳)、查克拉消耗、威力值、使用条件、限制、克制、角色技能映射</li>
+<li><strong>20+ 分类分片</strong>：核心忍术、基础忍术、火遁、水遁、雷遁、风遁、土遁、瞳术、幻术、体术、医疗忍术、封印术、仙术、傀儡术、通灵术、时空忍术等</li>
+<li><strong>属性体系</strong>：火克风、风克雷、雷克土、土克水、水克火 (五行相克)</li>
+<li><strong>等级体系</strong>：D(入门)→C(下忍)→B(中忍)→A(上忍)→S(禁术/影级)</li>
+<li><strong>角色映射</strong>：每条忍术关联已知使用者，支持按角色/属性/等级检索</li>
+<li><strong>平衡档案</strong>：内置 balance-profile.json 平衡调优数据</li>
+<li><strong>正史保护</strong>：正史忍术数值被锁定，AI 不可随意修改；原创忍术使用独立来源标记</li>
+</ul>
+<h3>血继限界系统</h3>
+<ul>
+<li><strong>结构化血继数据</strong>：变量模式 <code>技能·血继限界·(.+)·(.+)</code>，包含名称/等级/熟练度/描述</li>
+<li><strong>7 大内置血继</strong>：写轮眼(宇智波)、白眼(日向)、冰遁(水无月)、木遁(柱间)、熔遁、磁遁、尘遁</li>
+<li><strong>天赋系统联动</strong>：7 种天赋预设(查克拉天才/努力天才/血继限界继承者/体术专家/幻术天赋/医疗忍者/暗部之姿)</li>
+<li><strong>自动归属补全</strong>：未指定家族时根据血继、出生地与时代自动匹配合理家族</li>
+<li><strong>修复</strong>：开局血继写入后仍显示&quot;普通血脉&quot;的问题已修复</li>
+</ul>
+<h3>人物关系面板</h3>
+<ul>
+<li><strong>三维关系</strong>：好感度、信任度、尊重度动态变化</li>
+<li><strong>情感星图</strong>：多环分层可视化，支持点按打开档案、悬停高亮联线</li>
+<li><strong>NPC 战斗卡</strong>：按忍阶统一平衡，支持查克拉/精神力/体力独立结算</li>
+<li><strong>人物档案</strong>：绝密情报档案卡片设计，含金色流光/温度印章/六芒头像环</li>
+<li><strong>关系历史</strong>：最多 30 条记录，支持置顶/删除/筛选</li>
+<li><strong>修复</strong>：人物属性生成异常、忍术未绑定人物、关系面板交互异常等问题</li>
+</ul>
+<h3>二次变量模型</h3>
+<ul>
+<li><strong>证据驱动更新器</strong>：强制将思维链中声明的新任务/新人物/事件落成结构标签</li>
+<li><strong>思维链可见性</strong>：主模型推演和二次变量自检过程对玩家可见</li>
+<li><strong>任务稳定性</strong>：新任务必须有稳定 ID、名称、等级和目标，避免&quot;未知任务&quot;</li>
+<li><strong>修复</strong>：思维链显示异常、任务名称生成但显示未知、变量更新遗漏等问题</li>
+</ul>
+<h3>开局世界观生成</h3>
+<ul>
+<li><strong>开局契约重做</strong>：支持自定义家族、血继、天赋、忍术、属性、关系和时代日期</li>
+<li><strong>血继-家族自动匹配</strong>：例如冰遁→优先关联水无月一族/雾隐背景</li>
+<li><strong>首回合自动补全</strong>：天赋、血继、初始能力和人物战斗卡在首回合自动完成</li>
+<li><strong>开局构思逻辑优化</strong>：AI 根据血继/出生地/时代自动补全合理归属</li>
+<li><strong>修复</strong>：开局天赋/血继无法写入、开局变量未初始化等问题</li>
+</ul>
+<h3>战斗、人物与记忆</h3>
+<ul>
+<li>查克拉、精神力、体力和生命值采用统一战斗资源模型；玩家与 NPC 共享规范结算，忍术消耗按数据库记录执行且只扣除一次。</li>
+<li>NPC 战斗卡按忍阶规范化，已有卡片只更新真实增量；关系档案、置顶、删除、情感星图和人物详情交互得到修复与增强。</li>
+<li>记忆系统加入阶段摘要、深度整合、NPC 独立摘要、线索与任务承接、分支隔离及截断恢复。</li>
+</ul>
+<h3>平台与发布</h3>
+<ul>
+<li>新增本地 OpenAI 兼容服务、流式 SSE、Tavern、Claude 与代理传输的完整兼容和超时/中断处理。</li>
+<li>服务端加入图片资产隔离、云存档边界、CSRF/鉴权、代理目标校验、响应压缩和可配置持久化目录。</li>
+<li>新增 Windows 原生正式站部署器：显式生产确认、可重复构建、部署包内容检查、运行数据排除、SHA-256 上传校验、传输重试、后端重启与线上版本验证。</li>
+<li>新增 Linux/Mac 部署脚本 <code>deploy-v3.sh</code>：支持 dry-run、跳过构建、版本信息自动生成。</li>
+<li>新增 <code>scripts/generate-version.mjs</code>：独立版本信息生成工具，支持输出到文件或 stdout。</li>
+</ul>
+<h3>兼容性</h3>
+<ul>
+<li>现有存档继续可用；加载时会迁移开局契约、连续性账本、战斗资源、人物档案和图片绑定字段。</li>
+<li>旧自定义变量预设会保留自定义条目并升级内置规则；缺失最终正文宏的预设将被拒绝保存，避免无依据更新。</li>
+</ul>
+<p>---</p></div>
+    </details>
+    <details><summary><span>v2.3.1</span><time>2026-07-20</time></summary>
+      <div class="history-content"><h3>优化</h3>
+<ul>
+<li><strong>情感星图弹窗化</strong>：星图从 320px 侧栏内嵌改为直开大弹窗（min(94vw, 860px)，920x650 viewBox），多环分层放大、节点 r 20-28、字号 13/12/11、中心主角盘 r 34 + 旋转虚环；新增七级温度图例（挚友到仇恨）；面板内嵌星图样式迁移至弹窗 Shadow DOM 作用域 style，移除 panel.css.js 死代码；点按星宿直接叠层打开对应档案，悬停高亮对应情感联线</li>
+<li><strong>NPC 档案卡 v2（绝密情报档案深化）</strong>：弹窗加宽至 min(94vw, 760px)；头部新增朱红绝密印章（rotate -12度、半透明描边）；淡金径向光 header 背景加顶部高光分隔线；阵营与身份改为描边胶囊；名字金色流光、温度印章与六芒头像环保留并强化；全结构作用域样式随五套主题自适应</li>
+</ul>
+<p>---</p></div>
+    </details></section>
+    <footer>忍者手记 · 本地存档保存在当前设备。跨设备续玩，请使用云端或导入 / 导出备份。</footer>
+  </div>
+</body>
+</html>

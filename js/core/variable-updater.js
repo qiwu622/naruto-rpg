@@ -1,12 +1,16 @@
 import { AIClient } from './ai-client.js';
+import { inheritAPIAdaptation, isDeepSeekMode, markTurnContext, prepareDeepSeekMessages } from './deepseek-mode.js';
+import { FACTUAL_MEMORY_GUIDANCE, projectNarrativeForMemory } from './narrative-memory.js';
 import { eventBus } from './event-bus.js';
 import { publishPromptTrace } from './prompt-trace.js';
 import { recordVariableUpdaterAttempt } from './variable-updater-diagnostics.js';
 import { buildShinobiDailyPrompt, parseShinobiDailyContract } from './shinobi-daily.js';
 import { getVariableUpdaterPreset, resolveVariableUpdaterPreset } from '../data/variable-updater-preset.js';
 import { normalizeNpcIdentity } from '../data/npc-identity.js';
+import { projectSystemCombatPrompt, ORDINARY_RESOURCE_UPDATE_GUIDANCE } from '../data/combat-prompt-mode.js';
 import {
   ALLOWED_TAGS,
+  NPC_GROWTH_GUIDANCE,
   calendarMonthFromValue,
   coerceValue,
   getVariableUpdateDomain,
@@ -227,6 +231,7 @@ export function buildVariableUpdaterRuntimeContract({
   exampleTitle = '变量更新完整混合示例'
 } = {}) {
   const runtimeState = state && typeof state === 'object' ? state : compactState;
+  const tacticalCombat = runtimeState?._ui?.settings?.tacticalCombat === true;
   const publicCompactState = projectPublicUpdaterValue(compactState || runtimeState || {});
   const compactStateText = JSON.stringify(publicCompactState);
   const openingRequirements = getOpeningInitializationRequirements(runtimeState);
@@ -256,11 +261,12 @@ export function buildVariableUpdaterRuntimeContract({
 
   sections.push(VARIABLE_UPDATER_COVERAGE_PROTOCOL);
   sections.push(VARIABLE_UPDATER_CONSISTENCY_PROTOCOL);
-  sections.push(VARIABLE_UPDATER_PATH_PROTOCOL);
+  sections.push(projectSystemCombatPrompt(VARIABLE_UPDATER_PATH_PROTOCOL, { tacticalCombat }));
   if (includeExample) {
     const title = String(exampleTitle || '变量更新完整混合示例').trim();
-    const example = includeDaily ? VARIABLE_UPDATER_MIXED_EXAMPLE
+    const rawExample = includeDaily ? VARIABLE_UPDATER_MIXED_EXAMPLE
       : VARIABLE_UPDATER_MIXED_EXAMPLE.replace(/<shinobi_daily>[\s\S]*?<\/shinobi_daily>/g, '').trim();
+    const example = projectSystemCombatPrompt(rawExample, { tacticalCombat });
     sections.push(`【${title} · 仅示范格式与字段，禁止复制示例事实、ID或数值】\n${example}`);
   }
 
@@ -287,7 +293,8 @@ ${repairData}
   else sections.push('【仅修复状态】日报已通过校验并由本地保留，本次只输出变量、更新清单与记忆等状态标签，不要重新生成日报。');
   // Saved presets may contain the former rule that regenerated every named NPC
   // card. Reassert the incremental combat rule near the end of the contract.
-  sections.push(VARIABLE_UPDATER_COMBAT_PROTOCOL);
+  sections.push(tacticalCombat ? VARIABLE_UPDATER_COMBAT_PROTOCOL : ORDINARY_RESOURCE_UPDATE_GUIDANCE);
+  sections.push(NPC_GROWTH_GUIDANCE);
   sections.push(VARIABLE_UPDATER_RELATIONSHIP_IDENTITY_PROTOCOL);
   // Keep the established deletion invariant as the final system instruction.
   sections.push(VARIABLE_UPDATER_DELETION_PROTOCOL);
@@ -296,14 +303,14 @@ ${repairData}
 
 function resolveConfig(mainConfig = {}) {
   const config = mainConfig.variableUpdater || {};
-  return {
+  return inheritAPIAdaptation(mainConfig, {
     ...mainConfig,
     ...config,
     backend: config.backend && config.backend !== 'inherit' ? config.backend : mainConfig.backend,
     apiUrl: config.apiUrl || mainConfig.apiUrl,
     apiKey: config.apiKey || mainConfig.apiKey,
     model: config.model || mainConfig.model
-  };
+  });
 }
 
 function escapeRegex(value) {
@@ -1376,14 +1383,16 @@ export function buildVariableUpdaterMessages(preset, {
   updateObligations,
   correctionInstruction = '',
   repairCandidate = '',
-  includeDaily = true
+  includeDaily = true,
+  optimizeContext = false
 } = {}) {
   const publicCompactState = projectPublicUpdaterValue(compactState || {});
   const messages = resolveVariableUpdaterPreset(preset, {
+    tacticalCombat: state?._ui?.settings?.tacticalCombat === true,
     compactState: publicCompactState,
     userInput,
     enrichedInput,
-    narrativeResponse,
+    narrativeResponse: projectNarrativeForMemory(narrativeResponse),
     // Runtime invariants cannot depend on a custom preset retaining this macro.
     // The shared contract builder below owns breakthrough settlement instead.
     breakthroughInstruction: '',
@@ -1393,10 +1402,13 @@ export function buildVariableUpdaterMessages(preset, {
   if (!messages.length) return messages;
 
   const runtimeContext = [
+    FACTUAL_MEMORY_GUIDANCE,
     memoryContext ? `[记忆摘要]\n${memoryContext}` : '',
     knowledgeContext
   ].filter(Boolean).join('\n\n');
-  if (runtimeContext) messages.unshift({ role: 'system', content: runtimeContext });
+  if (runtimeContext) messages.unshift(optimizeContext
+    ? markTurnContext({ role: 'system', content: runtimeContext })
+    : { role: 'system', content: runtimeContext });
   messages.push({
     role: 'system',
     content: buildVariableUpdaterRuntimeContract({
@@ -1410,15 +1422,16 @@ export function buildVariableUpdaterMessages(preset, {
       includeDaily
     })
   });
-  const domainPrompt = getVariableUpdateDomainPrompt();
+  const domainPrompt = projectSystemCombatPrompt(getVariableUpdateDomainPrompt(), { tacticalCombat: state?._ui?.settings?.tacticalCombat === true });
   if (!messages.some(message => message.content?.includes(domainPrompt))) {
     messages.unshift({ role: 'system', content: domainPrompt });
   }
-  const systemContent = messages
+  const orderedMessages = optimizeContext ? prepareDeepSeekMessages(messages) : messages;
+  const systemContent = orderedMessages
     .filter(message => message.role === 'system')
     .map(message => message.content)
     .join('\n\n');
-  const conversation = messages.filter(message => message.role !== 'system');
+  const conversation = orderedMessages.filter(message => message.role !== 'system');
   return systemContent ? [{ role: 'system', content: systemContent }, ...conversation] : conversation;
 }
 
@@ -1463,6 +1476,7 @@ export async function runVariableUpdater({
 }) {
   const variableConfig = mainConfig?.variableUpdater;
   if (!variableConfig?.enabled) return null;
+  narrativeResponse = projectNarrativeForMemory(narrativeResponse);
 
   const updaterConfig = resolveConfig(mainConfig);
   if (!updaterConfig.model || (updaterConfig.backend !== 'tavern' && !updaterConfig.apiUrl)) {
@@ -1484,6 +1498,7 @@ export async function runVariableUpdater({
   const stage = validatedState && !validatedDaily ? 'daily' : validatedDaily && !validatedState ? 'state' : 'full';
   const preset = getVariableUpdaterPreset();
   const messageContext = {
+    optimizeContext: isDeepSeekMode(updaterConfig),
     state,
     compactState,
     userInput,

@@ -2,6 +2,7 @@ import '../multiplayer/multiplayer-panel.js';
 import { icon } from '../utils/icons.js';
 import { projectedGenerationProgress } from '../multiplayer/ui-projection.js';
 import { localRoomHistory } from '../multiplayer/local-room-history.js';
+import { multiplayerOverlayStyles } from '../../css/components/multiplayer-overlay.css.js';
 
 const PANEL_TAG = 'naruto-multiplayer-panel';
 
@@ -11,10 +12,10 @@ function applyOverlayStyle(element) {
     'inset:0',
     'z-index:var(--z-overlay-top)',
     'overflow:auto',
-    'background:rgba(10,10,12,0.86)',
+    'background:rgba(8,11,15,0.91)',
     'backdrop-filter:blur(10px) saturate(120%)',
     '-webkit-backdrop-filter:blur(10px) saturate(120%)',
-    'padding:clamp(10px,2vw,24px)',
+    'padding:max(clamp(10px,2vw,24px),env(safe-area-inset-top)) max(clamp(10px,2vw,24px),env(safe-area-inset-right)) max(clamp(10px,2vw,24px),env(safe-area-inset-bottom)) max(clamp(10px,2vw,24px),env(safe-area-inset-left))',
     'overscroll-behavior:contain'
   ].join(';');
 }
@@ -25,7 +26,7 @@ function applyCompactOverlayStyle(element) {
     'inset:auto clamp(10px,2vw,22px) clamp(10px,2vw,22px) auto',
     'z-index:var(--z-overlay-top)',
     'width:min(410px,calc(100vw - 20px))',
-    'max-height:calc(100vh - 20px)',
+    'max-height:calc(100dvh - 20px)',
     'overflow:auto',
     'background:transparent',
     'padding:0',
@@ -41,43 +42,17 @@ function applyToolbarStyle(element) {
     'z-index:2',
     'display:flex',
     'justify-content:flex-end',
-    'max-width:1480px',
-    'margin:0 auto 8px'
+    'max-width:1280px',
+    'margin:0 auto 12px'
   ].join(';');
 }
 
 function applyCloseButtonStyle(element) {
-  element.style.cssText = [
-    'display:inline-flex',
-    'align-items:center',
-    'gap:8px',
-    'border:1px solid rgba(255,255,255,0.14)',
-    'border-radius:10px',
-    'background:rgba(11,14,19,0.6)',
-    'color:#f4f1eb',
-    'padding:9px 14px',
-    'font:600 14px/1 var(--font-body, system-ui, sans-serif)',
-    'cursor:pointer',
-    'backdrop-filter:blur(8px)',
-    'transition:background 0.15s ease,border-color 0.15s ease'
-  ].join(';');
+  element.classList.add('mp-overlay-button');
 }
 
 function applyLauncherStyle(element) {
-  element.style.cssText = [
-    'pointer-events:auto',
-    'display:none',
-    'align-items:center',
-    'gap:9px',
-    'border:1px solid rgba(255,255,255,.16)',
-    'border-radius:999px',
-    'background:#eb613f',
-    'color:white',
-    'padding:11px 16px',
-    'font:700 14px/1 var(--font-body,system-ui,sans-serif)',
-    'box-shadow:0 12px 36px rgba(0,0,0,.45)',
-    'cursor:pointer'
-  ].join(';');
+  element.classList.add('mp-overlay-launcher');
 }
 
 /**
@@ -107,34 +82,52 @@ export function openMultiplayerOverlay({
   overlay.setAttribute('aria-modal', 'true');
   overlay.setAttribute('aria-label', '双人联机跑团');
   applyOverlayStyle(overlay);
+  const style = document.createElement('style');
+  style.textContent = multiplayerOverlayStyles;
+  const safeArea = document.createElement('span');
+  safeArea.setAttribute('aria-hidden', 'true');
+  safeArea.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;width:0;height:0;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)';
 
   const toolbar = document.createElement('div');
+  toolbar.className = 'mp-overlay-toolbar';
+  toolbar.setAttribute('aria-label', '联机面板工具栏');
   applyToolbarStyle(toolbar);
+  const heading = document.createElement('span');
+  heading.className = 'mp-overlay-heading';
+  heading.innerHTML = `${icon('users', 16)}联机空间`;
   const dragHandle = document.createElement('button');
   dragHandle.type = 'button'; dragHandle.dataset.multiplayerDrag = '';
-  dragHandle.textContent = '⠿ 联机状态'; dragHandle.setAttribute('aria-label', '拖动联机悬浮窗');
+  dragHandle.innerHTML = '<svg class="mp-grip" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="5" cy="3" r="1"/><circle cx="11" cy="3" r="1"/><circle cx="5" cy="8" r="1"/><circle cx="11" cy="8" r="1"/><circle cx="5" cy="13" r="1"/><circle cx="11" cy="13" r="1"/></svg><span>联机状态</span>';
+  dragHandle.setAttribute('aria-label', '拖动联机悬浮窗');
+  dragHandle.title = '拖动移动位置 · 聚焦后可使用方向键';
   applyCloseButtonStyle(dragHandle);
-  dragHandle.style.cssText += ';flex:1;cursor:move;touch-action:none;user-select:none';
   const resizeHandle = document.createElement('button');
   resizeHandle.type = 'button'; resizeHandle.dataset.multiplayerResize = '';
-  resizeHandle.textContent = '↔'; resizeHandle.setAttribute('aria-label', '拖动调整联机悬浮窗大小');
-  resizeHandle.title = '拖动调整大小'; applyCloseButtonStyle(resizeHandle);
-  resizeHandle.style.cssText += ';cursor:nwse-resize;touch-action:none';
+  resizeHandle.innerHTML = icon('fullscreen', 16); resizeHandle.setAttribute('aria-label', '拖动调整联机悬浮窗大小');
+  resizeHandle.title = '拖动缩放 · 聚焦后可使用方向键'; applyCloseButtonStyle(resizeHandle);
+  resizeHandle.classList.add('mp-icon-button');
+  const resetButton = document.createElement('button');
+  resetButton.type = 'button'; resetButton.dataset.multiplayerReset = '';
+  resetButton.innerHTML = icon('refresh-cw', 15);
+  resetButton.setAttribute('aria-label', '重置联机悬浮窗位置与大小');
+  resetButton.title = '恢复默认位置与大小';
+  applyCloseButtonStyle(resetButton); resetButton.classList.add('mp-icon-button');
   const closeButton = document.createElement('button');
   closeButton.type = 'button';
+  closeButton.className = 'mp-overlay-close';
   closeButton.innerHTML = `${icon('close', 16)}关闭联机面板`;
   closeButton.setAttribute('aria-label', '关闭联机面板并断开实时连接');
   applyCloseButtonStyle(closeButton);
-  toolbar.append(dragHandle, resizeHandle, closeButton);
+  toolbar.append(heading, dragHandle, resizeHandle, resetButton, closeButton);
 
   const panel = document.createElement(PANEL_TAG);
-  panel.style.cssText = 'display:block;max-width:1480px;margin:0 auto 32px;';
+  panel.style.cssText = 'display:block;max-width:1280px;margin:0 auto 32px;';
   const launcher = document.createElement('button');
   launcher.type = 'button';
-  launcher.innerHTML = `${icon('users', 16)}联机状态`;
+  launcher.innerHTML = '<span class="mp-launcher-dot" aria-hidden="true"></span>联机状态';
   launcher.setAttribute('aria-label', '展开联机状态悬浮窗');
   applyLauncherStyle(launcher);
-  overlay.append(toolbar, panel, launcher);
+  overlay.append(style, safeArea, toolbar, panel, launcher);
 
   const controller = new AbortController();
   let closed = false;
@@ -148,17 +141,28 @@ export function openMultiplayerOverlay({
   } catch { /* The floating window also works without browser storage. */ }
   const compact = () => phase === 'active' && panel.dataset.activeLayout !== 'full';
   const clamp = (value, min, max) => Math.max(min, Math.min(Math.max(min, max), value));
+  const viewportBounds = () => {
+    const style = getComputedStyle(safeArea);
+    const viewport = globalThis.visualViewport;
+    const left = (viewport?.offsetLeft ?? 0) + Math.max(10, parseFloat(style.paddingLeft) || 0);
+    const top = (viewport?.offsetTop ?? 0) + Math.max(10, parseFloat(style.paddingTop) || 0);
+    const right = (viewport?.offsetLeft ?? 0) + (viewport?.width ?? innerWidth) - Math.max(10, parseFloat(style.paddingRight) || 0);
+    const bottom = (viewport?.offsetTop ?? 0) + (viewport?.height ?? innerHeight) - Math.max(10, parseFloat(style.paddingBottom) || 0);
+    return { left, top, right, bottom, width: Math.max(1, right-left), height: Math.max(1, bottom-top) };
+  };
   const place = () => {
     if (!compact()) return;
-    const width = Math.min(innerWidth - 20, clamp(layout.width, 280, 680));
-    const height = clamp(layout.height, 220, innerHeight - 20);
+    const bounds = viewportBounds();
+    const width = Math.min(bounds.width, clamp(layout.width, 280, 680));
+    const height = Math.min(bounds.height, clamp(layout.height, 220, bounds.height));
     overlay.style.inset = 'auto';
     overlay.style.width = minimized ? 'max-content' : `${width}px`;
     overlay.style.height = minimized ? 'auto' : `${height}px`;
-    overlay.style.maxWidth = 'calc(100vw - 20px)';
+    overlay.style.maxWidth = `${bounds.width}px`;
+    overlay.style.maxHeight = `${bounds.height}px`;
     const rect = overlay.getBoundingClientRect();
-    overlay.style.left = `${clamp(layout.left ?? innerWidth-width-22, 10, innerWidth-rect.width-10)}px`;
-    overlay.style.top = `${clamp(layout.top ?? innerHeight-height-22, 10, innerHeight-rect.height-10)}px`;
+    overlay.style.left = `${clamp(layout.left ?? bounds.right-width-12, bounds.left, bounds.right-rect.width)}px`;
+    overlay.style.top = `${clamp(layout.top ?? bounds.bottom-height-12, bounds.top, bounds.bottom-rect.height)}px`;
   };
   const remember = () => {
     try { globalThis.localStorage?.setItem(layoutKey, JSON.stringify(layout)); } catch { /* optional */ }
@@ -171,18 +175,39 @@ export function openMultiplayerOverlay({
     toolbar.style.display = minimized ? 'none' : 'flex';
     panel.style.display = minimized ? 'none' : 'block';
     launcher.style.display = minimized ? 'inline-flex' : 'none';
+    launcher.setAttribute('aria-expanded', String(expanded));
     place();
     if (expanded) closeButton.focus();
   };
 
+  // Keep the shared action composer usable when a moved window or a collapsed
+  // character sidebar puts Send underneath the floating panel.
+  const revealActionComposer = event => {
+    if (!compact() || minimized || !(event.target instanceof Element)) return;
+    const composer = event.target.closest('#chat-input-area .input-wrapper');
+    if (!composer) return;
+    const action = composer.getBoundingClientRect();
+    const floating = overlay.getBoundingClientRect();
+    if (floating.left < action.right && floating.right > action.left
+      && floating.top < action.bottom && floating.bottom > action.top) {
+      setExpanded(false);
+    }
+  };
+  document.addEventListener('focusin', revealActionComposer, { signal: controller.signal });
+  document.addEventListener('input', revealActionComposer, { signal: controller.signal });
+
   const applyMode = (nextPhase, activeLayout = 'compact') => {
+    const previousPhase = phase;
+    const previousPresentation = overlay.dataset.presentation;
     phase = nextPhase;
     const active = phase === 'active';
     const full = active && activeLayout === 'full';
-    dragHandle.style.display = resizeHandle.style.display = active && !full ? 'inline-flex' : 'none';
+    overlay.dataset.presentation = active && !full ? 'compact' : 'full';
+    heading.style.display = active && !full ? 'none' : 'flex';
+    dragHandle.style.display = resizeHandle.style.display = resetButton.style.display = active && !full ? 'inline-flex' : 'none';
     if (active && !full) {
       applyCompactOverlayStyle(overlay);
-      toolbar.style.cssText = 'pointer-events:auto;position:sticky;top:0;z-index:3;display:flex;gap:5px;background:#11151b;justify-content:flex-end;margin:0 0 7px;';
+      toolbar.style.cssText = 'pointer-events:auto;position:sticky;top:0;z-index:3;display:flex;background:var(--mp-card);justify-content:flex-end;margin:0 0 8px;';
       panel.style.cssText = 'pointer-events:auto;display:block;width:100%;margin:0;';
       closeButton.innerHTML = `${icon('chevron-down', 16)}收起`;
       closeButton.setAttribute('aria-label', '收起联机状态悬浮窗');
@@ -191,7 +216,7 @@ export function openMultiplayerOverlay({
     } else {
       applyOverlayStyle(overlay);
       applyToolbarStyle(toolbar);
-      panel.style.cssText = 'display:block;max-width:1480px;margin:0 auto 32px;';
+      panel.style.cssText = 'display:block;max-width:1280px;margin:0 auto 32px;';
       closeButton.innerHTML = active
         ? `${icon('chevron-down', 16)}返回悬浮窗`
         : `${icon('close', 16)}关闭联机面板`;
@@ -202,6 +227,8 @@ export function openMultiplayerOverlay({
       overlay.setAttribute('aria-modal', 'true');
     }
     setExpanded(!minimized);
+    if (overlay.dataset.presentation === 'full'
+      && (previousPhase !== phase || previousPresentation !== 'full')) overlay.scrollTop = 0;
   };
 
   const bindPointer = (element, resizing) => {
@@ -235,7 +262,13 @@ export function openMultiplayerOverlay({
     }, { signal: controller.signal });
   };
   bindPointer(dragHandle, false); bindPointer(resizeHandle, true);
+  resetButton.addEventListener('click', () => {
+    layout = { left: null, top: null, width: 410, height: 620 };
+    place(); remember();
+  }, { signal: controller.signal });
   globalThis.addEventListener('resize', place, { signal: controller.signal });
+  globalThis.visualViewport?.addEventListener('resize', place, { signal: controller.signal });
+  globalThis.visualViewport?.addEventListener('scroll', place, { signal: controller.signal });
 
   const destroy = ({ forgetSession = false, savedRoom = false } = {}) => {
     if (closed) return false;
@@ -311,9 +344,10 @@ export function openMultiplayerOverlay({
     const label = progress.tone === 'error' ? '联机 · 生成已暂停'
       : progress.running ? '联机 · 正在生成'
       : progress.tone === 'warning' ? '联机 · 状态待确认' : '联机状态';
-    launcher.style.background = progress.tone === 'error' ? '#b43838' : '#eb613f';
-    launcher.innerHTML = `${icon('users', 16)}${label}${unread && !unread.hidden
-      ? `<span style="display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#d9272e;color:#fff;font-size:11px">${unread.textContent}</span>`
+    launcher.dataset.tone = progress.tone;
+    launcher.dataset.running = String(progress.running);
+    launcher.innerHTML = `<span class="mp-launcher-dot" aria-hidden="true"></span>${label}${unread && !unread.hidden
+      ? `<span class="mp-unread">${unread.textContent}</span>`
       : ''}`;
     onStateChange(event.detail?.state ?? null, panel);
   }, { signal: controller.signal });

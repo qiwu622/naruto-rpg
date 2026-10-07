@@ -287,6 +287,7 @@ function Assert-PackageContents {
   $RequiredAssets = @(
     'static/index.html',
     'static/login.html',
+    'static/announcements.html',
     'static/js/app.js',
     'static/version.json',
     'static/js/data/generated/canon-runtime-data.js',

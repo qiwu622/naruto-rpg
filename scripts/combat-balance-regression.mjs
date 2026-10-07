@@ -55,7 +55,7 @@ test('v4 resources migrate losslessly into the v5 vitality and stamina model', (
   assert.equal(npc.体力, 90);
 });
 
-test('AI supplied NPC stats are clamped to the canonical rank benchmark', () => {
+test('NPC rank benchmarks do not truncate supplied stats; numeric domains still apply', () => {
   const card = normalizeNpcCombatStats({
     忍阶: '中忍',
     查克拉: 9999,
@@ -73,14 +73,14 @@ test('AI supplied NPC stats are clamped to the canonical rank benchmark', () => 
     幻术造诣: 999
   });
 
-  assert.equal(card.查克拉上限, 300);
-  assert.equal(card.生命力上限, 380);
-  assert.equal(card.体力上限, 340);
-  assert.equal(card.速度, 110);
-  assert.equal(card.精神力, 260);
-  assert.equal(card.精神力上限, 260);
-  assert.equal(card.幸运, 50);
-  assert.equal(card.忍术造诣, 75);
+  assert.equal(card.查克拉上限, 9999);
+  assert.equal(card.生命力上限, 9999);
+  assert.equal(card.体力上限, 9999);
+  assert.equal(card.速度, 9999);
+  assert.equal(card.精神力, 9999);
+  assert.equal(card.精神力上限, 9999);
+  assert.equal(card.幸运, 9999);
+  assert.equal(card.忍术造诣, 100);
   assert.equal(card.查克拉, card.查克拉上限);
   assert.equal(card.生命力, card.生命力上限);
   assert.equal(card.体力, card.体力上限);
@@ -231,7 +231,7 @@ test('relationship updates normalize new combat cards without regenerating old o
     npc: '测试中忍', affection_change: 1, reason: '完成一次对话'
   });
 
-  assert.equal(first.combat_stats.查克拉上限, 300);
+  assert.equal(first.combat_stats.查克拉上限, 5000);
   assert.equal(first.combat_stats['\u5fcd\u672f'][0]['\u6d88\u8017'], 28);
   assert.equal(first.combat_stats['\u5fcd\u672f'][0]['\u6570\u636e\u5e93ID'], 'JT-WATER-0043');
   assert.deepEqual(second.combat_stats, originalCard);

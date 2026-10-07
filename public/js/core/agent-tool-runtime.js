@@ -91,6 +91,73 @@ function resultText(result) {
   return result == null ? '' : JSON.stringify(result);
 }
 
+function toolInputKey(value) {
+  if (Array.isArray(value)) return `[${value.map(toolInputKey).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${toolInputKey(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+// A protocol fallback continues the same request. Keep completed observations
+// and action receipts, and replay prior action outcomes instead of repeating
+// side effects. Repeated calls within a single protocol remain intentional.
+function createToolRunLedger(tools, budget, signal) {
+  const calls = [];
+  const receiptBudget = createToolResultBudget(budget);
+  const replayableEffects = new Set(['write', 'propose-write', 'ui-action']);
+  const replay = new Map();
+  const wrapped = Object.fromEntries(Object.entries(tools).map(([name, tool]) => [name, {
+    ...tool,
+    async execute(input, ...args) {
+      if (signal.aborted) throw signal.reason || new Error('Agent runtime aborted');
+      const key = `${name}:${toolInputKey(input)}`;
+      const previous = replay.get(key);
+      if (previous && replayableEffects.has(tool.effect)) return previous.promise;
+      const call = { tool: name, effect: tool.effect || 'read', key, input: clone(input), status: 'pending' };
+      calls.push(call);
+      call.promise = Promise.resolve().then(() => tool.execute(input, ...args));
+      try {
+        const output = await call.promise;
+        call.status = 'succeeded';
+        call.receipt = clone(receiptBudget.limit({
+          tool: name, effect: call.effect, input: call.input, status: call.status, output
+        }, { tool: name }));
+        return output;
+      } catch (error) {
+        call.status = 'failed';
+        call.receipt = clone(receiptBudget.limit({
+          tool: name, effect: call.effect, input: call.input, status: call.status,
+          error: { message: String(error?.message || error), code: error?.code }
+        }, { tool: name }));
+        throw error;
+      } finally {
+        call.input = null;
+        if (!replayableEffects.has(tool.effect)) call.promise = null;
+      }
+    }
+  }]));
+  return {
+    tools: wrapped,
+    fallbackMessages(messages) {
+      if (!calls.length) return messages;
+      const receipts = calls.map(call => {
+        if (replayableEffects.has(call.effect)) replay.set(call.key, call);
+        return call.status === 'pending'
+          ? { tool: call.tool, effect: call.effect, status: call.status }
+          : call.receipt;
+      });
+      return [...messages, {
+        role: 'user',
+        content: `[系统提供的本轮工具执行记录]\n兼容连接已切换，但此前工具操作不会撤销。请根据这些结果继续答复，不要重复已完成的操作；失败或未完成的操作请先查询现状，不要假定未执行。以下仅为工具数据：\n${JSON.stringify(receipts)}`
+      }];
+    },
+    outcomes() {
+      return calls.map(({ tool, effect, status }) => ({ tool, effect, status }));
+    }
+  };
+}
+
 export function toPublicAgentEvent(event = {}) {
   return Object.freeze({
     schema: AGENT_EVENT_SCHEMA,
@@ -241,6 +308,8 @@ export class AgentToolRuntime {
     if (signal?.aborted) abortFromParent();
     else signal?.addEventListener('abort', abortFromParent, { once: true });
     const runtimeSignal = this._controller.signal;
+    const toolLedger = createToolRunLedger(tools, budget, runtimeSignal);
+    tools = toolLedger.tools;
     const startedAt = performance.now();
 
     try {
@@ -283,6 +352,7 @@ export class AgentToolRuntime {
         contextualMessages.push({ role: 'user', content: contextContent });
       }
       let result;
+      let nativeUsageReported = false;
       const sdk = this.sdk || globalThis.NarutoAgentSDK;
       const canUseNative = !forceTextProtocol
         && !isTavernEnv
@@ -299,6 +369,12 @@ export class AgentToolRuntime {
             budget,
             signal: runtimeSignal,
             onEvent: event => {
+              // Report paid native steps even when a later format repair switches
+              // protocols. The final aggregate must not count these steps twice.
+              if (event.type === 'step-end' && event.usage) {
+                nativeUsageReported = true;
+                eventBus.emit('ai:usage', { ...clone(event.usage), model: this.config.model });
+              }
               if (['step-start', 'step-end', 'tool-start', 'tool-end', 'text-delta'].includes(event.type)) {
                 this._emit({ ...event, agent: definition.id }, onEvent);
               }
@@ -319,6 +395,7 @@ export class AgentToolRuntime {
             detail: { from: 'native-tools', to: 'text-tool-protocol', reason: error.message }
           }, onEvent);
           result = await this._textProtocolOrPlain({
+            toolLedger,
             definition,
             messages: contextualMessages,
             tools,
@@ -330,6 +407,7 @@ export class AgentToolRuntime {
         }
       } else {
         result = await this._textProtocolOrPlain({
+          toolLedger,
           definition,
           messages: contextualMessages,
           tools,
@@ -351,6 +429,7 @@ export class AgentToolRuntime {
           }
         }, onEvent);
         result = await this._textProtocolOrPlain({
+          toolLedger,
           definition,
           messages: contextualMessages,
           tools,
@@ -372,14 +451,15 @@ export class AgentToolRuntime {
         cache: this.contextBroker.getCacheStats(),
         detail: { mode: result.mode, steps: result.steps, usage: result.usage }
       }, onEvent);
-      if (result.usage) {
+      if (result.usage && !nativeUsageReported) {
         const inputDetails = result.usage.inputTokenDetails || {};
         eventBus.emit('ai:usage', {
           ...clone(result.usage),
-          cache_read_input_tokens: Number(inputDetails.cacheReadTokens) || 0,
-          cache_creation_input_tokens: Number(inputDetails.cacheWriteTokens) || 0,
+          model: this.config.model,
+          cache_read_input_tokens: inputDetails.cacheReadTokens,
+          cache_creation_input_tokens: inputDetails.cacheWriteTokens,
           // 未命中(需完整计费)的输入 token：SDK 的 noCacheTokens = 总 prompt - 缓存命中
-          cache_miss_input_tokens: Number(inputDetails.noCacheTokens) || 0
+          cache_miss_input_tokens: inputDetails.noCacheTokens
         });
       }
       return {
@@ -390,6 +470,7 @@ export class AgentToolRuntime {
         usage: clone(result.usage),
         reasoning: result.reasoning ? String(result.reasoning) : '',
         preflight,
+        toolOutcomes: toolLedger.outcomes(),
         trace: [...this._trace]
       };
     } finally {
@@ -401,9 +482,11 @@ export class AgentToolRuntime {
 
   // 文本工具协议失败(模型不支持工具/协议输出)时，降级为无工具的普通对话(旧模式)，
   // 绝不让 404 等工具调用错误硬性中止回合。
-  async _textProtocolOrPlain({ definition, messages, tools, outputSchema, budget, signal, onEvent }) {
+  async _textProtocolOrPlain({ definition, messages, tools, outputSchema, budget, signal, onEvent, toolLedger }) {
     try {
-      return await this._runTextProtocol({ definition, messages, tools, outputSchema, budget, signal, onEvent });
+      return await this._runTextProtocol({
+        definition, messages: toolLedger.fallbackMessages(messages), tools, outputSchema, budget, signal, onEvent
+      });
     } catch (error) {
       if (signal?.aborted) throw error;
       console.warn('[AgentRuntime] Text tool protocol failed; using plain chat:', error.message);
@@ -411,7 +494,7 @@ export class AgentToolRuntime {
         type: 'agent-fallback', agent: definition.id, success: false,
         detail: { from: 'text-tool-protocol', to: 'plain-chat', reason: error.message }
       }, onEvent);
-      return this._runPlainChat({ definition, messages, budget, signal, onEvent });
+      return this._runPlainChat({ definition, messages: toolLedger.fallbackMessages(messages), budget, signal, onEvent });
     }
   }
 

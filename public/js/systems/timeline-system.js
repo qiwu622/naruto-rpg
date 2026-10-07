@@ -1,5 +1,7 @@
 import { stateManager } from '../core/state-manager.js';
 import { eventBus } from '../core/event-bus.js';
+import { normalizeTurnReceipt } from '../core/turn-receipt.js';
+import { prepareMemoryCorrection } from '../core/memory-corrections.js';
 import {
   assertTimelineSave,
   findForbiddenTimelineMedia,
@@ -381,10 +383,12 @@ class TimelineSystem {
     memorySummary = null,
     imageContract = null,
     shinobiDaily = null,
+    turnReceipt = null,
     continuityDelta = [],
     maintenance = null,
     expectedMaintenanceImpact = null
-  }) {
+  }, { validateCurrent = null } = {}) {
+    validateCurrent?.();
     if (maintenance !== null || expectedMaintenanceImpact !== null) {
       const error = new Error('createNode 不接受维护写入，请使用 createMaintenanceCheckpoint');
       error.code = 'TIMELINE_MAINTENANCE_REQUIRES_ATTACHMENT';
@@ -420,6 +424,7 @@ class TimelineSystem {
         player_input: truncate(cleanPlayerInput, 200),
         ai_response_summary: truncate(cleanAiResponse, 200),
         clean_response: cleanResponse || aiResponse || '',
+        turn_receipt: normalizeTurnReceipt(turnReceipt),
         shinobi_daily: shinobiDaily
           ? sanitizeTimelinePersistenceValue(shinobiDaily, `timeline_node.${nodeId}.shinobi_daily`)
           : null,
@@ -438,7 +443,8 @@ class TimelineSystem {
       };
       const branch = { id: 'branch_main', name: '主线', color: '#eb613f', description: '默认时间线', created_at: Date.now(), diverged_from: null, diverged_at_turn: null, head_node_id: nodeId, node_count: 1, is_active: true };
       const metaEntry = { key: 'root', value: { root_id: nodeId, current_id: nodeId, active_branch: 'branch_main', total_nodes: 1 } };
-      await this._commitInitialTimeline(node, branch, metaEntry);
+      await this._commitInitialTimeline(node, branch, metaEntry, { validateCurrent });
+      validateCurrent?.();
       const metaState = stateManager.getSub('_meta') || {};
       metaState.current_node_id = nodeId;
       metaState.active_branch = 'branch_main';
@@ -459,8 +465,10 @@ class TimelineSystem {
     const newBranchId = shouldCreateBranch ? generateId('branch') : null;
     const expectedBranchId = activeBranch || 'branch_main';
     const createdAt = Date.now();
-    await this._hydratePersistedNode(currentId);
+    await this._hydratePersistedNode(currentId, { validateCurrent });
+    validateCurrent?.();
     const transactionResult = await stateManager.dbMutateTimeline(({ nodes, branches, meta: storedMetaEntry }) => {
+      validateCurrent?.();
       if (!storedMetaEntry?.value) throw new Error('时间线元数据不存在，无法追加节点');
       const parentNode = nodes.find(candidate => candidate.id === currentId);
       if (!parentNode) throw new Error(`当前父节点不存在: ${currentId}`);
@@ -503,6 +511,7 @@ class TimelineSystem {
         player_input: truncate(cleanPlayerInput, 200),
         ai_response_summary: truncate(cleanAiResponse, 200),
         clean_response: cleanResponse || aiResponse || '',
+        turn_receipt: normalizeTurnReceipt(turnReceipt),
         shinobi_daily: shinobiDaily
           ? sanitizeTimelinePersistenceValue(shinobiDaily, `timeline_node.${nodeId}.shinobi_daily`)
           : null,
@@ -579,14 +588,17 @@ class TimelineSystem {
       };
     }, {
       nodeKeys: [currentId, nodeId],
-      branchKeys: shouldCreateBranch ? null : [expectedBranchId]
+      branchKeys: shouldCreateBranch ? null : [expectedBranchId],
+      validateCurrent
     });
+    validateCurrent?.();
     const { node, createdBranch, branchId } = transactionResult;
     if (createdBranch) {
       this._pendingBranchFrom = null;
       eventBus.emit('timeline:branch-created', createdBranch);
     }
 
+    validateCurrent?.();
     const metaState = stateManager.getSub('_meta') || {};
     metaState.current_node_id = nodeId;
     metaState.active_branch = branchId;
@@ -598,6 +610,73 @@ class TimelineSystem {
 
     this._maybeArchive().catch(err => console.warn('[Timeline] archive failed:', err.message));
     return node;
+  }
+
+  // A correction is a new restorable checkpoint, never an edit to a shared
+  // ancestor. It keeps the same story turn and does not duplicate chat history.
+  async commitMemoryCorrection(request = {}) {
+    await this._archiveQueue;
+    const initial = stateManager.snapshot();
+    const currentId = initial._meta?.current_node_id;
+    const activeBranch = initial._meta?.active_branch;
+    if (!currentId) throw new Error('请先开始剧情，再修订本分支的记忆');
+    const expected = request.expected;
+    if (expected && (expected.nodeId !== currentId || expected.branchId !== activeBranch
+      || expected.memory !== JSON.stringify(initial._memory))) {
+      throw new Error('记忆或时间线已变化，请刷新后再操作');
+    }
+    const initialText = JSON.stringify(initial);
+    const validateCurrent = () => {
+      if (JSON.stringify(stateManager.snapshot()) !== initialText) throw new Error('当前进度已变化，本次记忆修订未保存，请重试');
+    };
+    const corrected = prepareMemoryCorrection(initial, request);
+    const stored = await stateManager.dbGet('timeline_nodes', currentId);
+    const source = stored ? await this._hydrateNode(stored) : null;
+    if (!source) throw new Error('记忆所在的时间线节点不存在');
+    const history = await this._reconstructChatHistory(source);
+    const nodeId = generateNodeId(source.turn_number);
+    const forkId = generateId('branch');
+    const now = Date.now();
+    const result = await stateManager.dbMutateTimeline(({ nodes, branches, meta }) => {
+      validateCurrent();
+      if (meta?.value?.current_id !== currentId || meta.value.active_branch !== activeBranch) throw new Error('当前存档已变化，请重新修订');
+      const parent = nodes.find(node => node.id === currentId);
+      if (!sameTimelineNodeRead(stored, parent)) throw new Error('当前节点已更新，请重新修订');
+      const branch = branches.find(item => item.id === activeBranch);
+      if (!branch) throw new Error('当前线路不存在');
+      const fork = branch.head_node_id !== currentId || parent.branch_id !== activeBranch || parent.children_ids?.length > 0;
+      const branchId = fork ? forkId : activeBranch;
+      const anchor = remapNodeRuntimeBranch({
+        ...deepClone(source), id: nodeId, parent_id: currentId, children_ids: [],
+        depth: (parent.depth || 0) + 1, branch_anchor: true, player_input: '',
+        state_snapshot: this._buildNodeSnapshot(corrected, nodeId, activeBranch),
+        chat_history: history, chat_history_delta: [], continuity_delta: [],
+        maintenance_history: [], maintenance: null, memory_correction: true,
+        tags: ['记忆修订'], created_at: now, real_timestamp: now,
+        is_checkpoint: true, archived: false, archived_at: null, accessed_count: 0
+      }, branchId);
+      const updatedParent = { ...parent, children_ids: [...(parent.children_ids || []), nodeId] };
+      const nextBranch = fork ? {
+        id: branchId, name: 'IF线·记忆修订', description: '从历史节点修订记忆，原线路保留',
+        color: getNextBranchColor(), created_at: now, diverged_from: currentId,
+        diverged_at_turn: parent.turn_number, head_node_id: nodeId, node_count: 1, is_active: true
+      } : { ...branch, head_node_id: nodeId, node_count: branch.node_count + 1 };
+      return {
+        nodes: [updatedParent, anchor],
+        branches: fork ? [...branches.map(item => ({ ...item, is_active: false })), nextBranch] : [nextBranch],
+        meta: { ...meta, value: { ...meta.value, current_id: nodeId, active_branch: branchId, total_nodes: meta.value.total_nodes + 1 } },
+        result: { anchor, updatedParent, branch: nextBranch, fork, prepared: this._prepareNodeRestore(anchor) }
+      };
+    }, { nodeKeys: [currentId, nodeId], validateCurrent });
+    stateManager.commitPreparedRestore(result.prepared);
+    this._pendingBranchFrom = null;
+    this._nodeCache.set(nodeId, result.anchor);
+    this._nodeCache.set(currentId, result.updatedParent);
+    this._cacheTreeSummary();
+    if (result.fork) eventBus.emit('timeline:branch-created', result.branch);
+    eventBus.emit('timeline:node-created', result.anchor);
+    eventBus.emit('memory:corrected', { nodeId, action: request.action });
+    return result.anchor;
   }
 
   async createMaintenanceCheckpoint({
@@ -962,8 +1041,10 @@ class TimelineSystem {
     return { status: 'updated', nodeId, branchId };
   }
 
-  async _commitInitialTimeline(node, branch, metaEntry) {
+  async _commitInitialTimeline(node, branch, metaEntry, { validateCurrent = null } = {}) {
+    validateCurrent?.();
     return await stateManager.dbMutateTimeline(({ nodes, branches, meta }) => {
+      validateCurrent?.();
       if (meta || nodes.length > 0 || branches.length > 0) {
         throw new Error('时间线已经初始化，本次根节点创建请求已过期');
       }
@@ -973,7 +1054,7 @@ class TimelineSystem {
         meta: metaEntry,
         result: node
       };
-    });
+    }, { validateCurrent });
   }
 
   async _sanitizeStoredTimelineNodes() {
@@ -1848,14 +1929,18 @@ class TimelineSystem {
     return decompressTimelineNode(node);
   }
 
-  async _hydratePersistedNode(nodeId) {
+  async _hydratePersistedNode(nodeId, { validateCurrent = null } = {}) {
+    validateCurrent?.();
     const node = await stateManager.dbGet('timeline_nodes', nodeId);
+    validateCurrent?.();
     if (!node) return null;
     if (!isCompressedTimelineNode(node)) return node;
     const logical = await decompressTimelineNode(node);
+    validateCurrent?.();
     logical.archived = false;
     logical.archived_at = null;
     const written = await stateManager.dbMutateTimeline(({ nodes }) => {
+      validateCurrent?.();
       const live = nodes[0];
       if (!live) return { nodes: [], result: null };
       if (!isCompressedTimelineNode(live)) {
@@ -1871,7 +1956,8 @@ class TimelineSystem {
         archived_at: null
       };
       return { nodes: [next], result: next };
-    }, { nodeKeys: [nodeId], branchKeys: [] });
+    }, { nodeKeys: [nodeId], branchKeys: [], validateCurrent });
+    validateCurrent?.();
     if (!written) return null;
     this._nodeCache.set(written.id, written);
     return written;
@@ -1987,7 +2073,7 @@ class TimelineSystem {
     } catch { console.warn('[Timeline] Failed to cache tree summary'); }
   }
 
-  async getExportData({ includeArchive = false } = {}) {
+  async getExportData({ includeArchive = false, onProgress = () => {} } = {}) {
     // Export/cloud-save is an explicit consistency boundary. Flush both small
     // live image slices first so an export started immediately after a profile
     // edit cannot race the event-driven persistence listener.
@@ -1995,10 +2081,18 @@ class TimelineSystem {
       '_relationships',
       '_image_worldbook_overlay'
     ]);
-    const allNodes = await this.getAllNodes();
-    const logicalNodes = await Promise.all(allNodes.map(node => this._hydrateNode(node)));
-    const branches = await this.getAllBranches();
-    const persistedMetaEntry = await stateManager.dbGet('timeline_meta', 'root');
+    // Capture the graph and its saved position before yielding to decode work.
+    const [allNodes, branches, persistedMetaEntry] = await Promise.all([
+      this.getAllNodes(), this.getAllBranches(), stateManager.dbGet('timeline_meta', 'root')
+    ]);
+    const logicalNodes = [];
+    // Bound simultaneous gzip decoders and yield between batches so large
+    // archives can report progress without freezing the continuation dialog.
+    for (let index = 0; index < allNodes.length; index += 8) {
+      logicalNodes.push(...await Promise.all(allNodes.slice(index, index + 8).map(node => this._hydrateNode(node))));
+      onProgress(`正在读取完整时间线：${logicalNodes.length} / ${allNodes.length} 个节点…`);
+      if (index + 8 < allNodes.length) await new Promise(resolve => setTimeout(resolve, 0));
+    }
     const { meta: metaEntry, multiplayer } = splitPersistedTimelineMeta(persistedMetaEntry);
 
     const nodes = includeArchive

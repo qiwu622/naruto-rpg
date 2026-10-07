@@ -56,8 +56,17 @@ try {
     const panel = document.querySelector('game-modal')?.shadowRoot.querySelector('naruto-save-library');
     return panel && !panel.busy;
   });
-  const status = async text => { await ready(); assert.ok((await library.locator('#status').innerText()).includes(text), await library.locator('#status').innerText()); };
+  const status = async text => {
+    await page.waitForFunction(text => {
+      const panel = document.querySelector('game-modal')?.shadowRoot.querySelector('naruto-save-library');
+      return panel && !panel.busy && panel.shadowRoot.querySelector('#status')?.textContent.includes(text);
+    }, text);
+    assert.ok((await library.locator('#status').innerText()).includes(text), await library.locator('#status').innerText());
+  };
   await ready();
+  assert.deepEqual(await page.evaluate(async () => cloudSave.syncState.active), await page.evaluate(async () => ({ userId: 'cloud-test-a', saveKey: (await stateManager.dbGet('timeline_meta', 'root')).value.root_id })));
+  assert.match(await library.locator('#current-sync cloud-sync-status .message').innerText(), /已同步到云端/);
+  ok('the mounted current-save status follows the authenticated account and persisted timeline root');
   const defaultCloud = await page.evaluate(async () => {
     const saved = (await cloudSave.listSaves()).find(save => save.slot_name === '默认云存档');
     window.defaultCloudId = saved.id;
@@ -75,10 +84,26 @@ try {
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
   const localId = await page.evaluate(() => localEntry.id);
+  const localSync = library.locator(`[data-save-id="${localId}"] cloud-sync-status`);
+  await page.route('**/api/saves', route => route.request().method() === 'POST' ? route.abort('failed') : route.continue());
   await library.locator(`[data-save-id="${localId}"]`).getByRole('button', { name: '上传到云端', exact: true }).click();
   await page.locator('#cloud-name').fill('木叶完整档');
   await page.getByRole('button', { name: '上传', exact: true }).click();
-  await status('已上传');
+  await ready();
+  await localSync.getByRole('button', { name: '重试同步', exact: true }).waitFor();
+  assert.match(await localSync.locator('.message').innerText(), /本地已保存/);
+  assert.match(await library.locator('#current-sync cloud-sync-status .message').innerText(), /已同步到云端/);
+  assert.deepEqual(await localSync.evaluate(element => element.scope), { userId: 'cloud-test-a', saveKey: localId, enforceCurrent: false });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await localSync.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, 'sync-retry-mobile.png') });
+  assert.ok(await library.locator(`[data-save-id="${localId}"]`).evaluate(card => card.scrollWidth <= card.clientWidth + 1));
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.unroute('**/api/saves');
+  await localSync.getByRole('button', { name: '重试同步', exact: true }).click();
+  await status('云端同步已完成');
+  assert.match(await localSync.locator('.message').innerText(), /已同步到云端/);
+  ok('failed manual archive uploads have their own mounted retry control and do not replace current-game sync status');
   const cloud = await page.evaluate(async () => {
     window.cloudEntry = (await cloudSave.listSaves()).find(entry => entry.slot_name === '木叶完整档');
     return { entry: cloudEntry, data: personalSaveLibrary.normalize(await decodeTimelineSaveFile(await cloudSave.downloadSave(cloudEntry.id))) };
@@ -116,6 +141,10 @@ try {
   await card().getByRole('button', { name: '读取云档', exact: true }).click(); await library.waitFor({ state: 'detached' });
   assert.equal(await page.evaluate(() => stateManager.snapshot().marker), 'middle');
   assert.equal(await page.evaluate(async () => (await timelineSystem.getAllBranches()).length), 2);
+  assert.deepEqual(await page.evaluate(() => {
+    const binding = cloudSave._readBinding(cloudSave.syncState.active);
+    return { id: binding.id, revision: binding.revision };
+  }), { id: cloudId, revision: 1 });
   assert.ok(await page.evaluate(async () => {
     for (const entry of await localSaveLibrary.list(PERSONAL_SAVE_KIND)) {
       const pack = await localSaveLibrary.readPackage(entry.id, PERSONAL_SAVE_KIND);
@@ -169,10 +198,83 @@ try {
   assert.ok(await page.evaluate(async () => (await localSaveLibrary.list(PERSONAL_SAVE_KIND)).some(entry => entry.id === updatedLocal.id)));
   ok('delete supports cancel, refuses to remove an unbacked cloud save, and retains a local copy after successful deletion');
 
+  await page.evaluate(async () => {
+    cloudSave.bindSyncSave({ ...cloudSave.syncState.active, saveId: defaultCloudId, revision: 1, slotName: '默认云存档' });
+    const response = await fetch(`/api/saves/${defaultCloudId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slot_name: '另一台设备的进度', save_data: original, expected_revision: 1 }) });
+    if (!response.ok) throw new Error(await response.text());
+    try { await app._queueCloudSave(); throw new Error('expected conflict'); }
+    catch (error) { if (error.code !== 'SAVE_REVISION_CONFLICT') throw error; }
+  });
+  const currentSync = library.locator('#current-sync cloud-sync-status');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await currentSync.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, 'sync-conflict-mobile.png') });
+  assert.ok(await currentSync.evaluate(element => element.shadowRoot.querySelector('.status').scrollWidth <= element.clientWidth + 1));
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await currentSync.getByRole('button', { name: '保留双方副本', exact: true }).click();
+  await status('云端同步已完成');
+  assert.equal(await library.locator('[data-cloud-id]').count(), 2);
+  assert.match(await currentSync.locator('.message').innerText(), /已同步到云端/);
+  const copies = await page.evaluate(async () => {
+    const active = cloudSave._readBinding(cloudSave.syncState.active);
+    const originalCloud = await decodeTimelineSaveFile(await cloudSave.downloadSave(defaultCloudId));
+    const copy = await decodeTimelineSaveFile(await cloudSave.downloadSave(active.id));
+    const marker = data => data.nodes.find(node => node.id === data.meta.value.current_id).state_snapshot.marker;
+    return { originalId: defaultCloudId, copyId: active.id, originalMarker: marker(originalCloud), copyMarker: marker(copy) };
+  });
+  assert.notEqual(copies.originalId, copies.copyId);
+  assert.equal(copies.originalMarker, 'middle'); assert.equal(copies.copyMarker, 'updated-if');
+  ok('mounted conflict control preserves both real server copies, binds the new copy and refreshes the cloud list');
+
+  const triggerChecks = await page.evaluate(async () => {
+    const { aiClient } = await import('/js/core/ai-client.js');
+    const isConfigured = aiClient.isConfigured, schedule = cloudSave.scheduleQuickSave;
+    const beforeProcess = app.pipeline.process;
+    const calls = [];
+    aiClient.isConfigured = () => true;
+    cloudSave.scheduleQuickSave = async (_name, factory, scope) => { calls.push({ data: await factory(), scope }); return { id: 'captured-only' }; };
+    localStorage.setItem('naruto_auto_cloud_sync', 'true');
+    const settle = () => new Promise(resolve => setTimeout(resolve, 50));
+    try {
+      app.pipeline.process = async () => ({ cancelled: true });
+      await app._handleUserInput('取消的回合'); await settle();
+      const afterCancel = calls.length;
+      app.pipeline.process = async () => { eventBus.emit('pipeline:complete', { isPartial: true, timelineNodeId: null }); return { partialResponse: '未完成正文' }; };
+      await app._handleUserInput('中断的回合'); await settle();
+      const afterPartial = calls.length;
+      eventBus.emit('pipeline:complete', { timelineNodeId: 'not-persisted' }); await settle();
+      const afterMissing = calls.length;
+      const node = await timelineSystem.getCurrentNode();
+      eventBus.emit('pipeline:complete', { timelineNodeId: node.id, timelineError: '本地保存失败' }); await settle();
+      const afterFailure = calls.length;
+      eventBus.emit('pipeline:complete', { timelineNodeId: node.id }); await settle();
+      return { afterCancel, afterPartial, afterMissing, afterFailure, count: calls.length, root: calls[0]?.scope.saveKey, payloadRoot: calls[0]?.data.saveData.meta.value.root_id };
+    } finally {
+      localStorage.removeItem('naruto_auto_cloud_sync'); aiClient.isConfigured = isConfigured; cloudSave.scheduleQuickSave = schedule; app.pipeline.process = beforeProcess;
+    }
+  });
+  assert.deepEqual([triggerChecks.afterCancel, triggerChecks.afterPartial, triggerChecks.afterMissing, triggerChecks.afterFailure, triggerChecks.count], [0, 0, 0, 0, 1]);
+  assert.equal(triggerChecks.root, triggerChecks.payloadRoot);
+  ok('cancelled, partial and unpersisted turns never schedule cloud uploads; a persisted complete turn schedules one scoped snapshot');
+
+  await page.evaluate(async () => {
+    const imported = await personalSaveLibrary.importData(original, '同一根节点的本地导入');
+    await eventBus.request('app:timeline-import-file', { file: new File([JSON.stringify(original)], 'local-import.json', { type: 'application/json' }) });
+    await eventBus.request('app:load-personal-save', { id: imported.id });
+  });
+  assert.deepEqual(await page.evaluate(() => {
+    const binding = cloudSave._readBinding(cloudSave.syncState.active);
+    return { id: binding.id, forceNew: binding.forceNew, saveKey: cloudSave.syncState.active.saveKey };
+  }), { id: '', forceNew: true, saveKey: triggerChecks.root });
+  ok('loading a local import with the same timeline root clears the previous cloud binding');
+  await ready();
+  await library.getByRole('button', { name: '云端管理', exact: true }).click(); await ready();
+
   await context.addCookies([cookie('cloud-test-b')]);
   await library.getByRole('button', { name: '刷新', exact: true }).click(); await ready();
   assert.equal(await library.locator('[data-cloud-id]').count(), 0); assert.match(await library.locator('#current-info').innerText(), /云端测试 B/);
   assert.match(await library.locator('#current-info').innerText(), /0 KB/);
+  assert.equal(await page.evaluate(() => cloudSave.syncState.active.userId), 'cloud-test-b');
   await context.clearCookies();
   await library.getByRole('button', { name: '刷新', exact: true }).click(); await status('请先登录');
   assert.equal(await library.locator('[data-cloud-id]').count(), 0); assert.equal(page.url(), server.url + '/');

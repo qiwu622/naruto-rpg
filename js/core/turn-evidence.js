@@ -1,3 +1,4 @@
+import { projectNarrativeForMemory } from './narrative-memory.js';
 import {
   CANON_DATABASE,
   formatCanonDate,
@@ -219,7 +220,7 @@ export function projectUpdaterObligations(value = null) {
 export function buildUpdaterObligations({
   state = {}, narrativeResponse = '', evidencePacket = null, characterMemoryDelta = null
 } = {}) {
-  const narrative = String(narrativeResponse || '');
+  const narrative = projectNarrativeForMemory(narrativeResponse);
   const playerName = normalizeNpcIdentity(state?.['玩家·姓名']);
   const relationships = isRecord(state?._relationships) ? state._relationships : {};
   const candidates = new Map();
@@ -595,6 +596,10 @@ export class TurnEvidenceCompiler {
   compile({
     state = {}, userInput = '', nodeId = null, branchId = null, updateObligations = null
   } = {}) {
+    if (state._memory?.corrections?.length) state = {
+      ...state, _memory: projectCorrectedMemory(state._memory),
+      _continuity: projectCorrectedLedger(state._continuity, state._memory)
+    };
     const currentDate = currentDateOf(state);
     const plotContext = currentDate ? this.canonDatabase.getPlotDayContext({ state }) : null;
     const snapshotContext = currentDate ? this.canonDatabase.getYearSnapshotContext({ state }) : null;
@@ -781,3 +786,4 @@ export function renderEvidenceView(view, { stage = 'main' } = {}) {
 export const turnEvidenceCompiler = new TurnEvidenceCompiler();
 
 export default turnEvidenceCompiler;
+import { projectCorrectedLedger, projectCorrectedMemory } from './memory-corrections.js';

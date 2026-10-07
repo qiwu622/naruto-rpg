@@ -1,4 +1,5 @@
 import { AIClient } from './ai-client.js';
+import { inheritAPIAdaptation } from './deepseek-mode.js';
 import { eventBus } from './event-bus.js';
 import { publishPromptTrace } from './prompt-trace.js';
 import { parseShinobiDailyContract, SHINOBI_DAILY_REVIEW_PROMPT } from './shinobi-daily.js';
@@ -43,7 +44,7 @@ export function isNarrativeReviewEnabled(mainConfig = {}) {
 
 export function resolveNarrativeReviewApiConfig(mainConfig = {}) {
   const review = getNarrativeReviewConfig(mainConfig);
-  return {
+  return inheritAPIAdaptation(mainConfig, {
     ...mainConfig,
     ...review,
     backend: review.backend && review.backend !== 'inherit' ? review.backend : mainConfig.backend,
@@ -51,7 +52,7 @@ export function resolveNarrativeReviewApiConfig(mainConfig = {}) {
     apiKey: review.apiKey || mainConfig.apiKey,
     model: review.model || mainConfig.model,
     useProxy: mainConfig.useProxy !== false
-  };
+  });
 }
 
 function formatSourceMessages(sourceMessages = []) {
@@ -65,7 +66,7 @@ export function buildNarrativeReviewMessages({ sourceMessages = [], candidateRes
   const candidate = isNarrativeArtifact(candidateArtifact)
     ? candidateArtifact
     : createNarrativeArtifact(candidateResponse);
-  const candidateForReview = [candidate.displayText, renderNarrativeInstructions(candidate)]
+  const candidateForReview = [candidate.presentationText ?? candidate.displayText, renderNarrativeInstructions(candidate)]
     .filter(Boolean)
     .join('\n\n');
   const dailyReviewRule = candidate.instructions.some(block => block.tag === 'shinobi_daily')
@@ -81,6 +82,8 @@ export function buildNarrativeReviewMessages({ sourceMessages = [], candidateRes
 - 预训练污染：用模型记忆中的原作资料覆盖本项目世界书，或在世界书无证据时擅自补成确定事实。
 
 同时检查玩家代行、NPC越权、预设成功、凭空物品/忍术、关系速成、因果断裂、OOC、正文视角、结尾替玩家决定、结构标签与当前变量模式冲突。
+
+行动选项是尚未执行的建议，玩家输入只表达意图。只以正文实际发生的结果更新事实；保留选项的标签或明确的“[行动]”标记，不将未选分支改写成已经发生的事件。
 
 【强制工作方式】
 一、先针对这份具体草稿建立证据编号和候选问题位置。

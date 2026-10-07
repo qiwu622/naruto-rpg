@@ -5,6 +5,7 @@ import { WORLD_BOOK_ENTRIES } from '../data/worldbook/index.js';
 import { KNOWLEDGE_BASE } from '../data/knowledge-base.js';
 import { getMemoryConfig } from '../data/memory-config.js';
 import { createContinuityCasToken, isContinuityCasCurrent } from '../core/continuity-ledger.js';
+import { projectNarrativeForMemory } from '../core/narrative-memory.js';
 
 const KEEP_TURN_SUMMARIES_AFTER_COMPRESSION = 3;
 const TURN_SUMMARY_LIMIT = 900;
@@ -257,6 +258,7 @@ class MemorySystem {
   buildPromptContext(memory, opts = {}) {
     if (!memory) memory = stateManager.getSub('_memory');
     if (!memory) return '';
+    memory = projectCorrectedMemory(memory);
     const state = stateManager.get();
     const userInput = String(opts.userInput || '');
     const query = this._buildQueryPackage(state, userInput, memory);
@@ -267,8 +269,9 @@ class MemorySystem {
     const budget = isQuiet ? Math.floor(configuredBudget * 0.75) : configuredBudget;
     const parts = [];
     let used = 0;
-
     const push = (block) => { if (used + block.length > budget) return false; parts.push(block); used += block.length; return true; };
+    const corrections = buildMemoryCorrectionContext({ _memory: memory }, { maxChars: Math.min(2000, Math.floor(budget * 0.3)) });
+    if (corrections) push(corrections);
     const trimPush = (header, lines, limit) => {
       const body = lines.slice(0, limit).join('\n');
       if (body) push(`${header}\n${body}`);
@@ -383,6 +386,7 @@ class MemorySystem {
   /* ────────── 章节固化 ────────── */
 
   compressTurnSummaries(memory) {
+    this._refreshCorrectedSummaries(memory);
     const { chapterWindow } = getMemoryConfig();
     const lines = this._turnSummaryLines(memory.turn_summaries);
     const overflow = lines.slice(0, -KEEP_TURN_SUMMARIES_AFTER_COMPRESSION);
@@ -431,7 +435,7 @@ class MemorySystem {
   async _aiCompressPending(client) {
     const memory = this._loadMemory();
     const boundary = this._captureAsyncBoundary(memory);
-    const pending = memory._pendingCompressionText || '';
+    const pending = projectCorrectedMemory(memory)._pendingCompressionText || '';
     const chunk = pending.slice(0, COMPRESSION_INPUT_CHAR_LIMIT);
     if (chunk.trim().length < 200) return false;
 
@@ -448,7 +452,7 @@ class MemorySystem {
           console.warn('[MemorySystem] AI compression aborted: branch, node or memory changed during call');
           return false;
         }
-        const previous = current.compressed_summary || '';
+        const previous = projectCorrectedMemory(current).compressed_summary || '';
         const cleanSummary = summary.trim().replace(/^[阶段摘要AI摘要]*[:：\s]*/, '');
         current.compressed_summary = `${previous}\n[AI摘要] ${cleanSummary}`.slice(-COMPRESSED_SUMMARY_LIMIT);
         current._pendingCompressionText = pending.slice(chunk.length);
@@ -463,7 +467,7 @@ class MemorySystem {
 
   async _aiUpgradeChapter(client) {
     const memory = this._loadMemory();
-    const chapters = this._parseChapterData(memory.chapters);
+    const chapters = this._parseChapterData(projectCorrectedMemory(memory).chapters);
     const target = chapters.find(c => c.raw);
     if (!target) return false;
     const boundary = this._captureAsyncBoundary(memory);
@@ -498,7 +502,7 @@ class MemorySystem {
 
   async _aiUpgradeVolume(client) {
     const memory = this._loadMemory();
-    const volumes = this._parseChapterData(memory.volumes);
+    const volumes = this._parseChapterData(projectCorrectedMemory(memory).volumes);
     const target = volumes.find(v => v.raw);
     if (!target) return false;
     const boundary = this._captureAsyncBoundary(memory);
@@ -661,10 +665,11 @@ class MemorySystem {
       return false;
     }
 
-    return this._applyDeepConsolidate(parsed, fresh, currentTurn);
+    return this._applyDeepConsolidate(parsed, fresh, currentTurn, JSON.parse(payloadStr));
   }
 
   _buildDeepConsolidationPayload(memory, lastDeep) {
+    memory = projectCorrectedMemory(memory);
     const takeRecent = (items, budget) => {
       const selected = [];
       let used = 2;
@@ -684,7 +689,7 @@ class MemorySystem {
     const payload = {
       facts: takeRecent(lines(memory.facts), 3200),
       npc_notes: takeRecent(lines(memory.npc_notes), 2200),
-      npc_history_buffer: String(memory._relationship_buffer || '').slice(-1600),
+      npc_history_buffer: takeRecent(lines(memory._relationship_buffer), 1600).join('\n'),
       clues: takeRecent(lines(memory.clues), 1200),
       pins: takeRecent(lines(memory.pins), 900),
       events: takeRecent(lines(memory.important_events), 1000),
@@ -696,7 +701,7 @@ class MemorySystem {
       const field = arrays.sort((a, b) => JSON.stringify(payload[b]).length - JSON.stringify(payload[a]).length)
         .find(key => payload[key].length);
       if (field) payload[field].shift();
-      else if (payload.npc_history_buffer) payload.npc_history_buffer = payload.npc_history_buffer.slice(200);
+      else if (payload.npc_history_buffer) payload.npc_history_buffer = payload.npc_history_buffer.split('\n').slice(1).join('\n');
       else break;
       encoded = JSON.stringify(payload);
     }
@@ -711,13 +716,14 @@ class MemorySystem {
 
 【任务】重组并精简以下 ${lastDeep}-${currentTurn} 回合的动态记忆,消除重复、合并碎片、结算已解线索,输出结构化 JSON。
 
-【绝对铁律 - 违反即失败】
+【整理原则】
 1. 零虚构: 只能重组/合并/删减输入中已有的条目,严禁添加任何输入未出现的 NPC 名、地点、数值、事件。
 2. 保留回合锚点: 合并事实时,保留最早出现的 #回合号 前缀(如 "#42 卡卡西教我千鸟")。
 3. 矛盾处理: 两条记录冲突时,保留回合号更大者;在该条目末尾附 " (曾记载: <旧条目摘要>)"。
-4. 数量硬限制: facts ≤ 40 条;npc_digest 每人 ≤ 80 字简史 + ≤ 40 字近况;resolved_clues 须附结算依据。
+4. 建议控制在 facts ≤ 40 条;npc_digest 每人 ≤ 80 字简史 + ≤ 40 字近况;resolved_clues 附结算依据。
 5. 已解线索: clues 中 status=已解/已废弃 的,移入 resolved_clues 并附一句话结算说明。
 6. pins 只保留仍有行动意义者(进行中任务、未解悬念),已完结任务相关 pin 删除。
+7. 输入是按预算选取的部分记忆。只整理实际提供的条目；NPC 未提供可靠摘要时省略该角色，不清空它的历史。行动选项与未来计划不代表已经发生。
 
 【输出协议 - 严格遵守】
 只输出一个 JSON 对象,不加任何前后文字、解释、markdown 围栏。
@@ -752,10 +758,15 @@ class MemorySystem {
     return null;
   }
 
-  _applyDeepConsolidate(parsed, memory, currentTurn) {
+  _applyDeepConsolidate(parsed, memory, currentTurn, reviewed = {}) {
     let changed = false;
+    const lines = value => String(value || '').split('\n').filter(Boolean);
+    const replaceReviewed = (field, input, output) => {
+      const seen = new Set(input || []);
+      memory[field] = [...new Set([...lines(memory[field]).filter(line => !seen.has(line)), ...output])].join('\n');
+    };
     if (Array.isArray(parsed.facts) && parsed.facts.length && parsed.facts.length <= 50) {
-      memory.facts = parsed.facts.slice(0, 40).map(s => String(s).slice(0, 180)).join('\n');
+      replaceReviewed('facts', reviewed.facts, parsed.facts.slice(0, 40).map(s => this._singleLine(s).slice(0, 180)).filter(Boolean));
       this._syncLineMeta(memory, 'facts');
       changed = true;
     }
@@ -764,30 +775,56 @@ class MemorySystem {
       // 拆分: history 部分写入持久化的 relationship_history, recent 写入 npc_notes
       const npcLines = [];
       const relHist = {};
+      const npcName = line => String(line).split(': ')[0];
+      const reviewedNotes = reviewed.npc_notes || [];
+      const reviewedBuffer = lines(reviewed.npc_history_buffer);
+      const reviewedNames = new Set([...reviewedNotes, ...reviewedBuffer].map(npcName));
+      const summarizedNames = new Set();
       for (const [name, data] of Object.entries(npcDigest)) {
+        if (!reviewedNames.has(name)) continue;
         const hist = String(data?.history || '').slice(0, 120);
         const recent = String(data?.recent || '').slice(0, 40);
         if (hist) relHist[name] = { summary: hist, updated: Date.now() };
-        if (hist || recent) npcLines.push(`${name}: ${[hist, recent].filter(Boolean).join(' | ')}`);
+        if (hist || recent) {
+          summarizedNames.add(name);
+          npcLines.push(`${name}: ${[hist, recent].filter(Boolean).join(' | ')}`);
+        }
       }
-      if (npcLines.length) { memory.npc_notes = npcLines.slice(0, 60).join('\n'); changed = true; }
+      if (npcLines.length) {
+        replaceReviewed('npc_notes', reviewedNotes.filter(line => summarizedNames.has(npcName(line))), npcLines);
+        changed = true;
+      }
       if (Object.keys(relHist).length) {
         let existing = {};
         try { existing = JSON.parse(memory.relationship_history || '{}'); } catch {}
-        Object.assign(existing, relHist);
+        for (const [name, entry] of Object.entries(relHist)) {
+          const previous = existing[name]?.summary || '';
+          // Earlier relationship histories were not included in this request.
+          // Keep them when storing the newly summarized slice.
+          existing[name] = { ...entry, summary: previous && !previous.includes(entry.summary)
+            ? `${previous}\n${entry.summary}` : (previous || entry.summary) };
+        }
         memory.relationship_history = JSON.stringify(existing);
         changed = true;
       }
-      memory._relationship_buffer = '';
+      const consumedBuffer = new Set(reviewedBuffer.filter(line => relHist[npcName(line)]));
+      if (consumedBuffer.size) {
+        memory._relationship_buffer = lines(memory._relationship_buffer).filter(line => !consumedBuffer.has(line)).join('\n');
+        changed = true;
+      }
     }
     if (Array.isArray(parsed.resolved_clues) && parsed.resolved_clues.length) {
       const existingClues = memory.clues ? memory.clues.split('\n').filter(Boolean) : [];
-      const resolvedTitles = new Set(parsed.resolved_clues.map(c => String(c?.title || '')));
+      const reviewedClueTitles = new Set((reviewed.clues || []).flatMap(line => {
+        try { return [JSON.parse(line).title]; } catch { return []; }
+      }));
+      const resolved = parsed.resolved_clues.filter(clue => reviewedClueTitles.has(clue?.title));
+      const resolvedTitles = new Set(resolved.map(c => String(c?.title || '')));
       const kept = existingClues.filter(line => {
         try { const c = JSON.parse(line); return !resolvedTitles.has(c.title); } catch { return true; }
       });
       memory.clues = kept.join('\n');
-      for (const c of parsed.resolved_clues) {
+      for (const c of resolved) {
         const title = String(c?.title || '线索');
         const resolution = String(c?.resolution || '');
         memory.important_events += `\n${this._timeLabel()} 线索结算: ${title}${resolution ? ' — ' + resolution : ''}`;
@@ -796,7 +833,8 @@ class MemorySystem {
       changed = true;
     }
     if (Array.isArray(parsed.pins) && parsed.pins.length <= 10) {
-      memory.pins = parsed.pins.slice(0, 8).map(s => String(s).slice(0, 180)).join('\n');
+      const unseenPins = lines(memory.pins).filter(line => !(reviewed.pins || []).includes(line));
+      replaceReviewed('pins', reviewed.pins, parsed.pins.slice(0, Math.max(0, 8 - unseenPins.length)).map(s => this._singleLine(s).slice(0, 180)).filter(Boolean));
       changed = true;
     }
     if (parsed.era_note) {
@@ -824,6 +862,7 @@ class MemorySystem {
       return stateManager.getSub('_memory') || {};
     }
     const memory = this._loadMemory();
+    this._refreshCorrectedSummaries(memory);
 
     this._appendLines(memory, 'facts', Array.isArray(update.facts) ? update.facts : []);
     this._appendLines(memory, 'long_term', Array.isArray(update.add) ? update.add : [], 60);
@@ -871,6 +910,7 @@ class MemorySystem {
 
   rememberRecentTurn(userInput, aiResponse) {
     const memory = this._loadMemory();
+    this._refreshCorrectedSummaries(memory);
     const summary = this.buildFallbackSummary(userInput, aiResponse, { includePrevious: false });
     memory.recent_summary = this._appendRollingSummary(memory.recent_summary || '', summary);
     this.recordTurnSummary(memory, { userInput, aiResponse, summary, source: 'local' });
@@ -883,13 +923,12 @@ class MemorySystem {
   }
 
   buildFallbackSummary(userInput, aiResponse, { includePrevious = true } = {}) {
-    const memory = stateManager.getSub('_memory') || {};
+    const memory = projectCorrectedMemory(stateManager.getSub('_memory'));
     const previous = includePrevious ? (memory.recent_summary || '') : '';
-    const safeAi = String(aiResponse || '').slice(0, 4000);
-    const clean = safeAi.replace(/<[^>]*>[\s\S]*?(?:<\/[^>]+>|$)/g, '').replace(/\s+/g, ' ').slice(0, 520);
+    const clean = projectNarrativeForMemory(aiResponse).replace(/\s+/g, ' ').slice(0, 520);
     const input = String(userInput || '').replace(/\s+/g, ' ').trim().slice(0, 220);
     const turn = [
-      `玩家行动: ${input || '本回合未记录明确输入'}`,
+      `玩家意图（是否实现以剧情结果为准）: ${input || '本回合未记录明确输入'}`,
       `剧情结果: ${clean || 'AI回复未留下可提取正文'}`,
       '延续要点: 下回合必须承接玩家刚才的选择、现场人物态度、已经暴露或尚未确认的线索，不要把本回合结果重置或遗忘。'
     ].join(' ');
@@ -897,7 +936,8 @@ class MemorySystem {
   }
 
   recordTurnSummary(memory, { userInput = '', aiResponse = '', summary = '', source = 'local', tags = [] } = {}) {
-    const text = this._singleLine(String(summary || '').trim() || this.buildFallbackSummary(userInput, aiResponse, { includePrevious: false }));
+    this._refreshCorrectedSummaries(memory);
+    const text = this._singleLine(projectNarrativeForMemory(summary) || this.buildFallbackSummary(userInput, aiResponse, { includePrevious: false }));
     if (!text) return;
     const turn = Number(stateManager.get('系统·回合数')) || 0;
     const entry = {
@@ -990,10 +1030,22 @@ class MemorySystem {
 
   /* ────────── 持久化 ────────── */
 
+  _refreshCorrectedSummaries(memory) {
+    if (!memory?.corrections?.length) return;
+    const effective = projectCorrectedMemory(memory);
+    // Never mix an invalidated derived summary into a new summary, which would
+    // give the same stale story a new fingerprint. Raw facts remain undoable.
+    for (const field of ['recent_summary', 'turn_summaries', 'compressed_summary', 'chapters', 'volumes',
+      'chapter_buffer', '_relationship_buffer', 'relationship_history', '_pendingCompressionText']) {
+      if (Object.hasOwn(effective, field)) memory[field] = effective[field];
+    }
+  }
+
   _loadMemory() {
     const raw = stateManager.getSub('_memory');
     if (!raw) return this._emptyMemory();
     return {
+      ...(Array.isArray(raw.corrections) ? { corrections: raw.corrections } : {}),
       pins: raw.pins || '',
       facts: raw.facts || '',
       clues: raw.clues || '',
@@ -1035,6 +1087,7 @@ class MemorySystem {
 
   _saveMemory(memory) {
     stateManager.setSub('_memory', {
+      ...(Array.isArray(memory.corrections) ? { corrections: memory.corrections } : {}),
       pins: memory.pins || '',
       facts: memory.facts || '',
       clues: memory.clues || '',
@@ -1301,3 +1354,4 @@ class MemorySystem {
 
 export const memorySystem = new MemorySystem();
 export default memorySystem;
+import { projectCorrectedMemory, buildMemoryCorrectionContext } from '../core/memory-corrections.js';

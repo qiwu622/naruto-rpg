@@ -3,6 +3,8 @@ import { eventBus } from '../core/event-bus.js';
 import { stateManager } from '../core/state-manager.js';
 import { escAttr } from '../utils/format.js';
 import { bindCustomSelects, refreshCustomSelect } from './custom-select.js';
+import { DEEPSEEK_MODEL, DEEPSEEK_URL } from '../core/deepseek-mode.js';
+import { getLastAIUsageReport } from '../core/ai-usage-meter.js';
 import {
   listApiSchemes,
   getApiScheme,
@@ -31,6 +33,30 @@ export class ApiConfigForm extends HTMLElement {
     this._bindEvents();
     bindCustomSelects(this.shadowRoot);
     if (this._showSchemes) this._loadSchemes();
+    this._syncAdaptationControls();
+    this._updateUsage();
+    this._offUsage?.();
+    this._offUsage = eventBus.on('ai:usage', () => this._updateUsage());
+  }
+
+  disconnectedCallback() { this._offUsage?.(); this._offUsage = null; }
+
+  _updateUsage() {
+    const node = this.shadowRoot.querySelector('#settings-api-usage');
+    if (node) node.textContent = getLastAIUsageReport() || '尚无用量报告。生成后显示 API 返回的输入、输出、思考和缓存用量。';
+  }
+
+  _syncAdaptationControls() {
+    const root = this.shadowRoot;
+    const backend = root.querySelector('#settings-api-backend')?.value;
+    const select = root.querySelector('#settings-api-adaptation');
+    const unsupported = ['tavern', 'claude'].includes(backend);
+    if (select) {
+      select.disabled = unsupported;
+      refreshCustomSelect(select);
+    }
+    const panel = root.querySelector('#settings-deepseek-options');
+    if (panel) panel.hidden = unsupported || select?.value !== 'deepseek';
   }
 
   _render() {
@@ -41,6 +67,9 @@ export class ApiConfigForm extends HTMLElement {
       <style>
         :host { display: block; width: 100%; }
         .settings-form { display: grid; gap: 20px; text-align: left; }
+        [hidden] { display: none !important; }
+        .ns-select-wrapper:has(select:disabled) { opacity: .45; pointer-events: none; }
+        .usage-report { overflow-wrap: anywhere; }
         .settings-row { display: grid; gap: 8px; }
         .settings-row label { color: #c69c6d; font-size: 12px; letter-spacing: .08em; font-weight: 500; text-transform: uppercase; }
         .settings-input, .settings-select {
@@ -135,7 +164,31 @@ export class ApiConfigForm extends HTMLElement {
             ${this._option('custom', '自定义兼容', backend)}
           </select>
         </div>
-        
+        <div class="settings-row">
+          <label for="settings-api-adaptation">适配模式</label>
+          <select class="settings-select" id="settings-api-adaptation">
+            ${this._option('standard', '通用兼容', config.adaptationMode || 'standard')}
+            ${this._option('deepseek', 'DeepSeek 专用 · 缓存优化', config.adaptationMode)}
+          </select>
+          <div class="settings-hint">DeepSeek 官方或兼容中转可选择专用模式；Claude 与酒馆沿用各自协议。</div>
+        </div>
+        <div class="settings-subcard" id="settings-deepseek-options" hidden>
+          <div class="settings-row">
+            <label for="settings-deepseek-thinking">思考档位</label>
+            <select class="settings-select" id="settings-deepseek-thinking">
+              ${this._option('disabled', '关闭思考 · 日常叙事省费', config.deepseekThinking || 'disabled')}
+              ${this._option('low', '低 · 轻量推理', config.deepseekThinking)}
+              ${this._option('high', '高 · 复杂剧情', config.deepseekThinking)}
+              ${this._option('max', '最高 · 更多思考开销', config.deepseekThinking)}
+            </select>
+          </div>
+          <div class="settings-hint">固定规则置前，当前事实与记忆置后；保留预设和正文篇幅。思考越多，输出开销通常越高。缓存由服务端自动命中，不保证每次命中。普通正文请求若无有效回复，不自动重发；Agent 修复流程保持原设置。</div>
+          <button class="settings-fetch" type="button" id="settings-deepseek-official">填入官方地址与 Flash 模型</button>
+        </div>
+        <div class="settings-row">
+          <label>最近用量报告</label>
+          <div class="settings-hint usage-report" id="settings-api-usage" role="status"></div>
+        </div>
         <div class="settings-row">
           <label class="settings-check" style="margin-top: 8px;">
             <input type="checkbox" id="settings-disable-streaming" ${config.disableStreaming ? 'checked' : ''} /> 
@@ -157,6 +210,17 @@ export class ApiConfigForm extends HTMLElement {
   }
 
   _bindEvents() {
+    this.shadowRoot.querySelector('#settings-api-backend')?.addEventListener('change', () => this._syncAdaptationControls());
+    this.shadowRoot.querySelector('#settings-api-adaptation')?.addEventListener('change', () => this._syncAdaptationControls());
+    this.shadowRoot.querySelector('#settings-deepseek-official')?.addEventListener('click', () => {
+      this.shadowRoot.querySelector('#settings-api-url').value = DEEPSEEK_URL;
+      this.shadowRoot.querySelector('#settings-api-model').value = DEEPSEEK_MODEL;
+      const backend = this.shadowRoot.querySelector('#settings-api-backend');
+      backend.value = 'deepseek';
+      refreshCustomSelect(backend);
+      this._syncAdaptationControls();
+      this.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+    });
     // ── Helper: populate a model-list div with fetched models ──
     const populateList = (listEl, models, inputEl, statusEl) => {
       if (!listEl) return;
@@ -295,6 +359,8 @@ export class ApiConfigForm extends HTMLElement {
       apiKey: scheme.apiKey || '',
       model: scheme.model,
       disableStreaming: Boolean(scheme.disableStreaming),
+      adaptationMode: scheme.adaptationMode || 'standard',
+      deepseekThinking: scheme.deepseekThinking || 'disabled',
       variableUpdater: current.variableUpdater,
       narrativeReview: current.narrativeReview,
       aiCallPolicy: current.aiCallPolicy
@@ -337,7 +403,9 @@ export class ApiConfigForm extends HTMLElement {
       apiKey: config.apiKey,
       model: config.model,
       backend: config.backend,
-      disableStreaming: config.disableStreaming
+      disableStreaming: config.disableStreaming,
+      adaptationMode: config.adaptationMode,
+      deepseekThinking: config.deepseekThinking
     });
     if (!id) {
       eventBus.emit('app:toast', '方案保存失败');
@@ -389,6 +457,14 @@ export class ApiConfigForm extends HTMLElement {
       refreshCustomSelect(backend);
     }
     if (streaming) streaming.checked = Boolean(config.disableStreaming);
+    for (const [selector, value] of [
+      ['#settings-api-adaptation', config.adaptationMode || 'standard'],
+      ['#settings-deepseek-thinking', config.deepseekThinking || 'disabled']
+    ]) {
+      const select = root.querySelector(selector);
+      if (select) { select.value = value; refreshCustomSelect(select); }
+    }
+    this._syncAdaptationControls();
   }
 
   getConfig(allowEmptyModel = false) {
@@ -399,6 +475,8 @@ export class ApiConfigForm extends HTMLElement {
     const model = root.querySelector('#settings-api-model')?.value.trim();
     const backend = root.querySelector('#settings-api-backend')?.value;
     const preservedOptionalConfig = {
+      adaptationMode: ['claude', 'tavern'].includes(backend) ? 'standard' : (root.querySelector('#settings-api-adaptation')?.value || 'standard'),
+      deepseekThinking: root.querySelector('#settings-deepseek-thinking')?.value || 'disabled',
       variableUpdater: this._config.variableUpdater,
       narrativeReview: this._config.narrativeReview,
       aiCallPolicy: this._config.aiCallPolicy

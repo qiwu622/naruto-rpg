@@ -50,7 +50,7 @@ public class NativeRuntimeTest {
                         assertTrue(runtime.getBoolean("native"));
                         assertTrue("Native file bridge is missing", runtime.getBoolean("files"));
                         assertTrue("Native streaming bridge is missing", runtime.getBoolean("http"));
-                        assertFalse("Server multiplayer must stay out of local mode", runtime.getBoolean("remote"));
+                        assertTrue("Shared multiplayer entry must be available in this release", runtime.getBoolean("remote"));
                         assertFalse("Web service workers must not cache old APK assets", runtime.getBoolean("sw"));
                         instrumentation.runOnMainSync(() -> {
                             View decor = activity.getWindow().getDecorView();

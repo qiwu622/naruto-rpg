@@ -126,7 +126,7 @@ await test('continuity updater receives updater evidence rather than writer evid
     }
   });
   const messages = runner._buildMessages('continuity-updater', agentManifestModule.AGENT_MANIFESTS['continuity-updater'], {
-    state: {}, userInput: '继续', taskPrompt: '更新连续性', extraContext: {}
+    state: { _ui: { settings: { tacticalCombat: true } } }, userInput: '继续', taskPrompt: '更新连续性', extraContext: {}
   });
   assert.equal(requestedAudience, 'updater');
   const prompt = messages.map(message => message.content).join('\n');

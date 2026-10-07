@@ -1,5 +1,6 @@
 import { timelineSystem } from '../systems/timeline-system.js';
 import { assertTimelineSave } from './timeline-save-schema.js';
+import { buildContinuationCopy, continuationSaveScope } from './continuation-save.js';
 import {
   localSaveLibrary, PERSONAL_SAVE_KIND, SAVE_PACKAGE_SCHEMA,
   cleanSaveData, createSavePackage, validateSavePackage
@@ -46,6 +47,7 @@ export class PersonalSaveLibrary {
       turn: current?.turn_number ?? 0, character: name,
       location: snapshot.world_state?.current_location || snapshot['世界·地点'] || '',
       nodeCount: payload.nodes.length,
+      continuation: continuationSaveScope(payload),
       branchCount: payload.branches.filter(branch => branch.id !== 'branch_main').length,
       branchName: payload.branches.find(branch => branch.id === payload.meta.value.active_branch)?.name || '主线',
       gameTime: current?.game_time || '', summary: String(current?.summary || '').slice(0, 220)
@@ -56,6 +58,29 @@ export class PersonalSaveLibrary {
     const data = await this.timeline.getExportData({ includeArchive: true });
     if (!data.nodes?.length) return null;
     return this.store(data, { label, reason });
+  }
+
+  async createContinuation({ sourceId = '', keepTurns = 50, label = '', onProgress = () => {} } = {}) {
+    return this.exclusive(async () => {
+      let data, source;
+      if (sourceId) {
+        onProgress('正在读取并校验原存档…');
+        source = await this.library.get(sourceId, PERSONAL_SAVE_KIND);
+        data = this.normalize((await this.library.readPackage(sourceId, PERSONAL_SAVE_KIND)).payload);
+      } else {
+        onProgress('正在保存当前完整时间线与 IF 线…');
+        data = await this.timeline.getExportData({ includeArchive: true, onProgress });
+        if (!data.nodes?.length) throw new Error('当前还没有可续玩的个人进度');
+        // The original must commit before producing a reduced copy. Disk or
+        // validation failures propagate and leave the working game untouched.
+        source = await this.store(data, { reason: 'before-continuation' });
+        data = this.normalize(data);
+      }
+      onProgress('正在保留近期正文、回退状态与历史记忆…');
+      const copy = buildContinuationCopy(data, { keepTurns, sourceId: source.id, sourceLabel: source.label });
+      const entry = await this.store(copy, { label: label || `${source.label} · 轻量续玩`, reason: 'continuation' });
+      return { entry, source };
+    });
   }
 
   async importData(data, label = '') {

@@ -17,13 +17,16 @@ function assertCompressionMode(compression) {
   }
 }
 
-function *serializeTimelineChunks(data) {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+function *serializeTimelineChunks(data, visiting = new WeakSet()) {
+  if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.toJSON === 'function'
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(data))) {
     const text = JSON.stringify(data);
     if (text === undefined) throw new Error('存档没有可序列化的内容');
     yield text;
     return;
   }
+  if (visiting.has(data)) throw new Error('存档包含循环引用，无法导出');
+  visiting.add(data);
   yield '{';
   let wroteField = false;
   for (const [key, value] of Object.entries(data)) {
@@ -32,9 +35,9 @@ function *serializeTimelineChunks(data) {
     wroteField = true;
     yield `${JSON.stringify(key)}:`;
     if (!Array.isArray(value)) {
-      const text = JSON.stringify(value);
-      if (text === undefined) throw new Error(`字段 ${key} 没有可序列化的内容`);
-      yield text;
+      // Save packages wrap the timeline in `payload`. Traverse that object too,
+      // rather than creating a second giant string of its entire node history.
+      yield* serializeTimelineChunks(value, visiting);
       continue;
     }
     yield '[';
@@ -46,6 +49,7 @@ function *serializeTimelineChunks(data) {
     yield ']';
   }
   yield '}';
+  visiting.delete(data);
 }
 
 function createUtf8Stream(data) {

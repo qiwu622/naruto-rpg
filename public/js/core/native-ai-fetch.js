@@ -7,6 +7,14 @@ function abortError(reason) {
 /** Keep the shared AI parsers/SDK; adapt only Android's HTTP byte transport. */
 export async function fetchAI(input, init = {}) {
   if (!isNativeAndroidApp()) return globalThis.fetch(input, init);
+  return nativeFetch(input, init);
+}
+
+export async function fetchNativeCloud(input, init = {}, { anonymous = false } = {}) {
+  return nativeFetch(input, init, { cloud: true, anonymous });
+}
+
+async function nativeFetch(input, init, cloudOptions = null) {
   const bridge = globalThis.Capacitor;
   const plugin = typeof bridge?.registerPlugin === 'function'
     ? bridge.registerPlugin('NarutoHttp') : bridge?.Plugins?.NarutoHttp;
@@ -14,12 +22,33 @@ export async function fetchAI(input, init = {}) {
   const request = new Request(input, init);
   const signal = init.signal ?? request.signal;
   if (signal.aborted) throw abortError(signal.reason);
-  const body = request.body ? await request.text() : null;
+  let body = null, bodyId = null;
+  if (request.body && cloudOptions && (init.body instanceof FormData || init.body instanceof Blob)) {
+    try {
+      const blob = await request.blob();
+      if (blob.size > 68 * 1024 * 1024) throw new Error('云端上传文件超过 68 MiB');
+      bodyId = (await plugin.beginCloudBody()).id;
+      for (let offset = 0; offset < blob.size; offset += 256 * 1024) {
+        if (signal.aborted) throw abortError(signal.reason);
+        const bytes = new Uint8Array(await blob.slice(offset, offset + 256 * 1024).arrayBuffer());
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+        await plugin.appendCloudBody({ id: bodyId, data: btoa(binary) });
+      }
+    } catch (error) {
+      if (bodyId) await plugin.discardCloudBody({ id: bodyId }).catch(() => {});
+      throw error;
+    }
+  } else body = request.body ? await request.text() : null;
+  if (signal.aborted && bodyId) await plugin.discardCloudBody({ id: bodyId }).catch(() => {});
   if (signal.aborted) throw abortError(signal.reason);
   const id = globalThis.crypto?.randomUUID?.() ?? `ai-${Date.now()}-${Math.random()}`;
   return new Promise((resolve, reject) => {
     let controller, ended = false, receivedHeaders = false;
-    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    const cleanup = () => {
+      signal.removeEventListener('abort', onAbort);
+      if (bodyId) void plugin.discardCloudBody({ id: bodyId }).catch(() => {});
+    };
     const cancelNative = () => { void plugin.cancel({ id }).catch(() => {}); };
     const finish = error => {
       if (ended) return;
@@ -62,7 +91,8 @@ export async function fetchAI(input, init = {}) {
     };
     try {
       Promise.resolve(plugin.request({ id, url: request.url, method: request.method,
-        headers: Object.fromEntries(request.headers.entries()), body }, onFrame)).catch(finish);
+        headers: Object.fromEntries(request.headers.entries()), body,
+        ...(cloudOptions || {}), ...(bodyId ? { bodyId } : {}) }, onFrame)).catch(finish);
     } catch (error) { finish(error); }
   });
 }

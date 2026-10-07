@@ -17,6 +17,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(NarutoFilesPlugin.class);
         registerPlugin(NarutoHttpPlugin.class);
+        registerPlugin(NarutoCloudPlugin.class);
         super.onCreate(savedInstanceState);
         if (getBridge() == null) return;
 

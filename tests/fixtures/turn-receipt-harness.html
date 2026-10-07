@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>回合结果卡检查</title>
+  <style>html,body{margin:0;background:#0c1118;color:#e8e4d9;font:15px/1.8 system-ui,sans-serif}main{width:min(760px,calc(100% - 32px));margin:30px auto}p{overflow-wrap:anywhere}</style>
+</head>
+<body><main><article aria-label="本回正文"><p id="narrative">夕光落在训练场上。你与同伴完成了今天的练习，整理忍具后沿着小路返回木叶。</p></article></main>
+<script type="module">
+  import { buildTurnReceipt, normalizeTurnReceipt } from '../../js/core/turn-receipt.js';
+  import { createTurnReceiptCard } from '../../js/ui/turn-receipt-card.js';
+  const fixture = buildTurnReceipt({
+    beforeState: { '属性·当前查克拉': 50, '进度·金钱': 500, _memory: { facts: '已知训练计划', recent_summary: '抵达训练场' } },
+    afterState: { '属性·当前查克拉': 35, '进度·金钱': 700, _memory: { facts: '已知训练计划\n完成与同伴的协作练习', recent_summary: '完成训练，准备返回木叶' } },
+    turnNumber: 8, variables: { status: 'success' }, memory: { status: 'success' }, daily: { status: 'success', issue: '第 8 号' }, save: { status: 'success' }, durationMs: 10420,
+    stages: [{ key: 'narrative', status: 'success', durationMs: 7300, retries: 0 }, { key: 'variables', status: 'success', durationMs: 2900, retries: 1 }, { key: 'save', status: 'success', durationMs: 220, retries: 0 }]
+  });
+  const key = 'turn-receipt-fixture';
+  const stored = localStorage.getItem(key);
+  const card = createTurnReceiptCard(stored ? normalizeTurnReceipt(JSON.parse(stored)) : fixture);
+  document.querySelector('article').append(card);
+  window.receiptFixture = fixture;
+  window.setReceiptFixture = (receipt, persist = false) => {
+    card.receipt = receipt;
+    if (persist) localStorage.setItem(key, JSON.stringify(receipt));
+  };
+  window.__TURN_RECEIPT_READY__ = true;
+</script></body></html>

@@ -24,10 +24,12 @@ def digest(path): return hashlib.sha256(path.read_bytes()).hexdigest() if path.i
 def managed_server(relative): return relative.startswith('server/') and not relative.startswith(('server/data/', 'server/db/saves/')) and relative.endswith(('.js', '.sql'))
 
 class Installer:
- def __init__(self, work, mode, build):
+ def __init__(self, work, mode, build, frontend_only=False):
   self.work = Path(work).resolve()
   self.manifest = json.loads((self.work/'release-manifest.json').read_text())
   self.mode, self.build = mode, build
+  if frontend_only and mode != 'staging': raise RuntimeError('Frontend-only releases are limited to staging')
+  self.frontend_only = frontend_only
   self.backend, self.static, self.backups = BACKEND, STATIC[mode], BACKUPS
   self.ops = OPS
   self.receipt = self.work/'applied.json'
@@ -54,7 +56,7 @@ class Installer:
   if m.get('schema') != 'naruto.deploy-release/v1' or m.get('mode') != self.mode or m.get('build') != self.build: raise RuntimeError('Release target/build mismatch')
   release = m.get('release_id', '')
   if not release or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._' for c in release): raise RuntimeError('Invalid release ID')
-  self.backup = self.backups/('full-'+self.mode+'-'+release)
+  self.backup = self.backups/(('frontend-' if self.frontend_only else 'full-')+self.mode+'-'+release)
   self.next_static = self.static.with_name('.'+self.static.name+'-'+release)
   files = m['files']
   acknowledged = self.receipt.exists()
@@ -68,18 +70,20 @@ class Installer:
    if relative.startswith('ops/') and relative not in self.ops and relative != 'ops/apply-release.py': raise RuntimeError('Unexpected operations file')
    if relative.startswith('static/') and relative[7:].split('/')[0] in ('server','node_modules','.env','public'): raise RuntimeError('Backend in public payload')
    if not acknowledged and (digest(source) != record['sha256'] or source.stat().st_size != record['bytes']): raise RuntimeError('Payload hash/size mismatch: '+relative)
-  for required in ['static/index.html','static/login.html','static/js/app.js','static/version.json','backend/server/index.js','backend/package-lock.json']:
+  for required in ['static/index.html','static/login.html','static/announcements.html','static/js/app.js','static/version.json','backend/server/index.js','backend/package-lock.json']:
    if required not in files: raise RuntimeError('Missing release file: '+required)
   if acknowledged:
+   if json.loads(self.receipt.read_text()).get('frontend_only', False) != self.frontend_only: raise RuntimeError('Receipt release scope mismatch')
    # Do not silently acknowledge a stale receipt after someone else deploys.
    for relative,record in files.items():
     if relative.startswith('static/'): target=self.static/relative[7:]
-    elif relative.startswith('backend/'): target=self.backend/relative[8:]
-    elif relative in self.ops: target=self.ops[relative]
+    elif relative.startswith('backend/') and not self.frontend_only: target=self.backend/relative[8:]
+    elif relative in self.ops and not self.frontend_only: target=self.ops[relative]
     else: continue
     if digest(target) != record['sha256']: raise RuntimeError('Receipt exists but installed files have changed')
    return False
   if json.loads((self.work/'static/version.json').read_text())['build'] != self.build: raise RuntimeError('Wrong static build')
+  if 'data-release-version="'+m['version']+'"' not in (self.work/'static/announcements.html').read_text(): raise RuntimeError('Website announcement version mismatch')
   if self.backup.exists(): raise RuntimeError('Interrupted release has a backup; inspect apply.log and restore before starting a fresh release')
   return True
 
@@ -126,6 +130,9 @@ class Installer:
    else: self.originals[str(target)] = None
   (self.backup/'originals.json').write_text(json.dumps(self.originals,indent=2))
   self.production_before = digest(STATIC['production']/'index.html')
+  self.prepare_static()
+
+ def prepare_static(self):
   shutil.copytree(self.work/'static',self.next_static)
   for p in [self.next_static,*self.next_static.rglob('*')]:
    os.chmod(p,0o755 if p.is_dir() else 0o644)
@@ -136,7 +143,16 @@ class Installer:
  def ready(self):
   try:
    with urllib.request.urlopen('http://127.0.0.1:3000/health/ready',timeout=3) as response: return json.load(response).get('status') == 'ready'
-  except Exception: return False
+  except Exception as error:
+   self.log('Readiness probe failed: '+type(error).__name__+': '+str(error))
+   return False
+
+ def wait_ready(self, timeout=30):
+  deadline = time.monotonic()+timeout
+  while True:
+   if self.ready(): return True
+   if time.monotonic() >= deadline: return False
+   time.sleep(1)
 
  def stop(self):
   self.timer_active = self.run(['systemctl','is-active','--quiet','naruto-rpg-health-watchdog.timer'],check=False).returncode == 0
@@ -197,11 +213,38 @@ class Installer:
    if digest(STATIC['production']/'index.html') != self.production_before: raise RuntimeError('Production frontend unexpectedly changed')
   for relative,record in self.manifest['files'].items():
    if relative.startswith('static/'): target=self.static/relative[7:]
-   elif relative.startswith('backend/'): target=self.backend/relative[8:]
-   elif relative in self.ops: target=self.ops[relative]
+   elif relative.startswith('backend/') and not self.frontend_only: target=self.backend/relative[8:]
+   elif relative in self.ops and not self.frontend_only: target=self.ops[relative]
    else: continue
    if digest(target) != record['sha256']: raise RuntimeError('Installed file mismatch: '+relative)
-  if not self.ready(): raise RuntimeError('Final readiness check failed')
+  if not self.wait_ready(): raise RuntimeError('Final readiness check failed')
+
+ def execute_frontend(self):
+  # Nginx serves this directory directly. An atomic swap needs no backend,
+  # database, dependency, service, watchdog or global configuration changes.
+  self.log('RELEASE_PHASE=frontend; publishing staging assets with the shared backend untouched')
+  self.backup.mkdir(parents=True, mode=0o700)
+  shutil.copy2(self.work/'release-manifest.json',self.backup/'release-manifest.json')
+  self.production_before = digest(STATIC['production']/'index.html')
+  try:
+   self.prepare_static()
+   if self.static.exists(): os.rename(self.static,self.backup/'static.before'); self.old_static = True
+   os.rename(self.next_static,self.static); self.static_applied = True
+   self.verify_public()
+   report = {'mode':self.mode,'build':self.build,'backup':str(self.backup),'verified_files':sum(r.startswith('static/') for r in self.manifest['files']),'health':'ready','runtime_data_preserved':True,'frontend_only':True,'shared_backend_changed':False}
+   self.receipt.write_text(json.dumps(report))
+   (self.backup/'verified.json').write_text(json.dumps(report,indent=2))
+   self.log('DEPLOY_VERIFIED='+json.dumps(report))
+  except BaseException as error:
+   self.log('Verification failed; restoring the staging frontend without touching services.')
+   if self.static_applied: os.rename(self.static,self.backup/'static.failed')
+   if self.old_static: os.rename(self.backup/'static.before',self.static)
+   self.receipt.unlink(missing_ok=True)
+   (self.backup/'rolled-back').write_text('Staging frontend restored; shared backend and runtime data unchanged.\n')
+   (self.work/'failed.txt').write_text(str(error))
+   raise
+  finally:
+   if self.next_static.exists(): shutil.rmtree(self.next_static)
 
  def rollback(self):
   self.log('Verification failed; restoring managed code/config/dependencies and frontend.')
@@ -226,6 +269,7 @@ class Installer:
 
  def execute(self):
   if not self.validate(): self.log(self.receipt.read_text()); return
+  if self.frontend_only: self.execute_frontend(); return
   self.log('RELEASE_PHASE=dependencies; preparing Node 22 production dependencies before downtime')
   self.prepare_dependencies()
   self.snapshot()
@@ -249,13 +293,14 @@ def main():
  parser.add_argument('--mode',choices=['staging','production'],required=True)
  parser.add_argument('--build',required=True)
  parser.add_argument('--cleanup',action='store_true')
+ parser.add_argument('--frontend-only',action='store_true')
  args=parser.parse_args()
  work=Path(__file__).resolve().parent.parent
  signal.signal(signal.SIGHUP,signal.SIG_IGN)
  with Path('/var/lock/naruto-rpg-full-release.lock').open('w') as lock:
   try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   except BlockingIOError: raise SystemExit('A release is already running; inspect apply.log before retrying')
-  installer=Installer(work,args.mode,args.build)
+  installer=Installer(work,args.mode,args.build,args.frontend_only)
   if args.cleanup:
    if installer.validate(): raise SystemExit('Cannot clean an unacknowledged release')
    for name in ('static','backend'):

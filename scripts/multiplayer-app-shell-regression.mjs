@@ -25,7 +25,7 @@ assert.match(app, /autoRestore: true/u);
 assert.match(app, /await panel\.connectRoom\(roomId\)/u);
 assert.match(app, /if \(forgetSession\) \{/u);
 assert.match(app, /const user = await authClient\.checkAuth\(true\);/u);
-assert.match(app, /if \(!user\) \{\s*window\.location\.href = '\/login\.html';\s*return null;\s*\}/u);
+assert.match(app, /if \(!user\) \{[\s\S]*?window\.location\.href = '\/login\.html';\s*return null;\s*\}/u);
 assert.ok(
   app.indexOf('await authClient.checkAuth(true)')
     < app.indexOf('this._multiplayerOverlay = openMultiplayerOverlay'),

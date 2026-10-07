@@ -10,6 +10,7 @@ import {
 import {
   assertActorItems,
   assertActorSkills,
+  itemEffectInputContract,
   SKILL_ITEM_EFFECT_CONTRACTS
 } from './skill-item.js';
 import {
@@ -568,7 +569,11 @@ export function inspectDomainEffect(effect, { compiled = false } = {}) {
       errors: [{
         code: error.code,
         message: error.message,
-        details: error.details ?? {}
+        details: {
+          ...error.details,
+          ...(effect?.domain === 'item' && effect?.kind === 'actor_item' && itemEffectInputContract(effect.operation)
+            ? { effect_id: effect.effect_id, expected_input_contract: itemEffectInputContract(effect.operation) } : {})
+        }
       }],
       binding: null
     };

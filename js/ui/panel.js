@@ -9,12 +9,24 @@ import { CANON_DATABASE } from '../data/canon-database.js';
 import {
   calculateCombatAssessment,
   combatAttributesFromPlayerState,
-  combatMasteriesFromPlayerState
+  combatMasteriesFromPlayerState,
+  combatAttributesFromNpcCard,
+  combatMasteriesFromNpcCard
 } from '../systems/combat-level.js';
 import GameModal from './modal.js';
-import { panelStyles } from '../../css/components/panel.css.js';
+import { panelStyles, gradeEffectStyles } from '../../css/components/panel.css.js';
 import { imageStudio } from '../core/image-studio/index.js';
 import { mountPortraitImageControls } from './image-studio.js';
+
+import { gradeAttributes } from './grade-effects.js';
+
+const NPC_DOSSIER_ICONS = {
+  chakra: `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/></svg>`,
+  vitality: `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`,
+  speed: `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>`,
+  spirit: `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`,
+  stamina: `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>`
+};
 
 class InfoPanel extends HTMLElement {
   constructor() {
@@ -101,6 +113,7 @@ class InfoPanel extends HTMLElement {
     const closeBtn = this.shadowRoot.getElementById('panel-close-btn-mobile');
     if (closeBtn) {
       closeBtn.addEventListener('click', () => {
+        eventBus.emit('panel:close');
         this.dispatchEvent(new CustomEvent('panel:close', { bubbles: true, composed: true }));
       });
     }
@@ -305,7 +318,7 @@ class InfoPanel extends HTMLElement {
             </div>
             <div style="text-align:right;">
               <div class="attr-label">荣誉忍阶</div>
-              <div class="attr-id-rank">${this._esc(p['玩家·忍阶'])}</div>
+              <div class="attr-id-rank grade-badge" ${gradeAttributes(p['玩家·忍阶'], 'ninja')}>${this._esc(p['玩家·忍阶'])}</div>
             </div>
           </div>
 
@@ -316,7 +329,7 @@ class InfoPanel extends HTMLElement {
           </div>
 
           <div class="attr-card">
-            <div class="attr-label">查克拉属性 / 出身</div>
+            <div class="attr-label">查克拉属性</div>
             ${this._renderChakra(p['玩家·查克拉属性'])}
             <div style="font-size:10px; color:var(--text-tertiary); margin-top:auto;">${this._esc(p['玩家·出身']||'流浪')}</div>
           </div>
@@ -329,7 +342,7 @@ class InfoPanel extends HTMLElement {
           <div class="attr-card full-span" style="padding: 24px;">
             ${this._newBar('查克拉', chakraCur, chakra, '#42A5F5')}
             ${this._newBar('生命力', vitalityCur, vitality, '#66BB6A')}
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 8px;">
+            <div class="attr-bars-pair">
               ${this._newBar('精神力', spiritCur, spirit, '#CE93D8')}
               ${this._newBar('体力', staminaCur, stamina, '#eb613f')}
             </div>
@@ -379,8 +392,7 @@ class InfoPanel extends HTMLElement {
 
     return `<div class="chakra-badges">` + list.map(n => {
       const c = colors[n] || 'var(--text-secondary)';
-      // 如果颜色有透明度需求，可以稍加处理，这里简单处理 box-shadow 采用 currentColor 会自动继承
-      return `<span class="chakra-badge" style="color:${c}; border-color: ${c}40;">${this._esc(n)}</span>`;
+      return `<span class="chakra-badge" style="color:${c};">${this._esc(n)}</span>`;
     }).join('') + `</div>`;
   }
 
@@ -826,7 +838,7 @@ class InfoPanel extends HTMLElement {
               <div style="display:flex; justify-content:space-between; align-items:center; border-top: 1px solid var(--border-subtle); padding-top: 8px;">
                 <div style="font-size:10px; color:var(--text-tertiary); display:flex; gap:8px;">
                   ${d[metaKey] ? `<span style="color:${color}; font-weight:bold;">${this._esc(d[metaKey])}</span>` : ''}
-                  <span>${this._esc(d.rank||'E')} 级</span>
+                  <span class="grade-badge" ${gradeAttributes(d.rank || 'E')}>${this._esc(d.rank||'E')} 级</span>
                 </div>
                 <div style="display:flex; align-items:center; gap:8px;">
                   <div style="font-size:10px; color:var(--text-secondary); font-family:var(--font-mono);">造诣 ${d.mastery||0}</div>
@@ -850,7 +862,7 @@ class InfoPanel extends HTMLElement {
 
   _compactSkillRow(d, color, metaKey, type) {
     const el = d[metaKey] ? `<span style="color:${color};font-weight:bold;font-size:10px;">${this._esc(d[metaKey])}</span>` : '';
-    const rank = `<span style="font-size:10px;color:var(--text-tertiary);">${this._esc(d.rank||'E')}</span>`;
+    const rank = `<span class="grade-badge" ${gradeAttributes(d.rank || 'E')} style="font-size:10px;">${this._esc(d.rank||'E')}</span>`;
     const resolvedType = d._type || type || '';
     return `<div class="skill-compact-row" data-action="expand-skill" data-skill="${this._escAttr(d.name)}" data-type="${this._escAttr(resolvedType)}">
       <span class="skill-name" title="${this._escAttr(d.name)}">${this._esc(d.name)}</span>
@@ -996,7 +1008,7 @@ class InfoPanel extends HTMLElement {
   }
 
   _getQualityColor(q) {
-    const colors = { '破烂':'#a39f98', '普通':'#e8e4d9', '精良':'#66BB6A', '优秀':'#42A5F5', '史诗':'#c69c6d', '传说':'#ef5350' };
+    const colors = { '破烂':'#a39f98', '普通':'#e8e4d9', '精良':'#66BB6A', '优秀':'#42A5F5', '稀有':'#42A5F5', '史诗':'#c69c6d', '传说':'#ef5350' };
     return colors[q] || '#e8e4d9';
   }
 
@@ -1051,7 +1063,7 @@ class InfoPanel extends HTMLElement {
         const q = (item && item.quality) || '普通';
         const qColor = this._getQualityColor(q);
         const wmark = q === '传说' ? '極' : q === '史诗' ? '稀' : '';
-        html += `<div class="eq-slot filled" data-quality="${q}" data-slot="${slot.key}" style="--qc:${qColor};">
+        html += `<div class="eq-slot filled grade-surface" ${gradeAttributes(q, 'quality')} data-quality="${this._escAttr(q)}" data-slot="${slot.key}" style="--qc:${qColor};">
           <div class="eq-watermark">${wmark}</div>
           <span class="eq-slot-tag">${this._svg(slot.type)} ${slot.label}</span>
           <span class="eq-slot-name">${this._esc(itemName)}</span>
@@ -1106,7 +1118,7 @@ class InfoPanel extends HTMLElement {
             const wmark = q === '传说' ? '極' : q === '史诗' ? '稀' : '';
             const qty = typeof i.quantity === 'object' ? (i.quantity?.value || i.quantity?.amount || i.quantity?.count || i.quantity?.quantity || 1) : (i.quantity || 1);
             return `
-            <div class="eq-item" data-quality="${q}" style="--qc:${qColor};">
+            <div class="eq-item grade-surface" ${gradeAttributes(q, 'quality')} data-quality="${this._escAttr(q)}" style="--qc:${qColor};">
               <div class="eq-watermark">${wmark}</div>
               <div class="eq-item-badge">${this._svg(svgType)}</div>
               <div class="eq-item-main">
@@ -1151,8 +1163,8 @@ class InfoPanel extends HTMLElement {
       <div class="sec">
         <div class="sec-title">悬赏令 (进行中)</div>
         ${activeList.length > 0 ? activeList.map(x=>`
-          <div class="item-card mission-seal ${x.rank||'D'}">
-            <div class="rank-badge">${x.rank||'D'}</div>
+          <div class="item-card mission-seal ${this._escAttr(x.rank||'D')}">
+            <div class="rank-badge grade-badge" ${gradeAttributes(x.rank || 'D')}>${this._esc(x.rank||'D')}</div>
             <div>
               <div class="item-header" style="margin-bottom: 4px;">
                 <div class="item-name">${this._esc(x.title || x.name || x.id || '未命名任务')}</div>
@@ -1170,50 +1182,21 @@ class InfoPanel extends HTMLElement {
         ${completedList.slice(-3).reverse().map(x=>`
           <div class="row" style="opacity:0.5; padding: 8px 0;">
             <span class="row-l" style="font-size:12px; text-transform:none; letter-spacing:0;">${this._esc(x.title||'?')}</span>
-            <span class="row-v" style="font-size:10px;">${x.rank||'?'}</span>
+            <span class="row-v grade-badge" ${gradeAttributes(x.rank)} style="font-size:10px;">${this._esc(x.rank||'?')}</span>
           </div>`).join('') || '<div class="empty" style="opacity:0.4;">暂无记录</div>'}
       </div>`;
   }
 
-  showRelModal(name) {
-    const r = stateManager.getSub('_relationships') || {};
-    if (!r[name]) return;
-    // Normalize old save shapes (English keys, object maps, missing canon
-    // metadata) before building the NPC dossier.
-    const d = relationshipSystem.getRelationship(name);
-
-    const Modal = customElements.get('game-modal');
-    if (!Modal) return;
-    const modal = new Modal();
-    (document.getElementById('app') || document.body).appendChild(modal);
-
-    const t = this._tempOf(d.affection); // 情感温度（头像环/印章用色）
-    // 社交三维双向迷你条（中轴向两侧，值域 ±100）
-    const socialBar = (v, posColor, negColor = '#ef5350') => {
-      const val = Math.max(-100, Math.min(100, Number(v) || 0));
-      const w = Math.abs(val) / 2;
-      const side = val >= 0 ? 'left:50%' : 'right:50%';
-      const c = val >= 0 ? posColor : negColor;
-      return `<div class="social-bar"><div class="social-bar-fill" style="${side};width:${w}%;background:${c};box-shadow:0 0 6px ${c};"></div></div>`;
-    };
-
-    const icons = {
-      chakra: `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/></svg>`,
-      vitality: `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`,
-      speed: `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>`,
-      spirit: `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`,
-      stamina: `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>`
-    };
-
+  _renderNpcCombatDetails(cs) {
     // ── 渲染 NPC 战斗属性卡片 ──
-    const cs = d.combat_stats;
+    const icons = NPC_DOSSIER_ICONS;
     let combatStatsHtml = '';
     if (cs) {
       const statDefs = [
         { key: '查克拉', icon: icons.chakra, color: '#00E5FF', maxKey: '查克拉上限', fmt: (v,mx) => `${v}/${mx}` },
         { key: '生命力', icon: icons.vitality, color: '#FF4D4D', maxKey: '生命力上限', fmt: (v,mx) => `${v}/${mx}` },
         { key: '速度', icon: icons.speed, color: '#81C784', fmt: (v) => v },
-        { key: '精神力', icon: icons.spirit, color: '#CE93D8', fmt: (v) => v },
+        { key: '精神力', icon: icons.spirit, color: '#CE93D8', maxKey: '精神力上限', fmt: (v,mx) => `${v}/${mx}` },
         { key: '体力', icon: icons.stamina, color: '#FFB74D', maxKey: '体力上限', fmt: (v,mx) => `${v}/${mx}` },
       ];
       const masteryDefs = [
@@ -1248,11 +1231,12 @@ class InfoPanel extends HTMLElement {
       }
       const nature = cs.查克拉属性;
       const rank = cs.忍阶;
+      const assessment = calculateCombatAssessment(combatAttributesFromNpcCard(cs), combatMasteriesFromNpcCard(cs));
       let metaRow = '';
       if (nature || rank) {
         metaRow = `<div class="npc-meta-row">${
-          rank ? `<span class="npc-rank-badge">${this._esc(rank)}</span>` : ''
-        }${
+          rank ? `<span class="npc-rank-badge grade-badge" ${gradeAttributes(rank, 'ninja')}>${this._esc(rank)}</span>` : ''
+        }<span class="npc-nature-tag" data-npc-combat-rating>综合战力 ${assessment.level} · ${assessment.roundedScore}</span>${
           Array.isArray(nature) ? nature.map(n => `<span class="npc-nature-tag">${this._esc(n)}</span>`).join('') : ''
         }</div>`;
       }
@@ -1269,7 +1253,7 @@ class InfoPanel extends HTMLElement {
     let jutsuHtml = '';
     const jutsus = this._normalizeNpcTechniques(cs);
     if (jutsus.length > 0) {
-      const rankColors = { S:'#FFB74D', A:'#ef5350', B:'#CE93D8', C:'#42A5F5', D:'#81C784', E:'#a39f98' };
+      const rankColors = { S:'#ef7770', A:'#e2bd79', B:'#c5a2ec', C:'#42A5F5', D:'#81C784', E:'#e8e4d9' };
       const typeLabels = { jutsu:'NIN', taijutsu:'TAI', genjutsu:'GEN', support:'SUP' };
       const cards = jutsus.map(j => {
         const jName = j.name || '?';
@@ -1285,7 +1269,7 @@ class InfoPanel extends HTMLElement {
         return `<div class="npc-jutsu-card" style="--jc:${rc}">
           <div class="jutsu-bg-glow" style="background:${rc}"></div>
           <div class="jutsu-head">
-            <span class="jutsu-rank" style="color:${rc}">${this._esc(jRank)}</span>
+            <span class="jutsu-rank grade-badge" ${gradeAttributes(jRank)}>${this._esc(jRank)}</span>
             <span class="jutsu-type">${typeLabels[jType] || this._esc(j.typeLabel)}</span>
             ${jElem ? `<span class="jutsu-elem">${this._esc(jElem)}</span>` : ''}
             <span class="jutsu-name">${this._esc(jName)}</span>
@@ -1304,6 +1288,61 @@ class InfoPanel extends HTMLElement {
           <div class="npc-jutsu-list">${cards}</div>
         </div>`;
     }
+
+    return combatStatsHtml + jutsuHtml;
+  }
+
+  _watchNpcCombatDetails(modal, name) {
+    let signature = JSON.stringify(stateManager.getSub('_relationships')?.[name]?.combat_stats);
+    const refresh = ({ key } = {}) => {
+      if (key !== '_relationships' || !modal.isConnected) return;
+      const relationship = stateManager.getSub('_relationships')?.[name];
+      if (!relationship) { modal.close(); return; }
+      const nextSignature = JSON.stringify(relationship.combat_stats);
+      if (signature === nextSignature) return;
+      signature = nextSignature;
+      const container = modal.shadowRoot?.querySelector('#npc-combat-details');
+      const scroller = modal.shadowRoot?.querySelector('.modal');
+      const scrollTop = scroller?.scrollTop || 0;
+      if (container) container.innerHTML = this._renderNpcCombatDetails(relationshipSystem.getRelationship(name).combat_stats);
+      if (scroller) scroller.scrollTop = scrollTop;
+    };
+    const unsubs = [
+      eventBus.on('state:changed', refresh),
+      eventBus.on('state:restored', () => modal.close()),
+      eventBus.on('state:reset', () => modal.close())
+    ];
+    const cleanup = () => { unsubs.splice(0).forEach(unsub => unsub()); observer.disconnect(); };
+    const observer = new MutationObserver(() => { if (!modal.isConnected) cleanup(); });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return cleanup;
+  }
+
+  showRelModal(name) {
+    const r = stateManager.getSub('_relationships') || {};
+    if (!r[name]) return;
+    // Normalize old save shapes (English keys, object maps, missing canon
+    // metadata) before building the NPC dossier.
+    const d = relationshipSystem.getRelationship(name);
+
+    const Modal = customElements.get('game-modal');
+    if (!Modal) return;
+    const modal = new Modal();
+    (document.getElementById('app') || document.body).appendChild(modal);
+
+    const t = this._tempOf(d.affection); // 情感温度（头像环/印章用色）
+    // 社交三维双向迷你条（中轴向两侧，值域 ±100）
+    const socialBar = (v, posColor, negColor = '#ef5350') => {
+      const val = Math.max(-100, Math.min(100, Number(v) || 0));
+      const w = Math.abs(val) / 2;
+      const side = val >= 0 ? 'left:50%' : 'right:50%';
+      const c = val >= 0 ? posColor : negColor;
+      return `<div class="social-bar"><div class="social-bar-fill" style="${side};width:${w}%;background:${c};box-shadow:0 0 6px ${c};"></div></div>`;
+    };
+
+    const icons = NPC_DOSSIER_ICONS;
+
+    const combatDetailsHtml = this._renderNpcCombatDetails(d.combat_stats);
 
     const css = `
       <style>
@@ -1478,8 +1517,18 @@ class InfoPanel extends HTMLElement {
         .npc-name, .npc-stat-fill::after, .npc-avatar-ring::before { animation: none; }
       }
       @media (max-width: 640px) {
-        .npc-social-grid { grid-template-columns: 1fr; }
+        .npc-header { padding: 16px; gap: 12px; }
+        .npc-stamp { top: 8px; right: 12px; opacity: 0.14; }
+        .npc-avatar-ring { width: 52px; height: 52px; }
+        .npc-avatar { width: 48px; height: 48px; font-size: 26px; }
+        .npc-name { font-size: 20px; letter-spacing: 1px; line-height: 1.5; overflow-wrap: anywhere; }
+        .npc-social-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+        .npc-social-item { padding: 12px 10px; }
+        .npc-social-head { gap: 4px; }
+        .npc-social-item .social-label { letter-spacing: 0; white-space: nowrap; }
+        .npc-social-item .social-val { font-size: 20px; }
       }
+      ${gradeEffectStyles}
       </style>
     `;
 
@@ -1523,15 +1572,17 @@ class InfoPanel extends HTMLElement {
 
         <div id="npc-portrait-controls"></div>
 
-        ${combatStatsHtml}
-        ${jutsuHtml}
+        <div id="npc-combat-details" style="display:contents">${combatDetailsHtml}</div>
         ${this._renderGrandSummary(d.grand_summary)}
         ${this._renderSummaries(d.summaries)}
         ${this._renderInteractionLog(d.history, d.inner_thoughts)}
         ${(d.tags||[]).length ? `<div class="npc-tags">${d.tags.map(t=>`<span class="npc-tag">${this._esc(t)}</span>`).join('')}</div>` : ''}
       </div>
     `;
-    modal.show({ title: '绝密情报档案', content: html, buttons: [{ label: '关闭', primary: true, onClick: () => modal.close() }] });
+    let stopWatching = () => {};
+    modal.show({ title: '绝密情报档案', content: html, onDismiss: () => stopWatching(),
+      buttons: [{ label: '关闭', primary: true, onClick: () => modal.close() }] });
+    stopWatching = this._watchNpcCombatDetails(modal, name);
     try {
       const visual = relationshipSystem.ensureVisualProfile(name);
       const subjectId = visual.visual_subject_id;

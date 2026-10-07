@@ -280,22 +280,33 @@ class LingXiCompanion extends HTMLElement {
   connectedCallback() {
     if (this._connected) return;
     this._connected = true;
-    this._render();
-    this._bind();
+    if (!this._initialized) {
+      this._render();
+      this._bind();
+      this._initialized = true;
+    }
+    this._subscribe();
     this._restorePosition();
     void this._refreshApiChoices();
     this._renderMessages();
+    this._syncBusyState();
+    document.body.classList.toggle('lingxi-companion-open', this._open);
+    if (this._open) this._positionPanel();
     this._resetSleepTimer();
     globalThis.addEventListener?.('resize', this._onViewportResize);
   }
 
   disconnectedCallback() {
+    this._connected = false;
     this._unsubs.forEach(unsub => unsub?.());
     this._unsubs = [];
     clearTimeout(this._sleepTimer);
     if (this._renderFrame) cancelAnimationFrame(this._renderFrame);
+    this._renderFrame = null;
     this._removeDragListeners();
     this._removePanelDragListeners();
+    this._drag = null;
+    this._panelDrag = null;
     globalThis.removeEventListener?.('resize', this._onViewportResize);
     document.body.classList.remove('lingxi-companion-open');
   }
@@ -459,6 +470,7 @@ class LingXiCompanion extends HTMLElement {
       void this._sendCurrentInput();
     });
     this._input.addEventListener('keydown', event => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         void this._sendCurrentInput();
@@ -499,7 +511,9 @@ class LingXiCompanion extends HTMLElement {
       else if (!this._newChatOverlay.hidden) this._closeNewChat();
       else if (this._open) this.toggle(false);
     });
+  }
 
+  _subscribe() {
     this._unsubs.push(
       eventBus.on('lingxi:proposal-staged', ({ proposal }) => this._setProposal(proposal)),
       eventBus.on('lingxi:proposal-applied', ({ receipt } = {}) => {
@@ -850,7 +864,7 @@ class LingXiCompanion extends HTMLElement {
   }
 
   _scheduleLiveRender() {
-    if (this._renderFrame) return;
+    if (!this._connected || this._renderFrame) return;
     this._renderFrame = requestAnimationFrame(() => {
       this._renderFrame = null;
       this._renderMessages();

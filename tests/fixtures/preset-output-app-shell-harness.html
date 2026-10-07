@@ -93,6 +93,17 @@
         prepareStreaming();
         appShell._finalizeMessage(clean, raw, '', false, false, null, null);
       },
+      stream(raw) {
+        prepareStreaming();
+        eventBus.emit('pipeline:chunk', { response: raw });
+      },
+      async finish(raw, clean) {
+        const { SHINOBI_DAILY_EXAMPLE } = await import('../../js/core/shinobi-daily.js');
+        eventBus.emit('pipeline:complete', {
+          rawResponse: raw, cleanResponse: clean, thinkContent: '独立展示的思维链。',
+          shinobiDaily: SHINOBI_DAILY_EXAMPLE, turnCount: 1
+        });
+      },
       restore(clean = '历史安全正文', history = []) {
         appShell.restoreChatHistory(history, clean);
       },

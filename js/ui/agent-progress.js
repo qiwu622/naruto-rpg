@@ -1,4 +1,5 @@
 import { eventBus } from '../core/event-bus.js';
+import { readTokenUsage } from '../core/deepseek-mode.js';
 import { ImageContractStreamFilter } from '../core/image-studio/contracts.js';
 
 const STAGES = [
@@ -221,14 +222,8 @@ class AgentProgress extends HTMLElement {
   // prompt_tokens_details.cached_tokens；原生 SDK 映射为 cache_read/miss_input_tokens。
   // 每次 AI 调用完成即刷新，回合结束(done)再更新为回合总命中。
   _onUsage(usage) {
-    const details = usage?.prompt_tokens_details || {};
-    const hit = Number(usage?.prompt_cache_hit_tokens) || Number(usage?.cache_read_input_tokens) || Number(details?.cached_tokens) || 0;
-    let miss = Number(usage?.prompt_cache_miss_tokens) || Number(usage?.cache_miss_input_tokens) || Number(usage?.cache_creation_input_tokens) || 0;
-    // 兼容只返回 prompt_tokens_details.cached_tokens 的旧格式：miss = 总 prompt − 命中
-    if (!miss && details?.cached_tokens != null && Number.isFinite(Number(usage?.prompt_tokens))) {
-      miss = Math.max(0, Number(usage.prompt_tokens) - Number(details.cached_tokens));
-    }
-    if (!(hit + miss)) return;
+    const { hit, miss, cacheKnown } = readTokenUsage(usage || {});
+    if (!cacheKnown || !(hit + miss)) return;
     this._usageAccum.hit += hit;
     this._usageAccum.miss += miss;
     this._renderPromptCache('本回合累计');

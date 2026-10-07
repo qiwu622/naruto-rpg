@@ -1,6 +1,7 @@
 import { eventBus } from './event-bus.js';
 import { isNativeAndroidApp } from './runtime-platform.js';
 import { fetchAI } from './native-ai-fetch.js';
+import { applyDeepSeekRequest, isDeepSeekMode, prepareDeepSeekMessages, DEEPSEEK_MODEL } from './deepseek-mode.js';
 
 export const isTavernEnv = typeof globalThis !== 'undefined' && typeof globalThis.generate === 'function';
 // 浏览器版默认可使用同源代理；酒馆 iframe 没有本项目服务端，必须直连酒馆桥接 API。
@@ -576,13 +577,31 @@ class TavernAdapter extends AIAdapter {
 class OpenAICompatibleAdapter extends AIAdapter {
   constructor(config) {
     super();
+    this.config = { ...config };
     this.apiKey = config.apiKey || '';
     this.apiUrl = normalizeApiBaseUrl(config.apiUrl || 'https://api.openai.com/v1', config.backend || 'openai');
     this.model = config.model || 'gpt-4o';
   }
 
   getModelInfo() {
-    return { name: this.model, contextWindow: 128000 };
+    return { name: this.model, contextWindow: isDeepSeekMode(this.config) ? 1000000 : 128000 };
+  }
+
+  _buildRequest(messages, options, stream) {
+    const prepared = isDeepSeekMode(this.config) ? prepareDeepSeekMessages(messages) : messages;
+    return applyDeepSeekRequest(applyOptionalMaxTokens({
+      model: this.model,
+      messages: normalizeOpenAIMessageOrder(prepared),
+      temperature: options.temperature ?? 0.9,
+      top_p: options.top_p ?? 0.9,
+      frequency_penalty: options.frequency_penalty ?? 0.2,
+      stream,
+      ...(stream ? { stream_options: { include_usage: true } } : {})
+    }, options), this.config);
+  }
+
+  _reportUsage(usage) {
+    if (usage) eventBus.emit('ai:usage', { ...usage, model: this.model });
   }
 
   async chat(messages, options = {}) {
@@ -601,14 +620,7 @@ class OpenAICompatibleAdapter extends AIAdapter {
           'x-api-key-header': 'Authorization',
           'x-proxy-purpose': resolveProxyPurpose(options)
         },
-        body: JSON.stringify(applyOptionalMaxTokens({
-          model: this.model,
-          messages: normalizeOpenAIMessageOrder(messages),
-          temperature: options.temperature ?? 0.9,
-          top_p: options.top_p ?? 0.9,
-          frequency_penalty: options.frequency_penalty ?? 0.2,
-          stream: false
-        }, options)),
+        body: JSON.stringify(this._buildRequest(messages, options, false)),
         signal: abortScope.signal
       });
       if (!response.ok) {
@@ -616,6 +628,7 @@ class OpenAICompatibleAdapter extends AIAdapter {
         throw new Error(`API Error ${response.status}: ${err}`);
       }
       const data = await response.json();
+      this._reportUsage(data.usage);
       emitReasoning(options, data);
       return {
         text: data.choices?.[0]?.message?.content || '',
@@ -634,7 +647,7 @@ class OpenAICompatibleAdapter extends AIAdapter {
 
   async chatStream(messages, options = {}, onChunk) {
     let lastError = null;
-    const maxRetries = options.maxRetries ?? 2;
+    const maxRetries = options.maxRetries ?? (isDeepSeekMode(this.config) ? 0 : 2);
     const retryDelay = options.retryDelay ?? 800;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       if (attempt > 0) {
@@ -656,15 +669,7 @@ class OpenAICompatibleAdapter extends AIAdapter {
               'x-api-key-header': 'Authorization',
               'x-proxy-purpose': resolveProxyPurpose(options)
             },
-            body: JSON.stringify(applyOptionalMaxTokens({
-              model: this.model,
-              messages: normalizeOpenAIMessageOrder(messages),
-              temperature: options.temperature ?? 0.9,
-              top_p: options.top_p ?? 0.9,
-              frequency_penalty: options.frequency_penalty ?? 0.2,
-              stream: true,
-              stream_options: { include_usage: true }
-            }, options)),
+            body: JSON.stringify(this._buildRequest(messages, options, true)),
             signal: abortScope.signal
           });
 
@@ -679,8 +684,9 @@ class OpenAICompatibleAdapter extends AIAdapter {
           }
 
           if (!response.body) {
-            if (options.strictSingleRequest) {
-              throw new Error('当前为严格单调用模式，但服务未返回可读取的流；本回合不会自动改用第二次非流式请求，请手动重试或关闭流式输出');
+            if (options.strictSingleRequest || isDeepSeekMode(this.config)) {
+              const mode = options.strictSingleRequest ? '严格单调用模式' : 'DeepSeek 专用模式';
+              throw new Error(`当前为${mode}，但服务未返回可读取的流；本回合不会自动改用第二次非流式请求，请手动重试或关闭流式输出`);
             }
             fullContent = await this.chat(messages, { ...options, signal: abortScope.signal });
             return fullContent;
@@ -695,18 +701,19 @@ class OpenAICompatibleAdapter extends AIAdapter {
               streamError.partialResponse = fullContent || null;
               throw streamError;
             }
-            if (data.usage && data.usage.total_tokens) lastUsage = data.usage;
+            if (data.usage) lastUsage = data.usage;
             emitReasoning(options, data);
             const content = data.choices?.[0]?.delta?.content || '';
             if (content) { fullContent += content; onChunk?.(content); }
           }, abortScope.signal);
-          if (lastUsage) eventBus.emit('ai:usage', lastUsage);
+          this._reportUsage(lastUsage);
           if (eventCount > 0) {
             if (fullContent) return fullContent;
             throw new Error('AI 流已结束，但没有返回有效正文');
           }
 
           const data = parseJsonResponse(rawText, 'AI');
+          this._reportUsage(data.usage);
           if (data.error) throw createStreamPayloadError(data, 'AI');
           emitReasoning(options, data);
           const content = data.choices?.[0]?.message?.content || '';
@@ -1035,7 +1042,7 @@ class DeepSeekAdapter extends OpenAICompatibleAdapter {
     super({
       ...config,
       apiUrl: config.apiUrl || 'https://api.deepseek.com/v1',
-      model: config.model || 'deepseek-chat'
+      model: config.model || (isDeepSeekMode(config) ? DEEPSEEK_MODEL : 'deepseek-chat')
     });
   }
 }
@@ -1163,8 +1170,8 @@ export class AIClient {
 
     const converted = isClaude && typeof this.adapter?._convertMessages === 'function'
       ? this.adapter._convertMessages(messages)
-      : { messages: normalizeOpenAIMessageOrder(messages) };
-    const body = {
+      : { messages: normalizeOpenAIMessageOrder(isDeepSeekMode(config) ? prepareDeepSeekMessages(messages) : messages) };
+    let body = {
       model: config.model,
       messages: converted.messages,
       temperature: options.temperature ?? 0.9,
@@ -1177,6 +1184,7 @@ export class AIClient {
     if (stream && !isClaude) body.stream_options = { include_usage: true };
     if (converted.system) body.system = converted.system;
     if (options.top_p !== undefined) body.top_p = options.top_p;
+    body = applyDeepSeekRequest(body, config);
     let streamedContent = '';
 
     try {
@@ -1200,9 +1208,12 @@ export class AIClient {
 
       let data;
       if (stream && response.body) {
+        let lastUsage = null;
         const consumed = await consumeStreamingBody(response.body, payload => {
           if (payload.trim() === '[DONE]') return STREAM_COMPLETE;
           const event = parseSseJsonPayload(payload, '代理 AI');
+          if (event.usage) lastUsage = { ...lastUsage, ...event.usage };
+          if (event.message?.usage) lastUsage = { ...lastUsage, ...event.message.usage };
           const streamError = createStreamPayloadError(event, '代理 AI');
           if (streamError) {
             streamError.partialResponse = streamedContent || null;
@@ -1213,9 +1224,10 @@ export class AIClient {
           emitReasoning(options, event);
           if (event.type === 'message_stop') return STREAM_COMPLETE;
         }, requestController.signal);
+        if (lastUsage) eventBus.emit('ai:usage', { ...lastUsage, model: config.model });
         if (consumed.eventCount > 0) {
           if (streamedContent.trim()) return streamedContent;
-          if (!recoveryAttempt) {
+          if (!recoveryAttempt && !options.strictSingleRequest && !isDeepSeekMode(config)) {
             const recoveryOptions = { ...options };
             if (Number(body.max_tokens) > 0) {
               const requestedTokens = Number(body.max_tokens);
@@ -1241,6 +1253,7 @@ export class AIClient {
       if (data.error) {
         throw createStreamPayloadError(data, '代理 AI');
       }
+      if (data.usage) eventBus.emit('ai:usage', { ...data.usage, model: config.model });
       emitReasoning(options, data);
       const text = visibleResponseText(data);
       if (recoveryAttempt && !String(text || '').trim()) {

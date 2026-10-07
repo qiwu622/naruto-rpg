@@ -30,6 +30,43 @@ const SKILL_CATEGORIES = Object.freeze(['NINJUTSU', 'TAIJUTSU', 'GENJUTSU', 'BLO
 const ITEM_CATEGORIES = Object.freeze(['CONSUMABLE', 'EQUIPMENT', 'MATERIAL', 'KEY']);
 const EQUIPMENT_SLOTS = Object.freeze(['weapon', 'armor', 'accessory', 'tool']);
 
+// Model-facing contract beside the reducer it describes. This is format guidance;
+// the existing reducer remains responsible for quantities, versions and authority.
+export function itemEffectInputContract(operation) {
+  const integer = minimum => ({ type: 'integer', minimum });
+  const slot = { enum: [null, ...EQUIPMENT_SLOTS] };
+  const version = { expected_version: integer(1), next_version: integer(2) };
+  const payloads = {
+    upsert: {
+      expected_version: { type: ['integer', 'null'], minimum: 1, description: '新物品填 null；已有物品填当前 version。' },
+      next_version: { ...integer(1), description: '新物品为 1；已有物品为 expected_version + 1。' },
+      display_name: { type: 'string', minLength: 1, maxLength: 160 },
+      category: { enum: ITEM_CATEGORIES, description: '文书、凭证、信件等关键物品使用 KEY。' },
+      quantity: { type: 'integer', minimum: 1, maximum: 1_000_000 },
+      canonical_ref: { type: ['string', 'null'], maxLength: 160 },
+      equipped_slot: { ...slot, description: '只有 EQUIPMENT 可使用非 null 槽位。' }
+    },
+    consume: { ...version, from_quantity: integer(1), amount: integer(1), to_quantity: integer(0) },
+    equip: { ...version, expected_slot: slot, next_slot: { enum: EQUIPMENT_SLOTS } },
+    unequip: { ...version, expected_slot: slot, next_slot: { const: null } },
+    remove: { expected_version: integer(1), expected_quantity: integer(1) }
+  };
+  const properties = payloads[operation];
+  if (!properties) return null;
+  const exact = fields => ({ type: 'object', additionalProperties: false, required: Object.keys(fields), properties: fields });
+  return {
+    ...exact({
+      target: exact({
+        scope: { const: 'actor_item' },
+        actor_id: { type: 'string', pattern: '^actor:', description: '使用 base_state 中的 room_actor_id。' },
+        item_id: { type: 'string', pattern: '^item:', description: '已有物品复用 item_id；新物品创建稳定 ID。ID 只放在 target。' }
+      }),
+      payload: exact(properties)
+    }),
+    description: '版本和数量来自当前状态；consume 的 to_quantity = from_quantity - amount。这些字段说明不代表发生了物品变化。'
+  };
+}
+
 function assertStableEntityTarget(target, scope, idField, prefix) {
   assertExactObject(target, {
     label: 'effect target',

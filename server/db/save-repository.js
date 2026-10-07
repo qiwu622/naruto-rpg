@@ -4,6 +4,17 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { JsonStore } from './json-store.js';
 
+export class SaveRevisionConflict extends Error {
+  constructor(id, expectedRevision, actualRevision) {
+    super('云端已有更新的存档，请保留双方副本后再选择要继续的进度');
+    this.code = 'SAVE_REVISION_CONFLICT';
+    this.status = 409;
+    this.details = { id, expected_revision: expectedRevision, actual_revision: actualRevision };
+  }
+}
+
+const revisionOf = meta => Number.isSafeInteger(meta?.revision) && meta.revision >= 0 ? meta.revision : 0;
+
 /**
  * @typedef {Object} SaveMeta
  * @property {string} id
@@ -109,8 +120,13 @@ export class SaveRepository {
 
   async #stageBuffer(id, buffer) {
     const sourcePath = path.join(this.#savesDir, `.${id}.${randomUUID()}.buffer.tmp`);
-    await fs.writeFile(sourcePath, buffer, { flag: 'wx' });
-    return sourcePath;
+    try {
+      await fs.writeFile(sourcePath, buffer, { flag: 'wx' });
+      return sourcePath;
+    } catch (error) {
+      await fs.rm(sourcePath, { force: true }).catch(() => {});
+      throw error;
+    }
   }
 
   async #removeBlob(filePath) {
@@ -125,6 +141,7 @@ export class SaveRepository {
     const index = await this.#index.read();
     return Object.values(index)
       .filter((save) => save.user_id === userId)
+      .map(save => ({ ...save, revision: revisionOf(save) }))
       .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
   }
 
@@ -144,7 +161,7 @@ export class SaveRepository {
     if (!meta) return null;
     try {
       await fs.access(this.#pathForMeta(id, meta));
-      return meta;
+      return { ...meta, revision: revisionOf(meta) };
     } catch {
       return null;
     }
@@ -157,7 +174,7 @@ export class SaveRepository {
     const file_path = this.#pathForMeta(id, meta);
     try {
       await fs.access(file_path);
-      return { ...meta, file_path };
+      return { ...meta, revision: revisionOf(meta), file_path };
     } catch {
       return null;
     }
@@ -186,13 +203,14 @@ export class SaveRepository {
     compressed_size_bytes,
     content_sha256
   }, maxSlots) {
-    return this.#index.update(async (index) => {
+    let promotedPath;
+    try { return await this.#index.update(async (index) => {
       const currentCount = Object.values(index).filter((save) => save.user_id === user_id).length;
       if (currentCount >= maxSlots) return { persist: false, result: false };
 
       const revision = 1;
       const blob_name = this.#revisionBlobName(id, revision);
-      await this.#promoteFile(source_path, blob_name);
+      promotedPath = await this.#promoteFile(source_path, blob_name);
       const now = new Date().toISOString();
       index[id] = {
         id,
@@ -208,7 +226,10 @@ export class SaveRepository {
         updated_at: now
       };
       return { persist: true, result: true };
-    });
+    }); } catch (error) {
+      if (promotedPath) await this.#removeBlob(promotedPath);
+      throw error;
+    }
   }
 
   async insertFile(save) {
@@ -250,18 +271,26 @@ export class SaveRepository {
     source_path,
     size_bytes,
     compressed_size_bytes,
-    content_sha256
+    content_sha256,
+    expected_revision
   }) {
     let obsoletePath;
-    const updated = await this.#index.update(async (index) => {
+    let promotedPath;
+    let updated;
+    try { updated = await this.#index.update(async (index) => {
       const meta = index[id];
       if (!meta) return { persist: false, result: false };
+      // This comparison belongs inside the serialized index transaction, before
+      // promoting a blob. Two requests based on one revision cannot both win.
+      if (expected_revision !== undefined && expected_revision !== revisionOf(meta)) {
+        throw new SaveRevisionConflict(id, expected_revision, revisionOf(meta));
+      }
 
       if (source_path !== undefined) {
         obsoletePath = this.#pathForMeta(id, meta);
-        const revision = (Number.isInteger(meta.revision) ? meta.revision : 0) + 1;
+        const revision = revisionOf(meta) + 1;
         const blob_name = this.#revisionBlobName(id, revision);
-        await this.#promoteFile(source_path, blob_name);
+        promotedPath = await this.#promoteFile(source_path, blob_name);
         meta.revision = revision;
         meta.blob_name = blob_name;
         meta.size_bytes = size_bytes;
@@ -271,27 +300,30 @@ export class SaveRepository {
       if (slot_name !== undefined) meta.slot_name = slot_name;
       if (preview_data !== undefined) meta.preview_data = preview_data;
       meta.updated_at = new Date().toISOString();
-      return { persist: true, result: true };
-    });
+      return { persist: true, result: { ...meta, revision: revisionOf(meta) } };
+    }); } catch (error) {
+      if (promotedPath) await this.#removeBlob(promotedPath);
+      throw error;
+    }
 
     if (updated && obsoletePath) await this.#removeBlob(obsoletePath);
     return updated;
   }
 
-  async update(id, { slot_name, preview_data, save_data, size_bytes, content_sha256 }) {
+  async update(id, { slot_name, preview_data, save_data, size_bytes, content_sha256, expected_revision }) {
     if (save_data === undefined) {
-      await this.updateFile(id, { slot_name, preview_data });
-      return;
+      return this.updateFile(id, { slot_name, preview_data, expected_revision });
     }
     const sourcePath = await this.#stageBuffer(id, save_data);
     try {
-      await this.updateFile(id, {
+      return await this.updateFile(id, {
         slot_name,
         preview_data,
         source_path: sourcePath,
         size_bytes,
         compressed_size_bytes: save_data.length,
-        content_sha256
+        content_sha256,
+        expected_revision
       });
     } finally {
       await fs.rm(sourcePath, { force: true }).catch(() => {});

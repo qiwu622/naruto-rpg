@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { getUser, recordLogin, upsertUser } from '../db/index.js';
 import { requireAuth } from '../middleware/auth.js';
 import { asyncRoute } from '../middleware/async-route.js';
+import { APP_LINK_CODE_PATTERN } from './app-link.js';
 
 export const DISCORD_FETCH_TIMEOUT_MS = 15_000;
 export const DISCORD_STANDARD_MAX_BYTES = 256 * 1024;
@@ -138,6 +139,13 @@ export function ensureCsrfCookie(req, res) {
  */
 router.get('/discord', (req, res) => {
   const state = crypto.randomBytes(16).toString('hex');
+  const appCode = String(req.query.app_code || '').toUpperCase();
+  if (APP_LINK_CODE_PATTERN.test(appCode)) {
+    res.cookie('discord_oauth_app_code', appCode, {
+      httpOnly: true, secure: config.nodeEnv === 'production' && req.secure,
+      sameSite: 'lax', path: '/', maxAge: 10 * 60 * 1000
+    });
+  } else res.clearCookie('discord_oauth_app_code', { path: '/' });
   
   // 将 state 存入 Cookie 以进行 CSRF 验证（有效时间 10 分钟）
   res.cookie('discord_oauth_state', state, {
@@ -173,6 +181,8 @@ router.get('/discord/callback', asyncRoute(async (req, res) => {
   // 1. 验证 state 防范 CSRF 攻击
   const savedState = req.cookies.discord_oauth_state;
   res.clearCookie('discord_oauth_state');
+  const appCode = req.cookies.discord_oauth_app_code;
+  res.clearCookie('discord_oauth_app_code', { path: '/' });
 
   if (!state || state !== savedState) {
     // 不记录 state 或 Cookie 内容：同一请求可能携带登录 JWT，写入日志会泄露凭证。
@@ -312,7 +322,7 @@ router.get('/discord/callback', asyncRoute(async (req, res) => {
     ensureCsrfCookie(req, res);
 
     console.log(`[DISCORD CALLBACK] User ${discordUser.username} logged in successfully.`);
-    return res.redirect('/');
+    return res.redirect(APP_LINK_CODE_PATTERN.test(appCode || '') ? `/auth/app/authorize?code=${appCode}` : '/');
   } catch (err) {
     if (clientDisconnected || res.destroyed || res.writableEnded) return;
     console.error('[DISCORD CALLBACK] Internal error during login callback:', {

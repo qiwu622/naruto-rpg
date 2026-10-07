@@ -26,12 +26,12 @@ export function isNativeAndroidApp() {
 }
 
 export function usesProjectServerFeatures() {
-  return !isNativeAndroidApp();
+  return true; // Optional cloud services also work in the bundled Android UI.
 }
 
-// Public multiplayer entry is paused; keep existing room records and services.
+// Shared entry gate for the toolbar, room history and session restoration.
 export function isMultiplayerEntryVisible() {
-  return false;
+  return true;
 }
 
 export default Object.freeze({

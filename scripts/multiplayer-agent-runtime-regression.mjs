@@ -793,6 +793,36 @@ await test('Resolution rule precheck and semantic reviewer route only to the sam
   )), true, 'rule errors must return to the same provider session');
 });
 
+await test('Referee sees complete executable item contracts before generating or repairing effects', () => {
+  const prompt = JSON.parse(buildRefereePrompt({
+    referee_input: buildRefereeInput(sealedActionTurn(), {
+      base_state: { actors: { A: {}, B: {} } }, rules_version: 'rules/regression-v1', server_secret: SERVER_SECRET
+    }), transport_mode: 'json_protocol'
+  }));
+  const envelope = {effect_id:'effect_gain',depends_on_effect_ids:[],event_id:'event_handoff',domain:'item',kind:'actor_item',provenance:'referee',visibility:'server_only',evidence_event_ids:['event_handoff']};
+  const cases = {
+    upsert: {expected_version:null,next_version:1,display_name:'登记册副本',category:'KEY',quantity:1,canonical_ref:null,equipped_slot:null},
+    consume: {expected_version:1,next_version:2,from_quantity:3,amount:1,to_quantity:2},
+    equip: {expected_version:1,next_version:2,expected_slot:null,next_slot:'tool'},
+    unequip: {expected_version:2,next_version:3,expected_slot:'tool',next_slot:null},
+    remove: {expected_version:1,expected_quantity:1}
+  };
+  for (const [operation,payload] of Object.entries(cases)) {
+    const contract = prompt.trusted_effect_operations.find(item=>item.domain==='item' && item.operation===operation)?.input_contract;
+    assert.ok(contract, `missing ${operation} target/payload contract`);
+    const validate = new Ajv2020({allErrors:true}).compile(contract);
+    const input = {target:{scope:'actor_item',actor_id:'actor:A',item_id:'item:ledger'},payload};
+    assert.equal(validate(input),true,JSON.stringify(validate.errors));
+    assert.deepEqual(inspectDomainEffect({...envelope,operation,...input}).errors,[]);
+    if (operation==='upsert') {
+      const liveFailure = {target:{actor_id:'actor:A'},payload:{item_id:'item:ledger',display_name:'登记册副本',category:'DOCUMENT',quantity:1,canonical_ref:null,equipped_slot:null}};
+      assert.equal(validate(liveFailure),false);
+      assert.ok(validate.errors.length>=5,'all missing target/version fields and invalid category must be visible together');
+      assert.deepEqual(inspectDomainEffect({...envelope,operation,...liveFailure}).errors[0].details.expected_input_contract,contract);
+    }
+  }
+});
+
 await test('unregistered model effects are repaired in the same Referee session before adoption', async () => {
   const invalid = resolutionCandidate();
   invalid.effects[0].domain = 'world_state';

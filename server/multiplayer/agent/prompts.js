@@ -2,11 +2,12 @@ import { canonicalStringify, canonicalizeJson } from '../domain/canonical-json.j
 import { DomainError } from '../domain/errors.js';
 import { assertUpdateObligations } from '../contracts/obligation-contracts.js';
 import { DOMAIN_REDUCER_REGISTRY } from '../domain/reducers/registry.js';
+import { itemEffectInputContract } from '../domain/reducers/skill-item.js';
 import { visibleOpeningDraft } from '../../../js/multiplayer/opening-draft-bridge.js';
 import { DEFAULT_MAIN_PRESET, resolvePresetMacros } from '../../../js/data/default-preset.js';
 
 export const AGENT_PROMPT_VERSIONS = Object.freeze({
-  referee: 'multiplayer-referee/v6',
+  referee: 'multiplayer-referee/v7',
   writer: 'multiplayer-writer/v4',
   resolution_completeness_reviewer: 'multiplayer-resolution-completeness-reviewer/v3',
   narrative_grounding_reviewer: 'multiplayer-narrative-grounding-reviewer/v3',
@@ -33,7 +34,7 @@ export const REFEREE_SYSTEM_PROMPT = `
 9. 需要权威检定时，当次响应只能提交一个 request_resolution_check；收到受信的 protocol/tool result 后才能引用固化 check_id。
 10. 无需检定或检定已完成时，整条响应只能是 naruto.multiplayer-resolution-candidate/v1 JSON；不得附加正文、XML、变量 path 或解释性散文。
 11. opening_scene 必须让两份锚点各有一个 outcome，并在不替玩家作决定的可行动节点停止；可以建立环境、NPC 引子和双方开局资料中已经明确的处境，不得擅自完成 opening_hook 或目标。
-12. trusted_effect_operations 是服务器允许的 domain/kind/operation 组合，只能从中选择，禁止发明 scene_placement、open_scene 等操作。target 与 payload 仍须符合该操作的固定合同。
+12. trusted_effect_operations 是服务器允许的 domain/kind/operation 组合，只能从中选择，禁止发明 scene_placement、open_scene 等操作。input_contract 给出 target 与 payload 的完整字段、枚举和版本规则，生成或修正时一次对照全部字段，不能把物品的状态对象直接复制成 payload。
 13. 开场资料已经写入 base_state；描述初始位置、时间、同场镜头不需要再写 effect。没有真实状态变化时 effects=[]，相关 event.effect_ids=[]。禁止为了“建立场景”伪造位置更新、任务或计数。
 14. 你同时负责让世界主动运转。opening_scene 必须把开场情境具体化为正在发生的事件：场景细节、NPC 的来意与可见举动、一个尚待玩家回应的变化。开局资料已明确的初始站位、既往经历和既定处境可以采用；不要把“不能替玩家选择”误解为禁止 NPC 行动或禁止事件发生。通常建立 3—6 个有实质内容的事件，给正文足够素材；不能只记录日期、地点和“等待行动”。
 15. 使用 detailed_draft 中的时代、叙事基调、剧情重心、身份、能力和羁绊组织场景；未填写的普通环境和配角可以合理建立。秘密只投影给有权知晓者。事件 summary 只写世界里发生的事，不写“共同成立”“锚点”“未确认行踪”“没有替玩家决定”等规则解释。
@@ -207,7 +208,10 @@ export function buildRefereePrompt({ referee_input, evidence = {}, transport_mod
     stage: 'referee',
     prompt_version: AGENT_PROMPT_VERSIONS.referee,
     transport_mode,
-    trusted_effect_operations: DOMAIN_REDUCER_REGISTRY.effects.map(({ domain, kind, operation }) => ({ domain, kind, operation })),
+    trusted_effect_operations: DOMAIN_REDUCER_REGISTRY.effects.map(({ domain, kind, operation }) => ({
+      domain, kind, operation,
+      ...(domain === 'item' ? { input_contract: itemEffectInputContract(operation) } : {})
+    })),
     ...refereeInputPayload(referee_input),
     trusted_evidence: evidence
   });

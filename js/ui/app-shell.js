@@ -1,4 +1,5 @@
 import { eventBus } from '../core/event-bus.js';
+import { readTokenUsage, formatTokenUsage } from '../core/deepseek-mode.js';
 import { stateManager } from '../core/state-manager.js';
 import { icon } from '../utils/icons.js';
 import { escHtml, escAttr, formatGameTime } from '../utils/format.js';
@@ -7,6 +8,7 @@ import { getMainPreset } from '../data/default-preset.js';
 import { instructionParser } from '../core/instruction-parser.js';
 import { isNarrativeReviewEnabled } from '../core/narrative-review.js';
 import { buildPresetPresentation } from '../core/preset-regex-runtime.js';
+import { sanitizeNarrativeDisplayText } from '../core/narrative-artifact.js';
 import { inspectImportedPresetOutputProfile } from '../core/main-preset-compatibility.js';
 import { readImportedPresetDebugLog } from '../core/imported-preset-debug-log.js';
 import { imageStudio } from '../core/image-studio/index.js';
@@ -14,6 +16,7 @@ import { TIMELINE_FILE_ACCEPT } from '../core/timeline-file-codec.js';
 import { mountTurnIllustration } from './image-studio.js';
 import { mountPresetOutputSandbox } from './preset-output-sandbox.js';
 import { createShinobiDailyTrigger } from './shinobi-daily-modal.js';
+import { createTurnReceiptCard } from './turn-receipt-card.js';
 import { atmosphereManager } from './atmosphere-manager.js';
 import { isNativeAndroidApp, isMultiplayerEntryVisible } from '../core/runtime-platform.js';
 import {
@@ -38,6 +41,7 @@ class AppShell {
     this._agentReasoningAgent = null;
     this._lastSubmittedInput = '';
     this._multiplayerSessionState = null;
+    this._enterKeyMode = 'send';
   }
 
   init(container) {
@@ -46,6 +50,9 @@ class AppShell {
     this.element.id = 'app-shell';
     container.appendChild(this.element);
     this._loadRecentInputs();
+    try {
+      this._enterKeyMode = localStorage.getItem('naruto_chat_enter_mode') === 'newline' ? 'newline' : 'send';
+    } catch { /* Keep the default when browser storage is unavailable. */ }
     this._renderShell();
     this._bindEvents();
   }
@@ -62,6 +69,7 @@ class AppShell {
         <div class="topbar-right" aria-label="界面切换">
           ${multiplayerEntryVisible ? '<button class="topbar-btn topbar-btn--multiplayer" id="btn-multiplayer" title="双人联机" aria-pressed="false"><span aria-hidden="true">双</span><span class="topbar-btn-label">联机</span></button><span class="topbar-divider"></span>' : ''}
           <button class="topbar-btn topbar-btn--panel" id="btn-panel" title="角色面板" aria-pressed="true">${icon('panel')}<span class="topbar-btn-label">面板</span></button>
+          <button class="topbar-btn topbar-btn--combat" id="btn-combat" title="打开战斗面板" aria-label="战斗面板" aria-pressed="false">${icon('combat')}<span class="topbar-btn-label">战斗</span></button>
           <span class="topbar-divider"></span>
           <button class="topbar-btn topbar-btn--developer" id="btn-developer" title="提示词查看" aria-pressed="false">${icon('developer')}<span class="topbar-btn-label">提示词查看</span></button>
           <span class="topbar-divider"></span>
@@ -95,6 +103,7 @@ class AppShell {
             <div class="recent-inputs" id="recent-inputs"></div>
             <div class="input-wrapper">
               <textarea id="chat-input" placeholder="提笔写下你的决断..." rows="1" aria-label="输入行动"></textarea>
+              <button id="btn-enter-mode" type="button"><span class="chat-enter-mode-key" aria-hidden="true">↵</span><span class="chat-enter-mode-label">回车发送</span></button>
               <button id="btn-cancel">✕ 解印</button>
               <button id="btn-send">${icon('send', 16)}结印</button>
             </div>
@@ -124,8 +133,17 @@ class AppShell {
     cancelBtn.addEventListener('click', () => eventBus.emit('pipeline:cancel'));
 
     const textarea = this.element.querySelector('#chat-input');
+    this._syncEnterKeyMode();
+    this.element.querySelector('#btn-enter-mode').addEventListener('click', () => {
+      this._enterKeyMode = this._enterKeyMode === 'send' ? 'newline' : 'send';
+      try { localStorage.setItem('naruto_chat_enter_mode', this._enterKeyMode); }
+      catch { /* The choice still applies for this session. */ }
+      this._syncEnterKeyMode();
+      textarea.focus({ preventScroll: true });
+    });
     textarea.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && this._enterKeyMode === 'send') {
         e.preventDefault();
         this._sendMessage();
         return;
@@ -143,6 +161,7 @@ class AppShell {
       eventBus.emit('app:open-multiplayer');
     });
     this.element.querySelector('#btn-panel').addEventListener('click', () => this._togglePanel());
+    this.element.querySelector('#btn-combat').addEventListener('click', () => this._setCombatPanel(!stateManager.getSub('_ui')?.settings?.tacticalCombat));
     this.element.querySelector('#btn-developer').addEventListener('click', () => this._toggleDeveloperPanel());
     this.element.querySelector('#btn-timeline').addEventListener('click', () => this._toggleSidebar());
     this.element.querySelector('#btn-save-library')?.addEventListener('click', () => eventBus.emit('app:open-saves'));
@@ -198,7 +217,7 @@ class AppShell {
     if (this._shortcutsBound) return;
     this._shortcutsBound = true;
     document.addEventListener('keydown', (e) => {
-      if (e.isComposing || e.altKey) return;
+      if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || e.altKey) return;
       const tag = (e.target?.tagName || '').toLowerCase();
       const inEditable = tag === 'textarea' || tag === 'input' || e.target?.isContentEditable;
       if (e.key === 'Escape' && this._isProcessing) {
@@ -278,6 +297,8 @@ class AppShell {
     });
 
     eventBus.on('pipeline:processing', () => {
+      this._currentReceiptHost = null;
+      this._receiptViewRevision = (this._receiptViewRevision || 0) + 1;
       this._turnUpdates = [];
       this._captureUpdates = true;
       this._agentStreamAgent = null;
@@ -345,13 +366,13 @@ class AppShell {
       }
     });
 
-    eventBus.on('pipeline:complete', ({ rawResponse, cleanResponse, thinkContent, turnCount, hasHUD, isPartial, timelineError, timelineNodeId, shinobiDaily }) => {
+    eventBus.on('pipeline:complete', ({ rawResponse, cleanResponse, thinkContent, turnCount, hasHUD, isPartial, timelineError, timelineNodeId, shinobiDaily, turnReceipt }) => {
       // Agent 模式下把 final-writer 捕获到的推演摘要并入最终消息折叠块。
       const mergedThink = this._agentReasoningText
         ? `${thinkContent || ''}\n\n## 主模型思维链\n\n${this._agentReasoningText}`
         : thinkContent;
       this._agentReasoningText = '';
-      this._finalizeMessage(cleanResponse, rawResponse, mergedThink, isPartial, hasHUD, this._lastDice, shinobiDaily);
+      this._finalizeMessage(cleanResponse, rawResponse, mergedThink, isPartial, hasHUD, this._lastDice, shinobiDaily, turnReceipt);
       if (!isPartial && timelineNodeId) void this._mountTurnIllustration(timelineNodeId, cleanResponse);
       // Update turn display inline (method was removed)
       const turnEl = this.element.querySelector('#status-turn');
@@ -380,10 +401,12 @@ class AppShell {
       draftResponse,
       isTruncated,
       partialResponse,
-      lastUserInput
+      lastUserInput,
+      turnReceipt
     }) => {
       this._setProcessing(false);
       this._captureUpdates = false;
+      const failedContent = this._streamingEl?.querySelector('.chat-content');
       this._settleStreamingError();
       const container = this.element?.querySelector('#chat-messages') || this.element;
       if (!container) return;
@@ -488,6 +511,13 @@ class AppShell {
         }
       });
       container.appendChild(errDiv);
+      // Use a host captured from this request only. Never append a failed
+      // request's receipt to the previous completed turn still on screen.
+      if (turnReceipt) {
+        const receiptHost = failedContent?.isConnected && !failedContent.classList.contains('streaming-placeholder')
+          ? failedContent : this._currentReceiptHost?.isConnected ? this._currentReceiptHost : errDiv;
+        this._mountTurnReceipt(turnReceipt, receiptHost);
+      }
       this._scroll();
     });
 
@@ -529,26 +559,20 @@ class AppShell {
 
     eventBus.on('ai:usage', (usage) => {
       if (!usage) return;
-      let hit = Number(usage.prompt_cache_hit_tokens) || 0;
-      let miss = Number(usage.prompt_cache_miss_tokens) || 0;
-      // Claude: cache_read = hit, cache_creation = miss (first-time write)
-      if (hit + miss === 0) {
-        hit = Number(usage.cache_read_input_tokens) || 0;
-        miss = Number(usage.cache_creation_input_tokens) || 0;
-      }
+      const { hit, miss, cacheKnown } = readTokenUsage(usage);
       const total = hit + miss;
       const el = this.element?.querySelector('#status-cache');
       if (!el) return;
-      if (total > 0) {
+      if (cacheKnown && total > 0) {
         const rate = Math.round((hit / total) * 100);
         const color = rate >= 90 ? '#66BB6A' : rate >= 50 ? '#c69c6d' : '#eb613f';
         el.style.color = color;
         el.textContent = `◉ ${rate}%`;
-        el.title = `缓存命中: ${hit} tokens / 未命中: ${miss} tokens`;
+        el.title = formatTokenUsage(usage);
       } else if (usage.prompt_tokens || usage.input_tokens) {
         el.style.color = '#a39f98';
         el.textContent = `◉ ---`;
-        el.title = `本次输入: ${usage.prompt_tokens || usage.input_tokens} tokens（缓存字段缺失）`;
+        el.title = formatTokenUsage(usage);
       } else {
         el.style.color = '#6e6a65';
         el.textContent = `◉ ---`;
@@ -559,12 +583,20 @@ class AppShell {
     eventBus.on('app:toast', (text) => this._showToast(text));
 
     eventBus.on('combat:started', (data) => {
-      this._showToast(`遭遇战: ${data?.enemy_name || '不明敌人'}`);
+      if (stateManager.getSub('_ui')?.settings?.tacticalCombat) this._showToast(`遭遇战: ${data?.enemy_name || '不明敌人'}`);
+      this._syncCombatArena();
     });
     eventBus.on('combat:ended', ({ result }) => {
       const label = result === 'victory' ? '胜利' : result === 'defeat' ? '败北' : result === 'retreat' ? '撤退' : '结束';
-      this._showToast(`战斗${label}`);
+      if (stateManager.getSub('_ui')?.settings?.tacticalCombat) this._showToast(`战斗${label}`);
+      this._syncCombatArena();
     });
+    eventBus.on('state:changed', ({ key } = {}) => {
+      if (key === '_combat' || key === '_ui' || key?.startsWith('_ui.')) this._syncCombatArena();
+    });
+    eventBus.on('state:restored', () => this._syncCombatArena());
+    eventBus.on('state:reset', () => this._syncCombatArena());
+    eventBus.on('combat:panel-close', () => this._setCombatPanel(false));
 
     eventBus.on('attribute:level-up', ({ exp, needed }) => {
       this._showToast(`历练达成 ${exp}/${needed}，可申请晋升考核`);
@@ -658,7 +690,7 @@ class AppShell {
     this._pendingActions.push(actionText);
     const textarea = this.element.querySelector('#chat-input');
     if (textarea && textarea.value.trim() === '') {
-      textarea.placeholder = `(已准备 ${this._pendingActions.length} 个动作，输入指令或直接按回车执行)`;
+      textarea.placeholder = `(已准备 ${this._pendingActions.length} 个动作，输入指令或点击结印执行)`;
     }
   }
 
@@ -715,6 +747,8 @@ class AppShell {
 
   _setProcessing(isProcessing) {
     this._isProcessing = isProcessing;
+    const combatButton = this.element?.querySelector('#btn-combat');
+    if (combatButton) combatButton.disabled = isProcessing || Boolean(this._multiplayerSessionState);
     this.element?.classList.toggle('is-processing', isProcessing);
     const textarea = this.element?.querySelector('#chat-input');
     const sendBtn = this.element?.querySelector('#btn-send');
@@ -756,6 +790,19 @@ class AppShell {
     if (!textarea) return;
     textarea.style.height = 'auto';
     textarea.style.height = `${Math.min(textarea.scrollHeight, 140)}px`;
+  }
+
+  _syncEnterKeyMode() {
+    const button = this.element?.querySelector('#btn-enter-mode');
+    if (!button) return;
+    const sends = this._enterKeyMode === 'send';
+    const label = sends ? '回车发送' : '回车换行';
+    const nextLabel = sends ? '回车换行' : '回车发送';
+    button.dataset.mode = this._enterKeyMode;
+    button.querySelector('.chat-enter-mode-label').textContent = label;
+    button.setAttribute('aria-label', `${label}，点击切换为${nextLabel}`);
+    button.title = `${label}；点击切换为${nextLabel}。Shift+Enter 换行，Ctrl/⌘+Enter 发送。`;
+    this.element?.querySelector('#chat-input')?.setAttribute('enterkeyhint', sends ? 'send' : 'enter');
   }
 
   _addToRecentInputs(text) {
@@ -848,7 +895,37 @@ class AppShell {
     this._addSystemMessage(text, type);
   }
 
+  _setCombatPanel(enabled) {
+    if (this._isProcessing || this._multiplayerSessionState) return;
+    const ui = stateManager.getSub('_ui') || {};
+    stateManager.setSub('_ui', { ...ui, settings: { ...ui.settings, tacticalCombat: Boolean(enabled) } });
+    if (!enabled) eventBus.emit('combat:select-action', { moveId: null, message: '' });
+    void stateManager.saveUIPrefs?.().catch(error => console.warn('[CombatPanel] Preference save failed:', error.message));
+    if (enabled) this.element?.querySelector('combat-arena')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  _syncCombatArena() {
+    const messages = this.element?.querySelector('#chat-messages');
+    if (!messages) return;
+    const enabled = stateManager.getSub('_ui')?.settings?.tacticalCombat === true;
+    const visible = !this._multiplayerSessionState && enabled;
+    const button = this.element?.querySelector('#btn-combat');
+    button?.setAttribute('aria-pressed', String(visible));
+    if (button) {
+      button.title = visible ? '关闭战斗面板，恢复普通叙事' : '打开战斗面板';
+      button.disabled = this._isProcessing || Boolean(this._multiplayerSessionState);
+    }
+    const existing = messages.querySelector('combat-arena');
+    if (!visible) { existing?.remove(); return; }
+    const arena = existing || document.createElement('combat-arena');
+    arena.toggleAttribute('data-disabled', this._isProcessing);
+    arena.setActionDisabled?.(this._isProcessing);
+    if (!existing) messages.appendChild(arena);
+  }
+
   renderSinglePage(text, { timelineNodeId = null, multiplayer = false } = {}) {
+    const receiptRevision = this._receiptViewRevision = (this._receiptViewRevision || 0) + 1;
+    this._currentReceiptHost = null;
     this._showGame();
     const msgs = this.element.querySelector('#chat-messages');
     if (!msgs) return;
@@ -857,16 +934,13 @@ class AppShell {
     div.className = 'chat-message chat-message--ai';
     div.innerHTML = `<div class="chat-content">${this._renderMarkdown(text)}</div>`;
     msgs.appendChild(div);
-
-    // Add combat arena if active and setting is enabled
-    const combat = stateManager.getSub('_combat');
-    const tacticalCombat = stateManager.getSub('_ui').settings.tacticalCombat;
-    if (!multiplayer && combat?.is_active && tacticalCombat) {
-      const wrap = document.createElement('div');
-      const arena = document.createElement('combat-arena');
-      wrap.appendChild(arena);
-      msgs.appendChild(wrap);
+    if (!multiplayer) {
+      const receiptHost = div.querySelector('.chat-content');
+      this._mountTurnReceipt(null, receiptHost);
+      if (timelineNodeId) void this._mountStoredTurnReceipt(timelineNodeId, receiptHost, receiptRevision);
     }
+
+    if (!multiplayer) this._syncCombatArena();
     if (timelineNodeId) {
       void this._mountTurnIllustration(timelineNodeId, text);
       void this._mountStoredShinobiDaily(timelineNodeId);
@@ -1104,9 +1178,10 @@ class AppShell {
       this._appendPresetHostActions(container, presentation.actions);
       return;
     }
-    const text = presentation?.kind === 'markdown'
+    const text = presentation?.kind === 'markdown' && String(presentation.text || '').trim()
       ? presentation.text
-      : (presentation?.fallbackText || cleanText || '');
+      : (sanitizeNarrativeDisplayText(presentation?.fallbackText || '')
+        || sanitizeNarrativeDisplayText(cleanText || ''));
     container.innerHTML = this._renderMarkdown(String(text || ''));
   }
 
@@ -1122,7 +1197,28 @@ class AppShell {
     }
   }
 
-  _finalizeMessage(text, rawText, thinkContent, isPartial = false, hasHUD = false, dice = null, shinobiDaily = null) {
+  _mountTurnReceipt(receipt, host) {
+    if (!host) return;
+    try {
+      host.querySelector('[data-turn-receipt-host]')?.remove();
+      host.appendChild(createTurnReceiptCard(receipt));
+      this._currentReceiptHost = host;
+    } catch (error) {
+      console.warn('[AppShell] Unable to show turn receipt:', error?.message);
+    }
+  }
+
+  async _mountStoredTurnReceipt(nodeId, host, revision) {
+    try {
+      const node = await stateManager.dbGet('timeline_nodes', nodeId);
+      if (!host?.isConnected || this._receiptViewRevision !== revision) return;
+      this._mountTurnReceipt(node?.turn_receipt || null, host);
+    } catch (error) {
+      console.warn('[AppShell] Unable to restore turn receipt:', error?.message);
+    }
+  }
+
+  _finalizeMessage(text, rawText, thinkContent, isPartial = false, hasHUD = false, dice = null, shinobiDaily = null, turnReceipt = null) {
     if (!this._streamingEl) {
       this._updateStreaming(text);
     }
@@ -1172,7 +1268,7 @@ class AppShell {
 
       // Build the variable update panel — shown when there ARE actual changes
       // (regardless of hasHUD, so secondary updater changes also display)
-      const varPanel = this._buildVarUpdatePanel(updates);
+      const varPanel = turnReceipt ? null : this._buildVarUpdatePanel(updates);
       if (varPanel) {
         const panel = document.createElement('div');
         panel.className = 'var-update-panel';
@@ -1195,19 +1291,10 @@ class AppShell {
         contentEl.appendChild(note);
       }
       if (shinobiDaily) this._mountShinobiDaily(shinobiDaily);
+      this._mountTurnReceipt(turnReceipt, contentEl);
       this._streamingEl = null;
     }
-    const combat = stateManager.getSub('_combat');
-    const tacticalCombat = stateManager.getSub('_ui').settings.tacticalCombat;
-    if (combat?.is_active && tacticalCombat) {
-      const msgs = this.element.querySelector('#chat-messages');
-      if (msgs && !msgs.querySelector('combat-arena')) {
-        const wrap = document.createElement('div');
-        const arena = document.createElement('combat-arena');
-        wrap.appendChild(arena);
-        msgs.appendChild(wrap);
-      }
-    }
+    this._syncCombatArena();
     this._scroll();
   }
 
@@ -1526,6 +1613,8 @@ class AppShell {
 
     const originalHtml = contentEl.innerHTML;
     const shinobiDaily = contentEl.querySelector('[data-shinobi-daily-host]')?.shinobiDaily || null;
+    const receiptCard = contentEl.querySelector('[data-turn-receipt-host]');
+    const turnReceipt = receiptCard?.receipt || null;
     const textarea = document.createElement('textarea');
     textarea.className = 'edit-textarea';
     textarea.value = currentText;
@@ -1555,6 +1644,7 @@ class AppShell {
         const trigger = createShinobiDailyTrigger(shinobiDaily);
         if (trigger) contentEl.appendChild(trigger);
       }
+      if (receiptCard) this._mountTurnReceipt(turnReceipt, contentEl);
       this._updateNodeResponse(newText);
     });
 
@@ -1565,6 +1655,7 @@ class AppShell {
         const trigger = createShinobiDailyTrigger(shinobiDaily);
         if (trigger) contentEl.appendChild(trigger);
       }
+      if (receiptCard) this._mountTurnReceipt(turnReceipt, contentEl);
       editBar.style.display = '';
     });
   }
@@ -2157,6 +2248,7 @@ class AppShell {
 
   setMultiplayerSessionState(state) {
     this._multiplayerSessionState = state?.room?.lifecycle === 'ACTIVE' ? state : null;
+    this._syncCombatArena();
     const active = Boolean(this._multiplayerSessionState);
     this.element?.classList.toggle('app-shell--multiplayer', active);
     const topButton = this.element?.querySelector('#btn-multiplayer');

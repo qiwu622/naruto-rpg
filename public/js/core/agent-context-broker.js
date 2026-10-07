@@ -1,4 +1,15 @@
 import { TurnEvidenceCompiler } from './turn-evidence.js';
+import { projectNarrativeForMemory } from './narrative-memory.js';
+
+function nodeNarrative(node) {
+  const history = node.chat_history_delta || node.chat_history || [];
+  const assistant = history.findLast(message => message?.role === 'assistant');
+  return projectNarrativeForMemory(assistant?.content ?? node.ai_response ?? node.clean_response ?? node.ai_response_summary);
+}
+
+function historyContent(message) {
+  return message?.role === 'assistant' ? projectNarrativeForMemory(message.content) : message?.content;
+}
 
 export const AGENT_CONTEXT_SCHEMA = 'naruto.agent-context/v1';
 export const AGENT_CONTEXT_DOMAINS = Object.freeze([
@@ -272,7 +283,7 @@ export class AgentContextBroker {
       add(name, memory, 'character-memory', `agent-memory:${name}`);
     }
 
-    const memory = context.state?._memory || {};
+    const memory = projectCorrectedMemory(context.state?._memory || {});
     for (const line of String(memory.npc_notes || '').split(/\r?\n/).filter(Boolean)) {
       const separator = line.indexOf(': ');
       const name = separator > 0 ? line.slice(0, separator) : '';
@@ -290,7 +301,7 @@ export class AgentContextBroker {
     }
     const nodes = await this._timelineNodes(context);
     for (const node of nodes.slice(-24)) {
-      const visibleHistory = [node.player_input, node.ai_response, node.memory_summary]
+      const visibleHistory = [node.player_input ? `玩家意图: ${node.player_input}` : '', nodeNarrative(node), projectNarrativeForMemory(node.memory_summary || node.summary)]
         .map(value => text(value, 2400)).filter(Boolean).join('\n');
       if (!visibleHistory || !historyNames
         .some(name => visibleHistory.includes(name))) continue;
@@ -325,7 +336,7 @@ export class AgentContextBroker {
     liveHistory.forEach((message, index) => messages.push({
       id: `chat:live:${index}`,
       role: message?.role,
-      content: text(message?.content, 4000),
+      content: text(historyContent(message), 4000),
       turn: null,
       source: 'chat-history'
     }));
@@ -336,7 +347,7 @@ export class AgentContextBroker {
         nodeMessages.forEach((message, index) => messages.push({
           id: `chat:${node.id}:${index}`,
           role: message?.role,
-          content: text(message?.content, 4000),
+          content: text(historyContent(message), 4000),
           turn: Number(node.turn ?? node.turn_count ?? node.state_snapshot?.['系统·回合数']) || 0,
           source: `timeline:${node.id}`
         }));
@@ -400,9 +411,9 @@ export class AgentContextBroker {
 
     let memoryContext = '';
     try {
-      memoryContext = this.memorySystem?.buildPromptContext?.(context.state?._memory, {
+      memoryContext = projectNarrativeForMemory(this.memorySystem?.buildPromptContext?.(context.state?._memory, {
         userInput: context.query
-      }) || '';
+      }) || '');
     } catch { memoryContext = ''; }
     if (memoryContext) items.push({
       id: `world:memory:${context.branchId}:${context.turn}`,
@@ -414,7 +425,7 @@ export class AgentContextBroker {
     });
     const nodes = await this._timelineNodes(context);
     for (const node of nodes.slice(-30)) {
-      const summary = [node.player_input, node.ai_response, node.memory_summary]
+      const summary = [node.player_input ? `玩家意图: ${node.player_input}` : '', nodeNarrative(node), projectNarrativeForMemory(node.memory_summary || node.summary)]
         .map(value => text(value, 2600)).filter(Boolean).join('\n');
       if (!summary) continue;
       const relevance = score(summary, queryTokens, context.npcName ? [context.npcName] : []);
@@ -498,3 +509,4 @@ export class AgentContextBroker {
 export const agentContextBroker = new AgentContextBroker();
 
 export default agentContextBroker;
+import { projectCorrectedMemory } from './memory-corrections.js';

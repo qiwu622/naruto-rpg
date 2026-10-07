@@ -177,8 +177,22 @@ export class LocalSaveLibrary {
 
   async export(id, kind, owner = 'device') {
     const entry = await this.get(id, kind, owner);
-    const pack = await this.readPackage(id, kind, owner);
-    const encoded = await encodeTimelineSave({ ...pack, label: entry.label });
+    const stored = await this._read('files', id);
+    if (!(stored?.blob instanceof Blob) || !stored.blob.size) throw new Error('此存档尚未保存本地快照文件');
+    // A library snapshot was validated when stored. Backup copies its exact
+    // bytes; decoding here reapplied the external-import 200 MiB limit and
+    // doubled the memory cost for large saves. The captured label/checksum stay
+    // intact; later library renames are reflected in the download filename.
+    const header = new Uint8Array(await stored.blob.slice(0, 2).arrayBuffer());
+    const gzip = header[0] === 0x1f && header[1] === 0x8b;
+    const mimeType = gzip ? 'application/gzip' : 'application/json';
+    const encoded = {
+      blob: stored.blob.slice(0, stored.blob.size, mimeType),
+      format: gzip ? 'gzip' : 'json',
+      extension: gzip ? '.json.gz' : '.json',
+      mimeType,
+      fallbackReason: ''
+    };
     const name = `${kind === ROOM_SAVE_KIND ? '联机房间' : '个人存档'}-${entry.label || '存档'}`.replace(/[\\/:*?"<>|]/g, '_');
     const download = await downloadSaveFile(encoded.blob, `${name}${encoded.extension}`);
     return { ...encoded, cancelled: download.cancelled === true };

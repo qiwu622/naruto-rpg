@@ -5,6 +5,8 @@ import { eventBus } from './core/event-bus.js';
 import { MessagePipeline } from './core/pipeline.js';
 import { timelineSystem } from './systems/timeline-system.js';
 import { combatSystem } from './systems/combat-system.js';
+import { listTacticalMoves } from './systems/tactical-combat.js';
+import { inferTacticalMoveId, tacticalSourceFingerprint } from './systems/tactical-combat-session.js';
 import {
   buildCombatPlayerActionMessage,
   combatPlayerActionDefinition
@@ -14,10 +16,15 @@ import { relationshipSystem } from './systems/relationship-system.js';
 import { memorySystem } from './systems/memory-system.js';
 import { cloudSave } from './core/cloud-save.js';
 import { personalSaveLibrary } from './core/personal-save-library.js';
+import { saveLibraryCloud } from './core/save-library-cloud.js';
+import { continuationSaveScope } from './core/continuation-save.js';
 import { ROOM_SAVE_KIND, SAVE_PACKAGE_SCHEMA } from './core/save-library.js';
 import { localRoomHistory } from './multiplayer/local-room-history.js';
 import { openSaveLibrary } from './ui/save-library-panel.js';
 import { authClient } from './core/auth-client.js';
+import { startAppCloudChecks } from './core/app-cloud.js';
+import { cloudConnectionEnabled } from './core/project-server.js';
+import './ui/app-cloud-panel.js';
 import { worldStateSystem } from './systems/world-state-system.js';
 import { errorHandler } from './utils/error-handler.js';
 import { loadingIndicator } from './utils/loading-indicator.js';
@@ -165,7 +172,7 @@ class NarutoRPGApp {
     this._musicPlayerStateCleanup ||= bindMusicFloatingPlayer(musicPlayback);
 
     appShell.init(container);
-    if (usesProjectServerFeatures()) void this._checkRuntimeBuild();
+    if (!isNativeAndroidApp()) void this._checkRuntimeBuild();
     if (!container.querySelector('lingxi-companion')) {
       container.appendChild(document.createElement('lingxi-companion'));
     }
@@ -228,6 +235,7 @@ class NarutoRPGApp {
           console.log('[NarutoRPG] App initialized');
           this._scheduleMultiplayerRestore();
           this._scheduleAppUpdateCheck();
+          this._startAppCloudChecks();
           return;
         } catch (e) {
           console.warn('[NarutoRPG] Failed to restore saved game:', e.message);
@@ -243,6 +251,19 @@ class NarutoRPGApp {
     console.log('[NarutoRPG] App initialized');
     this._scheduleMultiplayerRestore();
     this._scheduleAppUpdateCheck();
+    this._startAppCloudChecks();
+  }
+
+  _startAppCloudChecks() {
+    if (this._stopAppCloudChecks) return;
+    this._stopAppCloudChecks = startAppCloudChecks();
+  }
+
+  async _resumeNativeCloudSync() {
+    if (!isNativeAndroidApp() || !cloudConnectionEnabled() || authClient.getCloudError()
+      || this.pipeline?.isProcessing || this._saveTransition || localStorage.getItem('naruto_auto_cloud_sync') !== 'true') return;
+    const scope = await this._refreshCloudSyncContext();
+    if (scope?.userId && scope.saveKey) await this._queueCloudSave(scope);
   }
 
   _scheduleAppUpdateCheck() {
@@ -317,8 +338,47 @@ class NarutoRPGApp {
   }
 
   _bindEvents() {
+    eventBus.on('auth:cloud-ready', () => { void this._resumeNativeCloudSync().catch(error => console.warn('[CloudSave] 本地已保存，恢复同步待重试:', error.message)); });
+    eventBus.on('auth:changed', () => {
+      if (isNativeAndroidApp()) this._multiplayerOverlay?.panel?.controller?.disconnect({ reset: true });
+      this._clearCloudSyncContext();
+      void this._refreshCloudSyncContext().catch(error => console.warn('[CloudSave] 账号同步状态更新失败:', error.message));
+      if (isNativeAndroidApp()) void this._resumeNativeCloudSync().catch(error => console.warn('[CloudSave] 本地已保存，恢复同步待重试:', error.message));
+    });
+    eventBus.on('timeline:node-created', node => this._markPersistedCloudLocal(node?.id));
+    eventBus.on('pipeline:complete', result => {
+      if (result?.isPartial || result?.timelineError || !result?.timelineNodeId) return;
+      return this._syncCommittedCloudSave(result.timelineNodeId);
+    });
+    eventBus.on('timeline:imported', () => {
+      if (this._saveTransition) return;
+      this._clearCloudSyncContext();
+      return this._refreshCloudSyncContext({ resetBinding: true });
+    });
+    eventBus.on('memory:correction-requested', request => this._personalSaveOperation(async () => {
+      const node = await timelineSystem.commitMemoryCorrection(request);
+      const history = await timelineSystem._reconstructChatHistory(node);
+      this.pipeline?.setHistory(history);
+      appShell.restoreChatHistory(history, node.clean_response || node.ai_response_summary || '记忆已修订。', { timelineNodeId: node.id });
+      eventBus.emit('app:toast', '记忆修订已保存；原时间线节点仍可读取。');
+      return node;
+    }));
+    eventBus.on('memory:source-requested', async ({ nodeId } = {}) => {
+      const raw = nodeId ? await stateManager.dbGet('timeline_nodes', nodeId) : null;
+      const node = raw ? await timelineSystem._hydrateNode(raw) : null;
+      if (!node) throw new Error('此来源节点未包含在当前存档中；精简续玩档可能未保留旧正文。');
+      const content = document.createElement('div');
+      content.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8;max-height:60vh;overflow:auto';
+      content.textContent = node.clean_response || node.ai_response_summary || '此节点没有保留正文。';
+      const modal = document.createElement('game-modal');
+      (document.getElementById('app') || document.body).appendChild(modal);
+      modal.show({ title: `记忆来源 · 第 ${node.turn_number} 回合`, content: '<div data-memory-source></div>',
+        buttons: [{ label: '关闭', onClick: () => modal.close() }] });
+      modal.shadowRoot.querySelector('[data-memory-source]').appendChild(content);
+      return { nodeId: node.id };
+    });
     eventBus.on('app:open-saves', async (options = {}) => {
-      if (usesProjectServerFeatures()) await authClient.checkAuth();
+      await this._refreshCloudSyncContext();
       // Capture the legacy working timeline on first use, without replacing it.
       let migrationError = null;
       if (!this.pipeline?.isProcessing && !this._saveTransition && !this._multiplayerOverlay?.panel?.controller?.state?.roomId) {
@@ -330,8 +390,13 @@ class NarutoRPGApp {
       return modal;
     });
     eventBus.on('app:save-personal', () => this._personalSaveOperation(() => personalSaveLibrary.capture()));
+    eventBus.on('app:create-continuation-save', (options = {}) => this._personalSaveOperation(() => personalSaveLibrary.createContinuation(options)));
     eventBus.on('app:load-personal-save', ({ id }) => this._personalSaveOperation(async () => {
-      const node = await personalSaveLibrary.load(id);
+      this._clearCloudSyncContext();
+      let node;
+      try { node = await personalSaveLibrary.load(id); }
+      catch (error) { await this._refreshCloudSyncContext(); throw error; }
+      await this._refreshCloudSyncContext({ resetBinding: true, source: saveLibraryCloud.getSource(id) });
       const history = await timelineSystem._reconstructChatHistory(node);
       this.pipeline?.setHistory(history);
       appShell.showGame();
@@ -355,7 +420,8 @@ class NarutoRPGApp {
           await localRoomHistory.importPackage(data);
           await openSaveLibrary({ kind: ROOM_SAVE_KIND });
         } else {
-          await personalSaveLibrary.importData(data);
+          const imported = await personalSaveLibrary.importData(data);
+          saveLibraryCloud.forgetSource(imported.id);
           await eventBus.request('app:open-saves');
         }
         eventBus.emit('app:toast', '存档已加入本地存档库，选择“读取”即可继续；当前进度没有被覆盖。');
@@ -386,6 +452,34 @@ class NarutoRPGApp {
     eventBus.on('user:input', (text) => this._handleUserInput(text));
 
     eventBus.on('combat:player-action', ({ action }) => this._submitCombatAction(action));
+    eventBus.on('combat:select-action', ({ moveId, message } = {}) => {
+      const state = stateManager.get();
+      if (this.pipeline?.isProcessing || !state._combat?.is_active) return;
+      const move = listTacticalMoves(state).find(candidate => candidate.id === moveId);
+      this._selectedCombatAction = move
+        ? { moveId: move.id, name: move.name, sourceFingerprint: tacticalSourceFingerprint(state) } : null;
+      const input = appShell.element?.querySelector('#chat-input');
+      if (input && move) {
+        input.value = message || `我使用${move.name}。`;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.focus();
+      }
+    });
+    eventBus.on('combat:submit-action', async ({ moveId, message } = {}) => {
+      const state = stateManager.get();
+      const move = listTacticalMoves(state).find(candidate => candidate.id === moveId);
+      if (!state._combat?.is_active || !move || this.pipeline?.isProcessing) return;
+      this._selectedCombatAction = { moveId, name: move.name, sourceFingerprint: tacticalSourceFingerprint(state) };
+      const input = appShell.element?.querySelector('#chat-input');
+      if (input) {
+        // Submit the same draft as the main send button, including any tactics
+        // the player added or changed after selecting a card.
+        if (!input.value.trim()) input.value = message || `我使用${move.name}。`;
+        await appShell._sendMessage();
+      } else {
+        await this._handleUserInput(message || `我使用${move.name}。`);
+      }
+    });
     eventBus.on('app:execute-combat-action', ({ action }) => this._submitCombatAction(action));
     eventBus.on('app:execute-player-action', ({ text }) => this._submitPlayerAction(text));
 
@@ -393,16 +487,21 @@ class NarutoRPGApp {
       this.pipeline?.cancel();
     });
 
-    eventBus.on('image:binding-changed', () => {
+    const syncPersistedImage = () => {
       if (!usesProjectServerFeatures()) return;
       if (localStorage.getItem('naruto_auto_cloud_sync') !== 'true') return;
+      const scope = this._cloudSyncScope;
+      const epoch = this._cloudContextEpoch;
       clearTimeout(this._imageCloudSyncTimer);
       this._imageCloudSyncTimer = setTimeout(() => {
-        void this._syncCloudSaveAfterImage().catch(error => {
+        if (epoch !== this._cloudContextEpoch) return;
+        void this._syncCloudSaveAfterImage(scope).catch(error => {
           console.warn('[CloudSave] 图片绑定后的二次同步失败:', error.message);
         });
       }, 800);
-    });
+    };
+    eventBus.on('timeline:media-changed', syncPersistedImage);
+    eventBus.on('timeline:image-state-synced', syncPersistedImage);
 
     eventBus.on('timeline:reroll-request', async ({ nodeId }) => {
       try {
@@ -551,6 +650,11 @@ class NarutoRPGApp {
       // existing login also receives the double-submit CSRF cookie.
       const user = await authClient.checkAuth(true);
       if (!user) {
+        if (isNativeAndroidApp()) {
+          eventBus.emit('app:toast', '联机需要连接云端账号；本地进度仍保留。');
+          await eventBus.request('app:open-profile', { loadRemote: false });
+          return null;
+        }
         window.location.href = '/login.html';
         return null;
       }
@@ -743,50 +847,98 @@ class NarutoRPGApp {
         await this.pipeline.process(this._pendingStartPrompt);
         this._pendingStartPrompt = null;
       } else {
-        await this.pipeline.process(text);
+        const selected = this._selectedCombatAction;
+        const options = selected?.sourceFingerprint === tacticalSourceFingerprint(stateManager.get())
+          && inferTacticalMoveId(stateManager.get(), text) === selected.moveId
+          ? { combatMoveId: selected.moveId } : {};
+        const result = await this.pipeline.process(text, options);
+        if (result?.cancelled || result?.partialResponse) return false;
+        this._selectedCombatAction = null;
       }
 
-      if (usesProjectServerFeatures() && localStorage.getItem('naruto_auto_cloud_sync') === 'true') {
-        try {
-          await this._queueCloudSave();
-          console.log('[CloudSave] 自动同步成功');
-        } catch (err) {
-          console.error('[CloudSave] 自动同步失败', err);
-        }
-      }
     } catch (error) {
       if (this._pendingStartPrompt) this._showStartupErrorModal(error);
       else console.error('[App] Pipeline process failed:', error);
+      return false;
     }
     return true;
   }
 
-  async _syncCloudSaveAfterImage() {
-    if (!usesProjectServerFeatures()) return null;
-    return this._queueCloudSave();
+  _clearCloudSyncContext() {
+    this._cloudContextEpoch = (this._cloudContextEpoch || 0) + 1;
+    clearTimeout(this._imageCloudSyncTimer);
+    this._cloudSyncScope = { userId: String(authClient.getUser()?.id || ''), saveKey: '' };
+    cloudSave.setSyncContext(this._cloudSyncScope);
   }
 
-  async _queueCloudSave() {
+  async _refreshCloudSyncContext({ resetBinding = false, source = null } = {}) {
+    const user = isNativeAndroidApp() ? authClient.getUser() : usesProjectServerFeatures() ? await authClient.checkAuth() : null;
+    const epoch = this._cloudContextEpoch || 0;
+    const meta = await stateManager.dbGet('timeline_meta', 'root');
+    if (epoch !== (this._cloudContextEpoch || 0)) return null;
+    const scope = { userId: String(user?.id || ''), saveKey: String(meta?.value?.root_id || '') };
+    this._cloudSyncScope = scope;
+    cloudSave.setSyncContext(scope);
+    if (resetBinding && scope.saveKey) {
+      cloudSave.bindSyncSave({ ...scope, ...(source?.userId === scope.userId ? source : {}) });
+    }
+    return scope;
+  }
+
+  async _markPersistedCloudLocal(nodeId) {
+    if (!nodeId || this._multiplayerOverlay?.panel?.controller?.state?.roomId) return null;
+    const epoch = this._cloudContextEpoch || 0;
+    const scope = await this._refreshCloudSyncContext();
+    if (!scope?.saveKey) return null;
+    const node = await stateManager.dbGet('timeline_nodes', nodeId);
+    const meta = await stateManager.dbGet('timeline_meta', 'root');
+    if (epoch !== (this._cloudContextEpoch || 0) || !node || meta?.value?.root_id !== scope.saveKey || meta?.value?.current_id !== nodeId) return null;
+    cloudSave.markLocalSaved(scope);
+    return scope;
+  }
+
+  async _syncCommittedCloudSave(nodeId) {
+    const scope = await this._markPersistedCloudLocal(nodeId);
+    if (!scope?.userId || !usesProjectServerFeatures() || localStorage.getItem('naruto_auto_cloud_sync') !== 'true') return;
+    try { await this._queueCloudSave(scope); }
+    catch (error) { console.warn('[CloudSave] 本地回合已保存，云端同步未完成:', error.message); }
+  }
+
+  async _syncCloudSaveAfterImage(scope = this._cloudSyncScope) {
+    if (!usesProjectServerFeatures()) return null;
+    if (!scope?.saveKey) return null;
+    cloudSave.markLocalSaved(scope);
+    return this._queueCloudSave(scope);
+  }
+
+  async _queueCloudSave(scope = null) {
     if (this._multiplayerOverlay?.panel?.controller?.state?.roomId) throw new Error('联机房间请使用房间本地存档；云端快捷备份只保存个人档');
-    if (!usesProjectServerFeatures()) throw new Error('Android App 仅使用本地存档');
+    if (!cloudConnectionEnabled()) throw new Error('云端连接已暂停，本地进度已保存');
+    scope ||= await this._refreshCloudSyncContext();
+    if (!scope?.userId || !scope.saveKey) throw new Error('请先登录并保存当前个人进度');
     return cloudSave.scheduleQuickSave('默认云存档', async () => {
       const data = await timelineSystem.getExportData({ includeArchive: true });
-      const state = stateManager.get();
+      if (data.meta?.value?.root_id !== scope.saveKey) throw new Error('当前个人存档已切换，已取消旧存档的云端同步');
+      const current = data.nodes.find(node => node.id === data.meta?.value?.current_id);
+      const state = current?.state_snapshot || {};
+      const continuation = continuationSaveScope(data);
       return {
         saveData: data,
         previewData: {
-          name: state.player?.name || stateManager.get('玩家·姓名') || '未知',
-          location: state.world_state?.current_location || stateManager.get('世界·地点') || '未知',
+          name: state.player?.name || state['玩家·姓名'] || '未知',
+          location: state.world_state?.current_location || state['世界·地点'] || '未知',
           time: Date.now(),
-          turn: data.nodes.find(node => node.id === data.meta?.value?.current_id)?.turn_number ?? stateManager.getSub('_meta')?.turn_count ?? 0,
+          turn: current?.turn_number ?? 0,
           branch_count: data.branches.filter(branch => branch.id !== 'branch_main').length,
-          branch_name: data.branches.find(branch => branch.id === data.meta?.value?.active_branch)?.name || '主线'
+          branch_name: data.branches.find(branch => branch.id === data.meta?.value?.active_branch)?.name || '主线',
+          ...(continuation ? { continuation: { from_turn: continuation.from_turn, through_turn: continuation.through_turn } } : {})
         }
       };
-    });
+    }, scope);
   }
 
   async _checkSavedGame() {
+    await this._refreshCloudSyncContext();
     const meta = await stateManager.dbGet('timeline_meta', 'root');
     if (meta?.value?.current_id) {
       const currentNode = await timelineSystem.getCurrentNode()
@@ -872,7 +1024,7 @@ class NarutoRPGApp {
   }
 
   _registerServiceWorker() {
-    if (!usesProjectServerFeatures()) return;
+    if (isNativeAndroidApp() || !usesProjectServerFeatures()) return;
     if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
 
     const hadController = Boolean(navigator.serviceWorker.controller);
@@ -939,14 +1091,14 @@ class NarutoRPGApp {
     if (!Modal) return;
     if (this._profileModal?.isConnected) return this._profileModal;
     const nativeAndroid = isNativeAndroidApp();
-    loadRemote = loadRemote && !nativeAndroid;
+    loadRemote = loadRemote && (!nativeAndroid || (Boolean(authClient.getUser()) && !authClient.getCloudError() && cloudConnectionEnabled()));
     const state = stateManager.get();
     const player = state.player || {};
     const attrs = state.attributes || {};
     const prog = state.progression || {};
     const world = state.world_state || {};
     const apiConfig = stateManager.getAPIConfig() || {};
-    let autoSync = !nativeAndroid && localStorage.getItem('naruto_auto_cloud_sync') === 'true';
+    let autoSync = localStorage.getItem('naruto_auto_cloud_sync') === 'true';
     const knownAppUpdate = nativeAndroid && appUpdateService.hasKnownUpdate();
 
     // 四维百分比（纯展示计算）
@@ -1151,9 +1303,10 @@ class NarutoRPGApp {
 
           <!-- 卷尾 · 存档管理 -->
           <section class="pf-sec" style="animation-delay: 140ms;">
-            <div class="pf-sec-title"><span>${nativeAndroid ? '本地存档' : '云存档与同步'}</span></div>
+            <div class="pf-sec-title"><span>云存档与同步</span></div>
+            ${nativeAndroid ? '<app-cloud-panel></app-cloud-panel>' : ''}
             <div class="pf-cloud">
-              <div class="pf-cloud-head pf-server-only" ${nativeAndroid ? 'hidden' : ''}>
+              <div class="pf-cloud-head pf-server-only">
                 <div class="pf-cloud-title">云端存档</div>
                 <label class="pf-sync">
                   <input type="checkbox" id="cb-auto-sync" ${autoSync ? 'checked' : ''}>
@@ -1161,7 +1314,7 @@ class NarutoRPGApp {
                 </label>
               </div>
 
-              <div class="pf-server-only" ${nativeAndroid ? 'hidden' : ''}>
+              <div class="pf-server-only">
                 <div class="pf-meter-text" id="cloud-size-text">
                   <span>本账号云存档</span>
                   <span>${loadRemote ? '加载中...' : '未自动连接'}</span>
@@ -1170,11 +1323,11 @@ class NarutoRPGApp {
                 <div class="pf-meter-warning" id="cloud-size-warning">槽位已满，可在存档库中备份旧云档后删除，或选择覆盖已有槽位。</div>
               </div>
 
-              <div class="pf-actions pf-server-only" ${nativeAndroid ? 'hidden' : ''}>
+              <div class="pf-actions pf-server-only">
                 <button class="pf-btn pf-btn-gold" id="btn-cloud-manage" type="button">管理云存档</button>
               </div>
 
-              <div class="pf-divider pf-server-only" ${nativeAndroid ? 'hidden' : ''}></div>
+              <div class="pf-divider pf-server-only"></div>
 
               <div class="pf-local">
                 <span class="pf-local-label">游戏存档</span>
@@ -1223,6 +1376,13 @@ class NarutoRPGApp {
         { label: '关闭', primary: true, close: true }
       ]
     });
+
+    modal.shadowRoot?.querySelector('#btn-cloud-manage')?.addEventListener('click', async () => {
+      modal.close();
+      try { await eventBus.request('app:open-saves', { cloud: true }); }
+      catch (error) { this._sendSystemMessage('打开云存档失败: ' + error.message); }
+    });
+    modal.addEventListener('cloud-local', () => modal.close());
 
     setTimeout(() => {
       // Discord 头像异步填充（加载失败自动回退为「忍」字印）
@@ -1283,12 +1443,6 @@ class NarutoRPGApp {
         localStorage.setItem('naruto_auto_cloud_sync', e.target.checked);
         if (e.target.checked) this._sendSystemMessage('已开启自动云同步，将在剧情推进时自动保存。');
         else this._sendSystemMessage('已关闭自动云同步。');
-      });
-
-      modal.shadowRoot?.querySelector('#btn-cloud-manage')?.addEventListener('click', async () => {
-        modal.close();
-        try { await eventBus.request('app:open-saves', { cloud: true }); }
-        catch (error) { this._sendSystemMessage('打开云存档失败: ' + error.message); }
       });
 
       modal.shadowRoot?.querySelector('#btn-export-save')?.addEventListener('click', async () => {
@@ -1442,7 +1596,9 @@ class NarutoRPGApp {
         okLabel: '保存并开新档', cancelLabel: '取消'
       });
       if (!confirmed) return false;
-      await personalSaveLibrary.startNew();
+      this._clearCloudSyncContext();
+      try { await personalSaveLibrary.startNew(); }
+      finally { await this._refreshCloudSyncContext(); }
       this.pipeline?.clearHistory();
       this._pendingStartPrompt = null;
       appShell.showCharacterCreator();

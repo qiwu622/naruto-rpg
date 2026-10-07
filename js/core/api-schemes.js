@@ -79,7 +79,7 @@ export async function getApiScheme(id) {
  * @param {{id?:string,name:string,apiUrl:string,apiKey?:string,model:string,backend:string,disableStreaming?:boolean}} input
  * @returns {Promise<string|null>} 方案 id；未知 id 更新返回 null。
  */
-export async function saveApiScheme({ id, name, apiUrl, apiKey, model, backend, disableStreaming } = {}) {
+export async function saveApiScheme({ id, name, apiUrl, apiKey, model, backend, disableStreaming, adaptationMode, deepseekThinking } = {}) {
   const createdAt = Date.now();
   const encryptedKey = apiKey !== undefined ? await encryptApiKey(apiKey) : undefined;
   // Keep the storage read/write section synchronous so a completed delete cannot
@@ -97,6 +97,8 @@ export async function saveApiScheme({ id, name, apiUrl, apiKey, model, backend, 
       model: String(model ?? existing.model ?? ''),
       backend: String(backend ?? existing.backend ?? 'openai'),
       disableStreaming: Boolean(disableStreaming ?? existing.disableStreaming),
+      adaptationMode: adaptationMode ?? existing.adaptationMode ?? 'standard',
+      deepseekThinking: deepseekThinking ?? existing.deepseekThinking ?? 'disabled',
       apiKey: encryptedKey !== undefined ? encryptedKey : existing.apiKey
     };
     writeSchemes(schemes);
@@ -110,6 +112,8 @@ export async function saveApiScheme({ id, name, apiUrl, apiKey, model, backend, 
     model: String(model || ''),
     backend: String(backend || 'openai'),
     disableStreaming: Boolean(disableStreaming),
+    adaptationMode: adaptationMode || 'standard',
+    deepseekThinking: deepseekThinking || 'disabled',
     apiKey: encryptedKey || '',
     createdAt
   };

@@ -468,10 +468,10 @@ ${tail}`;
   }
 }
 
-export function buildImportedPresetModePrompt({ updaterEnabled = false, profile = null } = {}) {
+export function buildImportedPresetModePrompt({ updaterEnabled = false, profile = null, tacticalCombat = false } = {}) {
   const ownership = updaterEnabled
     ? `本回合变量、记忆和忍界日报由后续变量模型负责。主叙事模型只输出导入预设要求的完整思考/推演容器、可见正文、行动选项及该预设自己的展示区；不得输出项目的 <var>、<variable>、<combat>、<mission>、<relationship>、<event>、<state_update>、<memory> 或 <shinobi_daily>。正文必须明确写出实际发生的物品、技能、任务、关系、战斗、伤势、资源、地点和时间结果，供后续模型准确记账。`
-    : `本回合没有后续变量模型。先完整执行导入预设自己的思考、正文与展示格式，再由同一次回复生成项目机器尾部。项目机器尾部依次为：实际需要的 <var>/<variable>/<combat>/<mission>/<relationship>/<event>（可为零个）→唯一 <state_update>→唯一 <memory>→唯一 <shinobi_daily>。这些项目标签不得放进任何私密思考容器、代码围栏或可见正文主体；若预设强制使用单一根节点，可把项目尾部放进其非私密的 after/post-format 区域。`;
+    : `本回合没有后续变量模型。先完整执行导入预设自己的思考、正文与展示格式，再由同一次回复生成项目机器尾部。项目机器尾部依次为：实际需要的 <var>/<variable>${tacticalCombat === true ? '/<combat>' : ''}/<mission>/<relationship>/<event>（可为零个）→唯一 <state_update>→唯一 <memory>→唯一 <shinobi_daily>。这些项目标签不得放进任何私密思考容器、代码围栏或可见正文主体；若预设强制使用单一根节点，可把项目尾部放进其非私密的 after/post-format 区域。`;
 
   const dedicatedSkeleton = dedicatedDeliverySkeleton(profile?.adapterId, updaterEnabled);
   if (dedicatedSkeleton) {

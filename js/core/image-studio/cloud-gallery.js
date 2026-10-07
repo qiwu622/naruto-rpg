@@ -1,3 +1,5 @@
+import { fetchProjectServer } from '../project-server.js';
+
 function mapAsset(asset = {}) {
   return {
     ...asset,
@@ -54,13 +56,14 @@ async function canvasThumbnail(blob, maxSide = 512) {
 }
 
 export class CloudImageGalleryClient {
-  constructor({ fetchImpl = globalThis.fetch } = {}) {
+  constructor({ fetchImpl = fetchProjectServer } = {}) {
     this.fetchImpl = fetchImpl;
   }
 
   async request(path = '', options = {}) {
     const response = await this.fetchImpl(`/api/image-assets${path}`, {
-      credentials: 'same-origin', ...options
+      credentials: 'same-origin', ...options,
+      timeoutMs: options.body || /\/(content|thumbnail)$/.test(path) ? 90_000 : 15_000
     });
     if (!response.ok) throw await responseError(response, '图库请求失败');
     const type = response.headers.get('content-type') || '';

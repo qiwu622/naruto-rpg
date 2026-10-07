@@ -2,10 +2,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { generateAnnouncements } from './generate-announcements.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const publicDir = path.join(root, 'public');
-const sharedFiles = ['index.html', 'manifest.json', 'sw.js'];
+const sharedFiles = ['index.html', 'manifest.json', 'sw.js', 'announcements.html'];
 const sharedDirectories = [
   { name: 'js', publicOnly: [] },
   { name: 'css', publicOnly: [] },
@@ -14,6 +15,7 @@ const sharedDirectories = [
   { name: 'app', publicOnly: [] }
 ];
 
+await generateAnnouncements(root);
 await fs.mkdir(publicDir, { recursive: true });
 for (const file of sharedFiles) {
   await fs.copyFile(path.join(root, file), path.join(publicDir, file));

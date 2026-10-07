@@ -1,4 +1,5 @@
 import { normalizeNpcIdentity } from './npc-identity.js';
+import { projectSystemCombatPrompt, ORDINARY_RESOURCE_UPDATE_GUIDANCE } from './combat-prompt-mode.js';
 
 export const VAR_SCHEMA = {
 
@@ -808,7 +809,7 @@ export function getDesc(key) {
   return key;
 }
 
-export function getBriefPromptRef() {
+export function getBriefPromptRef({ tacticalCombat = false } = {}) {
   const lines = [];
   const groups = [
     ['玩家·姓名', '玩家·年龄', '玩家·灵魂年龄', '玩家·性别', '玩家·忍阶', '玩家·正式忍阶', '玩家·战力等级', '玩家·所属村', '玩家·查克拉属性', '玩家·出身', '玩家·难度', '玩家·个性', '玩家·公开身份', '玩家·当前目标', '玩家·声望标签', '玩家·标志', '玩家·存活', '玩家·死因'],
@@ -830,11 +831,17 @@ export function getBriefPromptRef() {
   lines.push('  关系 → 使用 <relationship> 标签');
   lines.push('  记忆 → 使用 <memory> 标签');
   lines.push('  任务 → 使用 <mission> 标签');
-  lines.push('  战斗 → 使用 <combat> 标签');
+  if (tacticalCombat === true) lines.push('  战斗 → 使用 <combat> 标签');
   return lines.join('\n');
 }
 
-export function generateMainVarInstructions(updaterEnabled) {
+export const NPC_GROWTH_GUIDANCE = `【NPC成长与恢复 · 增量记账】
+NPC档案应随已发生的剧情更新；复用档案不等于冻结实力。修行、突破、晋升、学会新术或休息治疗已有明确结果时，用 <relationship> 的 combat_stats 写入有依据的最新字段。
+数值是更新后的绝对值：rank 是忍阶，chakra_max/vitality_max/stamina_max/spirit_max 是上限，chakra/vitality/stamina/spirit 是当前值，speed/luck 是属性，ninjutsu/taijutsu/genjutsu 是三系造诣。忍阶基准仅作初始化参考，不是成长上限，也不要求先晋升才能变强。
+jutsu 数组只列本次新增或变化的术（以 name 匹配，mastery 为最新熟练度）；chakra_nature 只列新增属性，本地合并并保留未提到的能力。省略字段和空数组都不会清空旧档。
+上限增长不自动恢复当前资源；正文已明确休息、治疗或恢复时才写当前值。不能只用 history、info 或 memory 代替已有依据的战斗数值变化；仅有定性描述时记录事实，不编造精确数值。没有成长依据则保留现状。`;
+
+export function generateMainVarInstructions(updaterEnabled, { tacticalCombat = false } = {}) {
   if (updaterEnabled) {
     return `[系统强制指令 · 最高优先级]
 后台独立变量更新模型已启用。主模型必须先输出 <reasoning> 结构化推演，再输出最终剧情正文。除 <reasoning> 外，绝对禁止输出任何结构标签，包括 <var>、<variable>、<var_thinking>、<variable_thinking>、<status_query />、<combat>、<mission>、<relationship>、<memory>、<event>。
@@ -848,7 +855,7 @@ export function generateMainVarInstructions(updaterEnabled) {
 事实仍按“当前状态/开局契约 → 持久记忆与近期对话 → 本回合世界书 → 玩家声称 → 模型预训练知识”排序。世界书与存档高于模型常识。<reasoning> 只写可见核对结论与依据，不得写入NPC未公开秘密或审校模型私有记录。推理与思考内容一律使用简体中文。`;
   }
 
-  return `[系统指令：变量模式]
+  const prompt = `[系统指令：变量模式]
 由于后台变量更新模型未启用，本回合只调用这一次主模型。你需要在同一回复中输出正文与本回合结构化变更，不能等待另一个模型补写。
 
 使用 <var>...</var> 包裹，每行一个变更：
@@ -871,7 +878,7 @@ export function generateMainVarInstructions(updaterEnabled) {
 - 日常战斗只修改"当前值"，绝不直接改上限。
 - 突破系统触发时才同时提升"当前值"和"上限"。
 
-${getBriefPromptRef()}
+${getBriefPromptRef({ tacticalCombat })}
 
 【物品获取】设数量和品质:
 物品·消耗品·绷带·数量 =2
@@ -938,7 +945,7 @@ ${getBriefPromptRef()}
 - 只有正文明确确认人物规范姓名发生变化时才使用 op:"rename"；昵称、称呼、伪装或不确定身份不得改名。改名标签可同时携带本回合其他关系增量，但同回合不得再用旧名或新名单独输出第二条关系标签。
 - 已确认平民、纯文职或无战斗能力者时可写 combatant:false，不生成战斗卡；无法确认时省略该字段。
 - 已确认战斗型忍者时写 combatant:true，战斗资料可用 {"combat_stats":{"rank":"忍阶","chakra_nature":[],"jutsu":[]}} 渐进补全。已提供字段必须类型正确；若提供忍术条目，至少包含 name，其余字段可待有证据时补写，且不得伪造 JT 数据库ID。本地按可用忍阶补齐六项属性与三系造诣。
-- 本地系统会将六项最终属性和三系造诣限制在忍阶基准内，并用与玩家相同的综合公式自动计算战力等级。所有当前资源不得超过上限；后续整卡信息不得把受伤或消耗后的当前值恢复到上限。
+- 忍阶基准仅用于初次资料缺失时的参考补齐，不截断已有成长；综合战力按与玩家相同的公式自动计算。当前资源不得超过上限；省略当前值会保留伤势和消耗，明确恢复时可以上调。
 - 招式记录名称、等级、属性、熟练度、描述、类型、消耗资源与单次消耗。具体点数以数据库中该招式的 cost 为唯一依据，禁止根据等级重算；忍术扣查克拉、幻术扣精神力、体术扣体力，支援术按其消耗资源字段。玩家与NPC完全相同。
 
 【战斗资源唯一结算】
@@ -946,6 +953,7 @@ ${getBriefPromptRef()}
 - 玩家行动：<combat state="player_turn">{"actor":"player","action_name":"火遁·豪火球之术","action_rank":"C","action_type":"忍术","resource_type":"查克拉","damage_to_enemy":24,"log":"火球命中并迫使敌人后退"}</combat>
 - NPC行动：<combat state="enemy_turn">{"actor":"enemy","action_name":"木叶旋风","action_rank":"C","action_type":"体术","resource_type":"体力","damage_to_player":16,"log":"踢击擦中玩家肩部"}</combat>
 - 玩家与NPC都由本地战斗系统按已存招式的 resource_type/cost 各结算一次；资源不足则招式失败且不造成伤害。写入 <combat> 后，禁止再用 <var>/<variable> 重复扣除任何施术资源。`;
+  return [projectSystemCombatPrompt(prompt, { tacticalCombat }), NPC_GROWTH_GUIDANCE, tacticalCombat === true ? '' : ORDINARY_RESOURCE_UPDATE_GUIDANCE].filter(Boolean).join('\n\n');
 }
 
 export default VAR_SCHEMA;

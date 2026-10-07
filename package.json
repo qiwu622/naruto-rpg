@@ -1,30 +1,39 @@
 {
   "name": "naruto-rpg",
-  "version": "3.5.3",
+  "version": "3.6.0",
   "description": "火影忍者 AI 文字跑团 RPG — 网页端版本（Discord 登录 + 云存档）",
   "main": "server/index.js",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
+    "test:grade-effects": "node scripts/grade-effects-ui-regression.mjs",
     "generate-project-timeline": "node canon-rebuild-output/scripts/generate-project-timeline-v2.mjs",
     "pretest": "node scripts/project-timeline-infrastructure-regression.mjs",
-    "test": "npm run validate-project-timeline && npm run validate-canon && node scripts/smoke-test.mjs && npm run test:state && node scripts/panel-regression.mjs && npm run test:worldbook && node scripts/ai-call-policy-regression.mjs && node scripts/full-ai-adaptation-integration-regression.mjs && npm run test:variable-updater && node scripts/pipeline-updater-evidence-regression.mjs && node scripts/agent-runtime-regression.mjs && node scripts/agent-soft-constraints-regression.mjs && node scripts/agent-character-selection-regression.mjs && node scripts/agent-tool-runtime-v2-regression.mjs && npm run test:lingxi && node scripts/turn-evidence-regression.mjs && node scripts/agent-memory-delta-regression.mjs && node scripts/narrative-artifact-regression.mjs && node scripts/shinobi-daily-regression.mjs && node scripts/turn-commit-regression.mjs && node scripts/memory-regression.mjs && node scripts/continuity-ledger-regression.mjs && node scripts/continuity-delta-regression.mjs && node scripts/npc-summary-regression.mjs && node scripts/inventory-skill-regression.mjs && node scripts/combat-state-corruption-regression.mjs && node scripts/combat-balance-regression.mjs && node scripts/canon-runtime-regression.mjs && node scripts/canon-technique-description-regression.mjs && node scripts/timeline-regression.mjs && node scripts/timeline-file-codec-regression.mjs && node scripts/timeline-node-codec-regression.mjs && node scripts/timeline-save-validator-regression.mjs && node scripts/opening-contract-regression.mjs && node scripts/opening-draft-regression.mjs && node scripts/preset-review-regression.mjs && node scripts/main-preset-import-regression.mjs && node scripts/main-preset-pipeline-regression.mjs && node scripts/imported-preset-debug-log-regression.mjs && node scripts/preset-regex-runtime-regression.mjs && node scripts/preset-output-sandbox-regression.mjs && node scripts/preset-output-app-shell-regression.mjs && node scripts/prompt-preview-regression.mjs && node scripts/settings-config-gateway-regression.mjs && node scripts/api-schemes-regression.mjs && node scripts/persona-profiles-regression.mjs && node scripts/local-api-regression.mjs && node scripts/cloud-save-regression.mjs && node scripts/cloud-save-stream-regression.mjs && node scripts/ai-stream-regression.mjs && node scripts/server-reliability-regression.mjs && node scripts/image-studio-regression.mjs && node scripts/image-studio-ui-regression.mjs && node scripts/image-assets-regression.mjs && node scripts/security-regression.mjs && node scripts/architecture-regression.mjs && node scripts/server-regression.mjs && node scripts/public-sync-regression.mjs && npm run test:deployment && node smoke-phase2.mjs && node test-agent-optimization.mjs && node test-p2-optimization.mjs",
+    "test": "npm run validate-project-timeline && npm run validate-canon && node scripts/smoke-test.mjs && npm run test:state && node scripts/panel-regression.mjs && npm run test:worldbook && node scripts/ai-call-policy-regression.mjs && node scripts/full-ai-adaptation-integration-regression.mjs && npm run test:variable-updater && node scripts/pipeline-updater-evidence-regression.mjs && node scripts/agent-runtime-regression.mjs && node scripts/agent-soft-constraints-regression.mjs && node scripts/agent-character-selection-regression.mjs && node scripts/agent-tool-runtime-v2-regression.mjs && npm run test:lingxi && node scripts/turn-evidence-regression.mjs && node scripts/agent-memory-delta-regression.mjs && node scripts/narrative-artifact-regression.mjs && node scripts/shinobi-daily-regression.mjs && node scripts/turn-commit-regression.mjs && node scripts/memory-regression.mjs && node scripts/memory-corrections-regression.mjs && node scripts/memory-facts-editor-regression.mjs && node scripts/turn-receipt-regression.mjs && node scripts/turn-receipt-pipeline-regression.mjs && node scripts/variable-memory-integrity-regression.mjs && node scripts/continuity-ledger-regression.mjs && node scripts/continuity-delta-regression.mjs && node scripts/npc-summary-regression.mjs && node scripts/inventory-skill-regression.mjs && node scripts/combat-state-corruption-regression.mjs && node scripts/combat-balance-regression.mjs && node scripts/npc-progression-regression.mjs && npm run test:tactical-combat && node scripts/pipeline-state-epoch-regression.mjs && node scripts/canon-runtime-regression.mjs && node scripts/canon-technique-description-regression.mjs && node scripts/timeline-regression.mjs && node scripts/continuation-save-regression.mjs && node scripts/timeline-file-codec-regression.mjs && node scripts/timeline-node-codec-regression.mjs && node scripts/timeline-save-validator-regression.mjs && node scripts/opening-contract-regression.mjs && node scripts/opening-draft-regression.mjs && node scripts/preset-review-regression.mjs && node scripts/main-preset-import-regression.mjs && node scripts/main-preset-pipeline-regression.mjs && node scripts/imported-preset-debug-log-regression.mjs && node scripts/preset-regex-runtime-regression.mjs && node scripts/preset-output-sandbox-regression.mjs && node scripts/preset-output-app-shell-regression.mjs && node scripts/prompt-preview-regression.mjs && node scripts/settings-config-gateway-regression.mjs && node scripts/api-schemes-regression.mjs && node scripts/persona-profiles-regression.mjs && node scripts/local-api-regression.mjs && node scripts/cloud-save-regression.mjs && node scripts/cloud-sync-state-regression.mjs && node scripts/cloud-save-conflict-regression.mjs && node scripts/cloud-save-stream-regression.mjs && node scripts/deepseek-mode-regression.mjs && node scripts/ai-stream-regression.mjs && node scripts/server-reliability-regression.mjs && node scripts/image-studio-regression.mjs && node scripts/image-studio-ui-regression.mjs && node scripts/image-assets-regression.mjs && node scripts/security-regression.mjs && node scripts/architecture-regression.mjs && node scripts/server-regression.mjs && node scripts/public-sync-regression.mjs && npm run test:deployment && node smoke-phase2.mjs && node test-agent-optimization.mjs && node test-p2-optimization.mjs",
+    "test:tactical-combat": "node scripts/tactical-combat-regression.mjs && node scripts/tactical-engagement-regression.mjs && node scripts/tactical-prompt-mode-regression.mjs && node scripts/tactical-combat-session-regression.mjs && node scripts/tactical-combat-pipeline-regression.mjs",
+    "test:tactical-combat-ui": "node scripts/tactical-combat-ui-regression.mjs && node scripts/tactical-combat-start-ui-regression.mjs && node scripts/tactical-combat-app-regression.mjs && node scripts/pipeline-state-epoch-browser-regression.mjs",
+    "test:save-library-export": "node scripts/save-library-large-export-regression.mjs && node scripts/android-file-export-regression.mjs",
+    "test:npc-progression": "node scripts/npc-progression-regression.mjs && node scripts/npc-dossier-ui-regression.mjs",
     "test:panel": "node scripts/panel-regression.mjs",
     "test:worldbook": "node scripts/worldbook-v2-regression.mjs && node scripts/worldbook-trigger-rules-regression.mjs && node scripts/worldbook-activation-regression.mjs",
     "test:state": "node scripts/state-manager-regression.mjs && node scripts/map-state-regression.mjs",
     "test:timeline-file": "node scripts/timeline-file-codec-regression.mjs",
-    "test:save-library": "node scripts/save-library-regression.mjs && node scripts/save-library-if-regression.mjs",
+    "test:save-library": "node scripts/save-library-regression.mjs && node scripts/save-library-if-regression.mjs && node scripts/continuation-save-browser-regression.mjs",
     "test:timeline-node": "node scripts/timeline-node-codec-regression.mjs",
     "test:shinobi-daily": "node scripts/shinobi-daily-regression.mjs",
-    "test:lingxi": "node scripts/lingxi-catalog-regression.mjs && node scripts/lingxi-tools-regression.mjs && node scripts/lingxi-canon-search-regression.mjs && node scripts/lingxi-worldbook-management-regression.mjs && node scripts/lingxi-research-gate-regression.mjs && node scripts/lingxi-project-state-regression.mjs && node scripts/lingxi-music-regression.mjs && node scripts/music-channel-and-window-regression.mjs && node scripts/music-stream-regression.mjs && node scripts/lingxi-image-studio-regression.mjs && node scripts/lingxi-image-library-regression.mjs && node scripts/lingxi-player-action-regression.mjs && node scripts/lingxi-combat-action-regression.mjs && node scripts/lingxi-approval-broker-regression.mjs && node scripts/lingxi-project-write-adapters-regression.mjs && node scripts/lingxi-gameplay-actions-regression.mjs && node scripts/story-direction-planning-regression.mjs && node scripts/lingxi-cloud-save-action-regression.mjs",
+    "test:lingxi": "node scripts/lingxi-catalog-regression.mjs && node scripts/lingxi-tools-regression.mjs && node scripts/agent-tool-fallback-regression.mjs && node scripts/lingxi-canon-search-regression.mjs && node scripts/lingxi-worldbook-management-regression.mjs && node scripts/lingxi-research-gate-regression.mjs && node scripts/lingxi-project-state-regression.mjs && node scripts/lingxi-music-regression.mjs && node scripts/music-channel-and-window-regression.mjs && node scripts/music-stream-regression.mjs && node scripts/lingxi-image-studio-regression.mjs && node scripts/lingxi-image-library-regression.mjs && node scripts/lingxi-player-action-regression.mjs && node scripts/lingxi-combat-action-regression.mjs && node scripts/lingxi-approval-broker-regression.mjs && node scripts/lingxi-project-write-adapters-regression.mjs && node scripts/lingxi-gameplay-actions-regression.mjs && node scripts/story-direction-planning-regression.mjs && node scripts/lingxi-cloud-save-action-regression.mjs",
     "test:lingxi-ui": "node scripts/run-lingxi-ui-tests.mjs",
-    "test:cloud-save": "node scripts/cloud-save-regression.mjs && node scripts/cloud-save-stream-regression.mjs && node scripts/cloud-save-management-regression.mjs && node scripts/save-library-cloud-regression.mjs",
+    "test:cloud-save": "node scripts/cloud-save-regression.mjs && node scripts/cloud-sync-state-regression.mjs && node scripts/cloud-save-conflict-regression.mjs && node scripts/cloud-save-stream-regression.mjs && node scripts/cloud-save-management-regression.mjs && node scripts/save-library-cloud-regression.mjs",
     "test:multiplayer": "node scripts/multiplayer-regression-suite.mjs",
     "test:server-reliability": "node scripts/server-reliability-regression.mjs",
     "probe:preset": "node scripts/preset-adapter-probe.mjs",
     "probe:compare": "node scripts/preset-adapter-compare.mjs",
     "test:settings-ui": "playwright test",
     "test:deployment": "node scripts/deployment-script-regression.mjs && node scripts/service-worker-cache-regression.mjs && node scripts/build-version-regression.mjs",
-    "test:android-app": "node scripts/android-app-regression.mjs && node scripts/android-update-regression.mjs && node scripts/android-file-export-regression.mjs && node scripts/android-ai-fetch-regression.mjs",
+    "test:android-app": "node scripts/android-app-regression.mjs && node scripts/android-update-regression.mjs && node scripts/android-file-export-regression.mjs && node scripts/android-ai-fetch-regression.mjs && node scripts/app-cloud-regression.mjs && node scripts/android-multiplayer-regression.mjs",
+    "test:app-cloud": "node scripts/app-cloud-regression.mjs && node scripts/app-cloud-ui-regression.mjs",
     "validate-project-timeline": "node canon-rebuild-output/scripts/validate-project-timeline-v2.mjs",
     "validate-canon": "node canon-rebuild-output/scripts/validate-canon.mjs",
     "validate-technique-descriptions": "node scripts/canon-technique-description-regression.mjs",
@@ -44,10 +53,14 @@
     "generate-version": "node scripts/generate-version.mjs",
     "deploy:production": "bash deploy-v3.sh",
     "deploy:dry-run": "bash deploy-v3.sh --dry-run",
-    "test:variable-updater": "node scripts/variable-domain-regression.mjs && node scripts/variable-updater-recovery-regression.mjs && node scripts/variable-updater-staged-repair-regression.mjs && node scripts/developer-panel-diagnostics-regression.mjs"
+    "test:variable-updater": "node scripts/variable-domain-regression.mjs && node scripts/variable-updater-recovery-regression.mjs && node scripts/variable-updater-staged-repair-regression.mjs && node scripts/developer-panel-diagnostics-regression.mjs",
+    "test:continuation-save": "node scripts/continuation-save-regression.mjs && node scripts/continuation-save-browser-regression.mjs",
+    "test:deepseek": "node scripts/deepseek-mode-regression.mjs && node scripts/deepseek-mode-browser-regression.mjs",
+    "test:turn-receipt": "node scripts/turn-receipt-regression.mjs && node scripts/turn-receipt-pipeline-regression.mjs",
+    "test:memory-corrections": "node scripts/memory-corrections-regression.mjs && node scripts/memory-facts-editor-regression.mjs && node scripts/memory-correction-integration-regression.mjs"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "13.0.3",
     "busboy": "^1.6.0",
     "compression": "^1.7.5",
     "cookie-parser": "^1.4.7",
@@ -76,7 +89,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/2024053347-a11y/naruto-rpg.git"
+    "url": "git+https://github.com/qiwu622/naruto-rpg.git"
   },
   "keywords": [
     "naruto",
@@ -87,10 +100,7 @@
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/2024053347-a11y/naruto-rpg/issues"
+    "url": "https://github.com/qiwu622/naruto-rpg/issues"
   },
-  "homepage": "https://github.com/2024053347-a11y/naruto-rpg#readme",
-  "allowScripts": {
-    "better-sqlite3@11.10.0": true
-  }
+  "homepage": "https://github.com/qiwu622/naruto-rpg#readme"
 }

@@ -64,15 +64,31 @@ class CombatSystem {
   }
 
   _startCombat(data) {
+    const combat = this.createCombatState(data, stateManager.get());
+    stateManager.setSub('_combat', combat);
+    this._syncEnemyRelationship(combat);
+    eventBus.emit('combat:started', { ...data, combat });
+  }
+
+  // Build an encounter without mutating live state. Tactical previews and
+  // narrative generation use this draft until the timeline transaction commits.
+  createCombatState(data, snapshot = stateManager.get()) {
     const enemyName = data.enemy_name || '不明敌人';
-    const relationships = stateManager.getSub('_relationships') || {};
+    const relationships = snapshot._relationships || {};
     const knownCard = relationships[enemyName]?.combat_stats;
     const source = knownCard || data;
     const card = normalizeNpcCombatStats(source, null, {
-      fallbackRank: data.enemy_rank || stateManager.get('玩家·忍阶') || '下忍',
-      difficulty: stateManager.get('玩家·难度')
+      fallbackRank: data.enemy_rank || snapshot['玩家·忍阶'] || '下忍',
+      difficulty: snapshot['玩家·难度']
     });
     const combat = {
+      id: `battle:${snapshot._meta?.current_node_id || snapshot._meta?.active_branch || 'local'}:${snapshot['系统·回合数'] || 0}:${enemyName}`,
+      rules_version: snapshot._ui?.settings?.tacticalCombat ? 'tactical-v1' : 0,
+      // A model-owned NPC card is not proof that the player knows its numbers.
+      enemy_known: data.enemy_known === true || ['known', 'full'].includes(data.enemy_intel)
+        || relationships[enemyName]?.combat_intel === 'known',
+      objective: data.objective || '击退对手',
+      distance: data.distance || '中',
       state: 'initiating',
       turn: 0,
       is_active: true,
@@ -105,9 +121,30 @@ class CombatSystem {
       enemy_debuffs: [],
       result: null
     };
+    return combat;
+  }
+
+  commitTacticalRound(plan) {
+    if (!plan?.nextCombat || plan.replayed) return false;
+    const wasActive = this.isInCombat();
+    const combat = structuredClone(plan.nextCombat);
+    if (combat.result === 'defeat') combat.player_incapacitated = true;
     stateManager.setSub('_combat', combat);
-    this._syncEnemyRelationship(combat);
-    eventBus.emit('combat:started', { ...data, combat });
+    stateManager.update([...(plan.updates || []), ...(plan.inventoryUpdates || [])]);
+    // Exact settled resource values may include healing. The legacy card
+    // normalizer deliberately only decreases current values, so don't run it
+    // over an authoritative tactical result.
+    const relationships = stateManager.getSub('_relationships') || {};
+    const relationship = relationships[combat.enemy_name];
+    if (relationship?.combat_stats) {
+      Object.assign(relationship.combat_stats, {
+        生命力: combat.enemy_vitality, 查克拉: combat.enemy_chakra,
+        体力: combat.enemy_stamina, 精神力: combat.enemy_spirit
+      });
+      stateManager.setSub('_relationships', relationships);
+    }
+    // Notifications are emitted by the pipeline only after durable commit.
+    return { started: !wasActive, ended: !combat.is_active, combat };
   }
 
   _playerTurn(data) {

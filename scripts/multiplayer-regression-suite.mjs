@@ -17,10 +17,13 @@ for (const test of tests) {
   const result = spawnSync(process.execPath, [path.join(scriptsDirectory, test)], {
     cwd: path.resolve(scriptsDirectory, '..'),
     stdio: 'inherit',
-    env: process.env
+    env: { ...process.env, NODE_ENV: 'test' }
   });
   if (result.error) throw result.error;
-  if (result.status !== 0) process.exit(result.status ?? 1);
+  if (result.status !== 0) {
+    console.error(`Multiplayer regression failed: ${test} (${result.signal ?? `exit ${result.status}`})`);
+    process.exit(result.status ?? 1);
+  }
 }
 
 console.log(`\nMultiplayer regression suite passed (${tests.length} scripts).`);

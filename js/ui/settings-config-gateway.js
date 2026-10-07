@@ -5,7 +5,9 @@ const MAIN_AI_CONNECTION_FIELDS = Object.freeze([
   'apiKey',
   'model',
   'backend',
-  'disableStreaming'
+  'disableStreaming',
+  'adaptationMode',
+  'deepseekThinking'
 ]);
 const AUXILIARY_CONFIG_KEYS = new Set([
   'variableUpdater',

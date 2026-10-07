@@ -5,6 +5,36 @@ async function openHarness(page, mode) {
   await page.waitForFunction(() => window.__PRESET_OUTPUT_HARNESS_READY__ === true);
 }
 
+for (const [name, replaceString] of [
+  ['empty', ''], ['whitespace', ' \n\t '], ['cleaned-internal-tag', '<analysis>PRIVATE_REPLACEMENT</analysis>']
+]) {
+  test(`keeps streamed narrative after variable completion when display regex becomes ${name}`, async ({ page }) => {
+    await openHarness(page, 'fallback');
+    await installPreset(page, {
+      name: 'Empty display output fixture',
+      entries: [{ id: 'plain-fixture', name: 'plain fixture', enabled: true, role: 'system', content: '继续故事。' }],
+      regexScripts: [{
+        id: 'empty-body-display', enabled: true, markdownOnly: true, placement: [2],
+        findRegex: '/<story_scene>[\\s\\S]*?<\\/story_scene>/', replaceString
+      }]
+    });
+    const raw = '<reasoning>PRIVATE_RAW_REASONING</reasoning><story_scene>等待变量更新时可见的正文。</story_scene>'
+      + '<variable>{"key":"进度·经验","op":"+","value":1}</variable>';
+    const content = page.locator('.chat-message--ai .chat-content');
+    await page.evaluate(value => window.__PRESET_OUTPUT_HARNESS__.stream(value), raw);
+    await expect(content).toContainText('等待变量更新时可见的正文。');
+    await expect(page.locator('.is-streaming')).toHaveCount(1);
+    await page.evaluate(value => window.__PRESET_OUTPUT_HARNESS__.finish(value, '等待变量更新时可见的正文。'), raw);
+    await expect(page.locator('.is-streaming')).toHaveCount(0);
+    await expect(page.locator('.think-block')).toContainText('独立展示的思维链。');
+    await expect(content.locator('[data-shinobi-daily-host]')).toHaveCount(1);
+    await expect(content.locator('.preset-output-presentation')).toContainText('等待变量更新时可见的正文。');
+    await expect(content).not.toContainText('PRIVATE_RAW_REASONING');
+    await expect(content).not.toContainText('PRIVATE_REPLACEMENT');
+    await expect(content).not.toContainText('进度·经验');
+  });
+}
+
 function foxStaticPreset() {
   return {
     name: 'Fox static UI fixture',
@@ -165,7 +195,7 @@ test('history redraw uses only persisted clean text and never rebuilds a raw san
   }]));
 
   const content = page.locator('.chat-message--ai .chat-content');
-  await expect(content).toHaveText('历史安全正文');
+  await expect(content.locator(':scope > p')).toHaveText('历史安全正文');
   await expect(page.locator('.preset-output-sandbox')).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText('HISTORY_REASONING');
   await expect(page.locator('body')).not.toContainText('HISTORY_AUDIT');

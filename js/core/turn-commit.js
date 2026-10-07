@@ -27,8 +27,8 @@ export class TurnCommitGuard {
   }
 
   commit() {
-    if (this.status === 'rolled_back') {
-      throw new Error('Cannot commit a rolled-back turn');
+    if (this.status === 'rolled_back' || this.status === 'abandoned') {
+      throw new Error(`Cannot commit a ${this.status.replace('_', '-')} turn`);
     }
     if (this.status === 'committed') return false;
     this.status = 'committed';
@@ -37,11 +37,19 @@ export class TurnCommitGuard {
   }
 
   rollback() {
-    if (this.status === 'committed') return false;
-    if (this.status === 'rolled_back') return false;
+    if (!this.isActive) return false;
     this.stateManager.restore(clone(this.stateSnapshot));
     this.chatHistory.splice(0, this.chatHistory.length, ...clone(this.historySnapshot));
     this.status = 'rolled_back';
+    this._releaseSnapshots();
+    return true;
+  }
+
+  // A different save now owns the live state and history. Restoring this turn's
+  // snapshots would overwrite that save, so release them without any writes.
+  abandon() {
+    if (!this.isActive) return false;
+    this.status = 'abandoned';
     this._releaseSnapshots();
     return true;
   }

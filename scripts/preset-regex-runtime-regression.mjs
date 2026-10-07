@@ -31,6 +31,35 @@ const contentToHtml = Object.freeze({
   replaceString: '<section class="preset-card">$1</section>'
 });
 
+test('empty display replacements preserve the safe narrative at final presentation', () => {
+  const raw = '<reasoning>PRIVATE_REASONING</reasoning><content>变量更新后仍然保留的正文。</content>'
+    + '<variable>{"key":"进度·经验","op":"+","value":1}</variable>';
+  const clean = instructionParser.cleanupPartialResponse(raw);
+  assert.equal(clean, '变量更新后仍然保留的正文。');
+  for (const replaceString of ['', ' \n\t ', '<analysis>PRIVATE_REPLACEMENT</analysis>']) {
+    const result = buildPresetPresentation(raw, clean, [{
+      id: 'empty-body-display', enabled: true, markdownOnly: true, placement: [2],
+      findRegex: '/<content>[\\s\\S]*?<\\/content>/', replaceString
+    }]);
+    assert.equal(result.kind, 'markdown');
+    assert.deepEqual(result.appliedScripts, ['empty-body-display']);
+    assert.equal(result.text, clean);
+    assert.equal(result.fallbackText, clean);
+    assertContainsNoSecret(result, ['PRIVATE_REASONING', 'PRIVATE_REPLACEMENT', '进度·经验']);
+  }
+});
+
+test('empty regex output recovers from safe raw narrative when clean text is missing', () => {
+  const result = buildPresetPresentation(
+    '<review_audit>PRIVATE_AUDIT</review_audit><content>原始安全正文。</content>', '', [{
+      id: 'remove-body', enabled: true, markdownOnly: true, placement: [2],
+      findRegex: '/<content>[\\s\\S]*?<\\/content>/', replaceString: ''
+    }]
+  );
+  assert.equal(result.text, '原始安全正文。');
+  assertContainsNoSecret(result, ['PRIVATE_AUDIT']);
+});
+
 test('display regexes only inspect the safe presentation projection', () => {
   const secrets = [
     'SECRET_FOX',

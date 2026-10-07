@@ -1,5 +1,7 @@
 import { projectedAuthoritativeState } from '../multiplayer/ui-projection.js';
 import { escHtml } from '../utils/format.js';
+import { gradeAttributes } from './grade-effects.js';
+import { multiplayerCharacterStyles } from '../../css/components/multiplayer-character-panel.css.js';
 
 const TABS = Object.freeze([
   Object.freeze({ id: 'attributes', label: '状态' }),
@@ -18,10 +20,10 @@ const RESOURCE_LABELS = Object.freeze({
 });
 
 const RESOURCE_COLORS = Object.freeze({
-  chakra: '#42a5f5',
-  mental: '#ce93d8',
-  stamina: '#f0a33a',
-  vitality: '#66bb6a'
+  chakra: '#78b7d9',
+  mental: '#b7a3d3',
+  stamina: '#d7ad73',
+  vitality: '#80cba6'
 });
 
 const PHASE_LABELS = Object.freeze({
@@ -187,21 +189,18 @@ export class MultiplayerCharacterPanel extends HTMLElement {
     const location = actorLocation(projection, actor?.room_actor_id, opening?.location);
     return `
       <section class="identity-card">
-        <div>
-          <span class="eyebrow">玩家 ${escaped(context.seat)}</span>
-          <strong>${escaped(identityName, context.seat === 'A' ? '玩家一' : '玩家二')}</strong>
-          <span>${escaped(rank, '下忍')} · ${escaped(status)}</span>
-        </div>
-        <span class="readonly-badge">只读</span>
+        <div class="identity-topline"><span class="eyebrow">玩家 ${escaped(context.seat)}</span><span class="readonly-badge">只读档案</span></div>
+        <strong class="identity-name">${escaped(identityName, context.seat === 'A' ? '玩家一' : '玩家二')}</strong>
+        <div class="identity-meta"><span class="rank-badge grade-badge" ${gradeAttributes(rank, 'ninja')}>${escaped(rank, '下忍')}</span><span>${escaped(status)}</span></div>
       </section>
       <section class="quick-grid" aria-label="角色当前信息">
-        <article><span>所在位置</span><strong>${escaped(location)}</strong></article>
-        <article><span>当前时间</span><strong>${escaped(timeLabel(opening, projection))}</strong></article>
+        <article class="wide"><span>所在位置</span><strong>${escaped(location)}</strong></article>
+        <article class="wide"><span>当前时间</span><strong>${escaped(timeLabel(opening, projection))}</strong></article>
         <article><span>等级</span><strong>${escaped(progression?.level, '1')}</strong></article>
         <article><span>资金</span><strong>${escaped(money?.current, '0')}</strong></article>
       </section>
       <section class="section">
-        <h3>状态</h3>
+        <h3>状态资源<span>当前 / 上限</span></h3>
         ${bars.length ? `<div class="resource-list">${bars.map(item => {
           const current = finiteNumber(item.current);
           const maximum = Math.max(0, finiteNumber(item.maximum));
@@ -232,20 +231,20 @@ export class MultiplayerCharacterPanel extends HTMLElement {
   _renderSkills(context) {
     const skills = entries(context.actor?.skills);
     if (!skills.length) return this._emptyPartition(context, '尚未掌握联机技能');
-    return `<div class="card-list">${skills.map(skill => `
+    return `<div class="collection-heading"><h3>已掌握技能</h3><span>${skills.length} 项</span></div><div class="card-list">${skills.map(skill => `
       <article class="list-card">
         <div class="card-title"><strong>${escaped(itemTitle(skill, '未命名技能'))}</strong><span>${escaped(CATEGORY_LABELS[skill.category] ?? skill.category)}</span></div>
-        <p>${escaped(skill.rank, '无等级')} · 熟练度 ${escaped(skill.mastery, '0')}%</p>
+        <div class="card-metrics"><span>等级 <b class="grade-badge" ${gradeAttributes(skill.rank)}>${escaped(skill.rank, '无等级')}</b></span><span>熟练度 <b>${escaped(skill.mastery, '0')}%</b></span></div>
       </article>`).join('')}</div>`;
   }
 
   _renderEquipment(context) {
     const equipment = entries(context.actor?.equipment);
     if (!equipment.length) return this._emptyPartition(context, '行囊中暂无物品');
-    return `<div class="card-list">${equipment.map(item => `
+    return `<div class="collection-heading"><h3>随身装备</h3><span>${equipment.length} 项</span></div><div class="card-list">${equipment.map(item => `
       <article class="list-card">
         <div class="card-title"><strong>${escaped(itemTitle(item, '未命名物品'))}</strong><span>${escaped(CATEGORY_LABELS[item.category] ?? item.category)}</span></div>
-        <p>数量 ${escaped(item.quantity, '1')}${item.equipped_slot ? ` · 已装备于 ${escaped(item.equipped_slot)}` : ''}</p>
+        <div class="card-metrics"><span>数量 <b>${escaped(item.quantity, '1')}</b></span>${item.equipped_slot ? `<span class="equipped-label">已装备于 ${escaped(item.equipped_slot)}</span>` : ''}</div>
       </article>`).join('')}</div>`;
   }
 
@@ -259,13 +258,13 @@ export class MultiplayerCharacterPanel extends HTMLElement {
     }
     const missions = [...byId.values()];
     if (!missions.length) return this._emptyPartition(context, '当前没有任务');
-    return `<div class="card-list">${missions.map(mission => {
+    return `<div class="collection-heading"><h3>当前任务</h3><span>${missions.length} 项</span></div><div class="card-list">${missions.map(mission => {
       const current = finiteNumber(mission.progress_current);
       const total = Math.max(1, finiteNumber(mission.progress_total, 1));
       const width = Math.max(0, Math.min(100, (current / total) * 100));
       return `<article class="list-card">
         <div class="card-title"><strong>${escaped(itemTitle(mission, '未命名任务'))}</strong><span>${escaped(CATEGORY_LABELS[mission.status] ?? mission.status)}</span></div>
-        <p>${escaped(current)} / ${escaped(total)}</p>
+        <div class="card-metrics"><span>任务进度</span><b>${escaped(current)} / ${escaped(total)}</b></div>
         <i class="mission-progress"><b style="width:${width}%"></b></i>
       </article>`;
     }).join('')}</div>`;
@@ -282,10 +281,10 @@ export class MultiplayerCharacterPanel extends HTMLElement {
         score: item.directed_relationship?.score }
     }))];
     if (!relationships.length) return this._emptyPartition(context, '尚无本人关系记录');
-    return `<div class="card-list">${relationships.map(edge => `
+    return `<div class="collection-heading"><h3>人物关系</h3><span>${relationships.length} 位</span></div><div class="card-list">${relationships.map(edge => `
       <article class="list-card">
         <div class="card-title"><strong>${escaped(edge?.data?.target_display_name, '未知对象')}</strong><span>${escaped(edge?.data?.label, '关系')}</span></div>
-        <p>关系值 ${escaped(edge?.data?.score, '0')}</p>
+        <div class="card-metrics"><span>关系值</span><b>${escaped(edge?.data?.score, '0')}</b></div>
       </article>`).join('')}</div>
       <p class="privacy-note">显示开局档案和已结算剧情中，你有权查看的关系。</p>`;
   }
@@ -316,77 +315,20 @@ export class MultiplayerCharacterPanel extends HTMLElement {
       <style>${this._styles()}</style>
       <div class="panel">
         <header class="header">
-          <div><span>双人联机</span><strong>我的角色</strong></div>
+          <div class="header-copy"><span class="header-eyebrow"><i aria-hidden="true"></i> 双人联机</span><strong>我的角色</strong></div>
           <button type="button" data-close-panel aria-label="关闭角色面板">×</button>
         </header>
         <nav class="tabs" aria-label="联机角色信息">
           ${TABS.map(tab => `<button type="button" data-tab="${tab.id}" aria-selected="${this._tab === tab.id}" class="${this._tab === tab.id ? 'active' : ''}">${tab.label}</button>`).join('')}
         </nav>
         <main class="content">${context.state ? this._renderTab(context) : '<div class="empty-state"><strong>尚未进入联机对局</strong></div>'}</main>
-        <footer><span class="live-dot"></span>${escaped(syncText)}</footer>
+        <footer><span class="live-dot ${revision ? 'is-synced' : ''}" aria-hidden="true"></span><span>${escaped(syncText)}</span></footer>
       </div>
     `;
   }
 
   _styles() {
-    return `
-      :host{display:block;height:100%;color:var(--text-primary)}
-      *{box-sizing:border-box}
-      button{font:inherit}
-      .panel{height:100%;display:flex;flex-direction:column;overflow:hidden;background:linear-gradient(180deg,rgba(18,20,24,.72),rgba(9,10,12,.42))}
-      .header{display:flex;align-items:center;justify-content:space-between;padding:20px 18px 14px;border-bottom:1px solid var(--border-hairline)}
-      .header div{display:flex;flex-direction:column;gap:3px}
-      .header span{font:700 9px/1 var(--font-title);letter-spacing:3px;color:var(--c-kin-bright);text-transform:uppercase}
-      .header strong{font:800 18px/1.3 var(--font-title);letter-spacing:2px}
-      .header button{display:none;width:34px;height:34px;border:0;border-radius:10px;background:rgba(255,255,255,.06);color:var(--text-secondary);font-size:22px;cursor:pointer}
-      .tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px;padding:0 10px;border-bottom:1px solid var(--border-hairline)}
-      .tabs button{position:relative;padding:13px 1px 11px;border:0;background:transparent;color:var(--text-tertiary);font:700 10px/1 var(--font-title);letter-spacing:1px;cursor:pointer}
-      .tabs button::after{content:'';position:absolute;left:18%;right:18%;bottom:-1px;height:2px;border-radius:2px;background:transparent}
-      .tabs button:hover{color:var(--text-secondary)}
-      .tabs button.active{color:var(--text-primary)}
-      .tabs button.active::after{background:linear-gradient(90deg,#ff512f,#f0a33a)}
-      .content{flex:1;min-height:0;overflow:auto;padding:18px 16px 28px;scrollbar-width:thin;scrollbar-color:rgba(198,156,109,.4) transparent}
-      .identity-card{position:relative;display:flex;justify-content:space-between;gap:12px;padding:18px;margin-bottom:12px;border:1px solid rgba(240,163,58,.22);border-radius:16px;background:linear-gradient(135deg,rgba(240,163,58,.1),rgba(255,255,255,.025));overflow:hidden}
-      .identity-card::after{content:'忍';position:absolute;right:8px;bottom:-23px;font:900 76px/1 var(--font-title);color:rgba(255,255,255,.025)}
-      .identity-card>div{display:flex;flex-direction:column;gap:5px;min-width:0;z-index:1}
-      .identity-card .eyebrow{font:700 9px/1 var(--font-title);letter-spacing:2px;color:var(--text-tertiary)}
-      .identity-card strong{font:800 25px/1.25 var(--font-title);letter-spacing:1px;color:var(--c-kin-bright);overflow-wrap:anywhere}
-      .identity-card div>span:last-child{font-size:11px;color:var(--text-secondary)}
-      .readonly-badge{align-self:flex-start;padding:4px 7px;border-radius:999px;background:rgba(102,187,106,.12);color:#81c784;font-size:9px;letter-spacing:1px;z-index:1}
-      .quick-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:22px}
-      .quick-grid article{min-width:0;padding:12px;border-radius:12px;background:rgba(255,255,255,.035);box-shadow:inset 0 0 0 1px rgba(255,255,255,.035)}
-      .quick-grid span,.subtle{display:block;margin-bottom:5px;font-size:9px;letter-spacing:1px;color:var(--text-tertiary)}
-      .quick-grid strong{display:block;font-size:11px;line-height:1.45;color:var(--text-primary);overflow-wrap:anywhere}
-      .section{margin:0 0 22px}
-      .section h3{display:flex;align-items:center;gap:9px;margin:0 0 12px;font:800 10px/1 var(--font-title);letter-spacing:2px;color:var(--text-tertiary)}
-      .section h3::after{content:'';flex:1;height:1px;background:var(--border-hairline)}
-      .section.compact{padding:14px;border-radius:13px;background:rgba(255,255,255,.025)}
-      .section.compact h3{margin-bottom:9px}
-      .section p{margin:0 0 9px;font-size:12px;line-height:1.7;color:var(--text-secondary);overflow-wrap:anywhere}
-      .section p:last-child{margin-bottom:0}
-      .resource-list{display:grid;gap:13px}
-      .resource>div{display:flex;justify-content:space-between;gap:12px;margin-bottom:7px;font-size:10px;color:var(--text-secondary)}
-      .resource strong{font-family:var(--font-mono);font-weight:600;color:var(--text-primary)}
-      .resource i,.mission-progress{display:block;height:3px;border-radius:999px;background:rgba(255,255,255,.06);overflow:hidden}
-      .resource b,.mission-progress b{display:block;height:100%;border-radius:inherit;box-shadow:0 0 9px currentColor}
-      .card-list{display:grid;gap:9px}
-      .list-card{padding:14px;border-radius:13px;background:rgba(255,255,255,.035);box-shadow:inset 0 0 0 1px rgba(255,255,255,.035)}
-      .card-title{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
-      .card-title strong{font:800 13px/1.45 var(--font-title);overflow-wrap:anywhere}
-      .card-title span{flex-shrink:0;padding:3px 6px;border-radius:999px;background:rgba(240,163,58,.1);color:#e6b86e;font-size:9px}
-      .list-card p{margin:7px 0 0;font-size:10px;color:var(--text-tertiary)}
-      .mission-progress{margin-top:10px}
-      .mission-progress b{background:linear-gradient(90deg,#ff512f,#f0a33a)}
-      .empty-state{min-height:210px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;color:var(--text-tertiary)}
-      .empty-state span{width:54px;height:54px;display:grid;place-items:center;border:1px solid rgba(198,156,109,.25);border-radius:50%;font:900 22px/1 var(--font-title);color:rgba(198,156,109,.65)}
-      .empty-state strong{max-width:210px;font-size:12px;font-weight:500;line-height:1.7}
-      .empty,.privacy-note{font-size:11px;line-height:1.7;color:var(--text-tertiary)}
-      .privacy-note{margin:14px 3px 0}
-      footer{display:flex;align-items:center;justify-content:center;gap:7px;padding:10px 12px;border-top:1px solid var(--border-hairline);font-size:9px;letter-spacing:1px;color:var(--text-tertiary)}
-      .live-dot{width:6px;height:6px;border-radius:50%;background:#66bb6a;box-shadow:0 0 9px rgba(102,187,106,.7)}
-      @media(max-width:768px){.header button{display:grid;place-items:center}.header{padding-top:15px}.content{padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}}
-      @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
-    `;
+    return multiplayerCharacterStyles;
   }
 }
 

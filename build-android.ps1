@@ -108,7 +108,7 @@ try {
   try {
     $Forbidden = @($Zip.Entries | Where-Object { $_.FullName -match '(^|/)(\.env(?:\..*)?|server|node_modules|\.git|deploy\.local[^/]*)(/|$)|\.(?:db|jks|keystore)$' })
     if ($Forbidden.Count) { throw "Private/server files found in APK: $($Forbidden.FullName -join ', ')" }
-    $CanonicalFiles = @('index.html', 'manifest.json', 'sw.js')
+    $CanonicalFiles = @('index.html', 'manifest.json', 'sw.js', 'announcements.html')
     foreach ($Directory in @('js', 'css', 'img', 'assets', 'app')) {
       $CanonicalFiles += @(Get-ChildItem -LiteralPath (Join-Path $ProjectDir $Directory) -Recurse -File | ForEach-Object {
         $_.FullName.Substring($ProjectDir.Length + 1).Replace('\', '/')
@@ -147,7 +147,7 @@ try {
   $FinalApk = Join-Path $OutputDirectory "naruto-rpg-$AppVersion-debug.apk"
   Copy-Item -LiteralPath $Apk -Destination $FinalApk
   Copy-Item -LiteralPath (Join-Path $AndroidDir 'app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk') -Destination (Join-Path $OutputDirectory 'native-tests.apk')
-  Copy-Item -LiteralPath (Join-Path $AndroidDir 'app\build\test-results\testDebugUnitTest') -Destination (Join-Path $OutputDirectory 'native-unit-tests') -Recurse
+  Copy-BuildSource (Join-Path $AndroidDir 'app\build\test-results\testDebugUnitTest') (Join-Path $OutputDirectory 'native-unit-tests')
   $Receipt = @{
     builtAt = (Get-Date).ToString('o'); version = $AppVersion; versionCode = $AppVersionCode; variant = 'debug'; apk = $FinalApk
     sha256 = (Get-FileHash -LiteralPath $FinalApk -Algorithm SHA256).Hash.ToLowerInvariant()

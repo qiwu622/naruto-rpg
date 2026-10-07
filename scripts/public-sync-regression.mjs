@@ -55,7 +55,7 @@ function rejectExtraPublicFiles(relativeDir) {
   }
 }
 
-for (const file of ['index.html', 'manifest.json', 'sw.js']) {
+for (const file of ['index.html', 'manifest.json', 'sw.js', 'announcements.html']) {
   compareFile(path.join(root, file), path.join(root, 'public', file));
 }
 for (const directory of ['js', 'css', 'img', 'assets']) {

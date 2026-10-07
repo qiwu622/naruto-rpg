@@ -7,7 +7,10 @@ import { decodeTimelineSaveFile, TIMELINE_FILE_ACCEPT } from '../core/timeline-f
 import { localSaveLibrary, PERSONAL_SAVE_KIND, ROOM_SAVE_KIND } from '../core/save-library.js';
 import { personalSaveLibrary } from '../core/personal-save-library.js';
 import { saveLibraryCloud } from '../core/save-library-cloud.js';
-import { usesProjectServerFeatures, isMultiplayerEntryVisible } from '../core/runtime-platform.js';
+import { authClient } from '../core/auth-client.js';
+import './cloud-sync-status.js';
+import { usesProjectServerFeatures, isMultiplayerEntryVisible, isNativeAndroidApp } from '../core/runtime-platform.js';
+import './app-cloud-panel.js';
 import { localRoomHistory } from '../multiplayer/local-room-history.js';
 import { saveLibraryStyles, saveLibraryModalStyles } from '../../css/components/save-library-panel.css.js';
 
@@ -16,6 +19,7 @@ const glyph = (name, size = 16) => icon(name, size).replace('<svg', '<svg aria-h
 const date = value => value ? new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', year: 'numeric' }) : '尚未保存快照';
 const size = value => value == null ? '房间记录' : value < 1024 * 1024 ? `${Math.ceil(value / 1024)} KB` : `${(value / 1024 / 1024).toFixed(2)} MB`;
 const color = value => /^#[\da-f]{3,8}$/i.test(value || '') ? value : '#aab8e7';
+const continuationRange = scope => `正文与回退：第 ${Number(scope.from_turn) || 0}–${Number(scope.through_turn) || 0} 回合`;
 let activeModal = null;
 
 function dailyText(value) {
@@ -30,12 +34,16 @@ function dailyText(value) {
 
 export async function chooseRoomExit() {
   await import('./modal.js');
+  const { multiplayerRoomExitStyles } = await import('../../css/components/multiplayer-overlay.css.js');
   return new Promise(resolve => {
     const modal = document.createElement('game-modal');
+    modal.dataset.multiplayerRoomExit = '';
     document.body.append(modal);
     modal.show({
       title: '退出联机房间',
-      content: '<p>保存后可在本机房间历史中查看快照并重新进入。仅退出会保留之前的存档和房间记录。房间进度仍由服务器保存，对方可以继续保持连接。</p>',
+      content: `<p class="mp-exit-summary" id="mp-exit-description">离开前，保存一份这段冒险的快照。</p>
+        <div class="mp-exit-save"><span class="mp-exit-icon">${glyph('archive', 18)}</span><div><strong>收进本机房间历史</strong><p>保存当前正文与房间快照，下次可从「存档库 · 联机房间」查看并重新进入。</p></div></div>
+        <p class="mp-exit-note">仅退出也会保留之前的本地存档。房间进度仍由服务器保存，对方可以继续保持连接。</p>`,
       onDismiss: () => resolve('cancel'),
       buttons: [
         { label: '取消', onClick: () => resolve('cancel') },
@@ -43,6 +51,10 @@ export async function chooseRoomExit() {
         { label: '保存并退出', primary: true, autofocus: true, onClick: () => resolve('save') }
       ]
     });
+    const style = document.createElement('style');
+    style.textContent = multiplayerRoomExitStyles;
+    modal.shadowRoot.append(style);
+    modal.shadowRoot.querySelector('[role="dialog"]').setAttribute('aria-describedby', 'mp-exit-description');
   });
 }
 
@@ -73,7 +85,13 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     this.entries = [];
     this.branches = [];
     this.nodes = [];
+    this.shadowRoot.addEventListener('cloud-sync-complete', () => {
+      void this.run(async () => { await this.refresh(); this.status('云端同步已完成。'); });
+    });
   }
+
+  connectedCallback() { this._authSubscription = eventBus.on('auth:changed', () => { this.updateCloudStatusScopes(); if (this.cloudView) void this.refresh(); }); }
+  disconnectedCallback() { this._authSubscription?.(); }
 
   configure({ kind = PERSONAL_SAVE_KIND, roomsOnly = false, connectRoom = null, fromNodeId = null, cloud = false, onLoaded, onClose } = {}) {
     Object.assign(this, { kind: roomsOnly ? ROOM_SAVE_KIND : kind, roomsOnly, connectRoom, fromNodeId });
@@ -100,16 +118,19 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
           ${[[PERSONAL_SAVE_KIND, 'user', '个人存档'], [IF_LINES_KIND, 'git-branch', 'IF 线'], [ROOM_SAVE_KIND, 'users', '联机房间']].map(([kind, image, text]) => `<button id="tab-${kind}" role="tab" data-kind="${kind}" aria-controls="workspace">${glyph(image)}${text}<span class="count" data-count="${kind}">0</span></button>`).join('')}
         </nav>
         <div id="workspace" class="workspace" role="tabpanel">
+          ${isNativeAndroidApp() ? '<app-cloud-panel local-label="返回本地存档"></app-cloud-panel>' : ''}
           <section id="current" class="current"><div id="current-badge" class="current-badge">忍</div><div id="current-info" class="current-info"></div><div class="current-actions">
-            <button id="capture" class="button primary">${glyph('archive')}保存当前个人档</button><button id="create-line" class="button primary">${glyph('plus')}创建 IF 线</button><button id="new-game" class="button quiet">${glyph('plus')}保留旧档并开新档</button><button id="cloud-current" class="button primary" hidden>${glyph('cloud')}上传当前进度</button>
+            <button id="capture" class="button primary">${glyph('archive')}保存当前个人档</button><button id="continuation" class="button quiet">生成轻量续玩副本</button><button id="create-line" class="button primary">${glyph('plus')}创建 IF 线</button><button id="new-game" class="button quiet">${glyph('plus')}保留旧档并开新档</button><button id="cloud-current" class="button primary" hidden>${glyph('cloud')}上传当前进度</button>
           </div></section>
+          <div id="current-sync" class="sync-section"><p class="sync-caption">当前个人档 <span>云同步</span></p><cloud-sync-status aria-label="当前个人档同步状态"></cloud-sync-status></div>
           <div class="toolbar"><label class="search">${glyph('search')}<input id="search" type="search" aria-label="搜索存档" placeholder="搜索名称、角色或地点…"></label><select id="sort" aria-label="排序"><option value="newest">最近更新</option><option value="oldest">最早创建</option><option value="turn">回合进度</option></select><button id="import" class="button quiet">${glyph('download')}导入到存档库</button><button id="cloud-manager" class="button quiet">${glyph('cloud')}<span>云端管理</span></button><button id="refresh" class="icon-button" aria-label="刷新" title="刷新">${glyph('refresh-cw')}</button><input id="file" type="file" accept="${TIMELINE_FILE_ACCEPT}" hidden></div>
-          <p id="hint" class="hint"></p><p id="status" class="status" role="status" aria-live="polite"></p><div id="list" class="list"></div>
+          <p id="hint" class="hint"></p><p id="status" class="status" role="status" aria-live="polite"></p><div id="manual-sync" class="sync-section" hidden><p class="sync-caption">所选存档 <span id="manual-sync-label"></span></p><cloud-sync-status aria-label="所选存档上传状态"></cloud-sync-status></div><div id="list" class="list"></div>
           <section id="preview" class="preview" hidden><div class="preview-heading"><h3>本地快照 · 只读</h3><button id="close-preview" class="button quiet small">收起快照</button></div><pre id="snapshot-story"></pre><h4>当时的日报</h4><pre id="snapshot-daily"></pre><details><summary>查看存档中的变量</summary><pre id="snapshot-vars"></pre></details></section>
         </div>
         <footer class="footer"><span id="storage-place">${glyph('database', 13)}保存在当前浏览器与站点</span><span id="storage-note">清除网站数据会删除本机存档，请定期导出备份。</span></footer>
       </div>`;
     this.$('#close').onclick = () => this.onClose?.();
+    this.shadowRoot.querySelector('app-cloud-panel')?.addEventListener('cloud-local', () => { this.cloudView = false; void this.refresh(); });
     this.$$('.tabs button').forEach(button => button.onclick = () => this.run(async () => {
       this.kind = button.dataset.kind; this.cloudView = false; this.$('#search').value = ''; this.$('#preview').hidden = true; await this.refresh();
     }));
@@ -129,6 +150,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
       await this.refresh(); this.status('个人档已保存，包含全部 IF 线，可随时读取。');
     });
     this.$('#create-line').onclick = () => this.run(() => this.createLine());
+    this.$('#continuation').onclick = () => this.run(() => this.createContinuation());
     this.$('#new-game').onclick = () => this.run(async () => { if (await eventBus.request('app:new-personal-save')) this.onLoaded?.(); });
     this.$('#cloud-manager').onclick = () => this.run(async () => {
       this.cloudView = !this.cloudView; this.$('#search').value = ''; this.$('#preview').hidden = true; await this.refresh();
@@ -144,7 +166,11 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
       if (!file) return;
       const data = await decodeTimelineSaveFile(file);
       if (this.kind === ROOM_SAVE_KIND) await localRoomHistory.importPackage(data);
-      else { await personalSaveLibrary.importData(data); this.kind = PERSONAL_SAVE_KIND; }
+      else {
+        const imported = await personalSaveLibrary.importData(data);
+        saveLibraryCloud.forgetSource(imported.id);
+        this.kind = PERSONAL_SAVE_KIND;
+      }
       await this.refresh(); this.status('导入成功，已新增存档，当前进度没有改变。');
     });
     this.$('#list').onclick = event => {
@@ -155,7 +181,21 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
   }
 
   status(message, error = false) { this.$('#status').textContent = message; this.$('#status').dataset.error = String(error); }
-  updateDisabled() { this.$$('button,input,select').forEach(element => { element.disabled = this.busy || element.dataset.disabled === 'true'; }); }
+  updateCloudStatusScopes() {
+    const userId = String(authClient.getUser()?.id || '');
+    const enabled = usesProjectServerFeatures() && this.kind !== ROOM_SAVE_KIND && Boolean(userId);
+    if (this.$('#current-sync')) this.$('#current-sync').hidden = !enabled || !this.current;
+    this.$$('[data-sync-save-id]').forEach(element => {
+      element.scope = { userId, saveKey: element.dataset.syncSaveId, enforceCurrent: false };
+      element.hidden = !enabled;
+    });
+    if (this.$('#manual-sync')) {
+      this.$('#manual-sync').hidden = !enabled || !this._manualSyncId || !this.cloudView;
+      this.$('#manual-sync-label').textContent = this._manualSyncLabel ? `「${this._manualSyncLabel}」上传状态` : '上传状态';
+      this.$('#manual-sync cloud-sync-status').scope = { userId, saveKey: this._manualSyncId || '', enforceCurrent: false };
+    }
+  }
+  updateDisabled() { this.$$('button,input,select').forEach(element => { element.disabled = (element.id !== 'close' && this.busy) || element.dataset.disabled === 'true'; }); }
   async run(operation) {
     if (this.busy) return;
     this.busy = true; this.status('正在处理…'); this.updateDisabled();
@@ -165,6 +205,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
   }
 
   async refresh() {
+    const requestId = this._cloudListRequestId = (this._cloudListRequestId || 0) + 1;
     const [personal, rooms, branches, nodes, current] = await Promise.all([
       localSaveLibrary.list(PERSONAL_SAVE_KIND), localRoomHistory.list(), timelineSystem.getAllBranches(), timelineSystem.getAllNodes(), timelineSystem.getCurrentNode()
     ]);
@@ -173,7 +214,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     const lines = this.kind === IF_LINES_KIND;
     const inRoom = this.kind === ROOM_SAVE_KIND;
     const cloud = this.cloudView && this.kind === PERSONAL_SAVE_KIND;
-    const localApp = !usesProjectServerFeatures();
+    const localApp = isNativeAndroidApp();
     this.$('#storage-place').innerHTML = `${glyph(cloud ? 'cloud' : 'database', 13)}${cloud ? '云端副本属于当前登录账号' : localApp ? '保存在本机 App 中' : '保存在当前浏览器与站点'}`;
     this.$('#storage-note').textContent = cloud ? '下载后保存在本机；清除网站数据不会删除云端副本。' : localApp ? '卸载 App 或清除应用数据会删除本地存档，请定期导出备份。' : '清除网站数据会删除本机存档，请定期导出备份。';
     this.entries = lines ? branches : inRoom ? rooms : personal;
@@ -185,6 +226,8 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     for (const [kind, count] of [[PERSONAL_SAVE_KIND, personal.length], [IF_LINES_KIND, branches.filter(branch => branch.id !== 'branch_main').length], [ROOM_SAVE_KIND, rooms.length]]) this.$(`[data-count="${kind}"]`).textContent = count;
     this.$('#capture').hidden = inRoom || cloud; this.$('#capture').classList.toggle('primary', !lines);
     this.$('#capture').dataset.disabled = String(!current);
+    this.$('#continuation').hidden = inRoom || lines || cloud;
+    this.$('#continuation').dataset.disabled = String(!current);
     this.$('#create-line').hidden = !lines; this.$('#create-line').dataset.disabled = String(!current);
     this.$('#new-game').hidden = inRoom || lines || cloud;
     this.$('#cloud-current').hidden = !cloud; this.$('#cloud-current').dataset.disabled = String(!current);
@@ -204,18 +247,32 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     this.$('#hint').textContent = lines
       ? 'IF 线属于当前个人档，随完整存档一起保存和导出。可从历史回合分叉；切换不会覆盖其他线路，删除或设为主线前自动备份。'
       : inRoom ? (isMultiplayerEntryVisible() ? '仅显示当前账号的房间。快照可离线查看；重新进入需要原站点、原账号和服务器上的房间。' : '联机入口暂时隐藏。已有房间记录仍可查看快照、导出和管理。')
-      : '读取或开新档前自动保存当前进度。每份个人档包含完整时间线与 IF 线；读取某份存档后，可在 IF 线页管理其中的线路。';
+      : '读取或开新档前自动保存当前进度。完整档保留全部 IF 线；轻量续玩副本只保留所选线路近期正文与回退点，历史记忆保留，范围显示在卡片上。';
     if (cloud) {
       this.entries = []; this.renderList();
       this.$('#hint').textContent = '正在获取当前账号的云存档…';
-      const remote = await saveLibraryCloud.list();
-      this.cloudRecords = remote.saves;
-      this.entries = remote.saves.map(entry => ({ ...entry, _cloud: true, label: entry.slot_name, character: entry.preview_data?.name, location: entry.preview_data?.location, turn: entry.preview_data?.turn, branchCount: entry.preview_data?.branch_count, createdAt: Date.parse(entry.created_at) || 0, updatedAt: Date.parse(entry.updated_at) || 0 }));
-      this.$('#current-badge').innerHTML = glyph('cloud', 22);
-      this.$('#current-info').innerHTML = `<div class="overline">当前账号 · 云端存档</div><h3>${escHtml(remote.user.global_name || remote.user.username || '我的云存档')}</h3><p>${remote.storage ? `${remote.storage.used_slots} / ${remote.storage.max_slots} 个槽位 · 已用 ${size(remote.storage.used_uncompressed_bytes)} · 单份上限 ${size(remote.storage.max_save_bytes)}` : `${remote.saves.length} 份云存档`} · 每份包含全部 IF 线</p>`;
-      this.$('#hint').textContent = '云档按登录账号保存。下载先加入本地库，读取前保留当前进度；覆盖或删除云档前，会先保存一份完整本机副本。自动同步继续使用「默认云存档」槽位。';
+      // Listing must never hold the library's global operation lock.
+      void this._loadCloudList(requestId);
     }
     this.renderList(); this.updateDisabled();
+  }
+
+  async _loadCloudList(requestId) {
+    try {
+      const remote = await saveLibraryCloud.list();
+      if (!this.isConnected || requestId !== this._cloudListRequestId || !this.cloudView || this.kind !== PERSONAL_SAVE_KIND
+        || remote.user.id !== authClient.getUser()?.id) return;
+      this.cloudRecords = remote.saves;
+      this.entries = remote.saves.map(entry => ({ ...entry, _cloud: true, label: entry.slot_name, character: entry.preview_data?.name, location: entry.preview_data?.location, turn: entry.preview_data?.turn, branchCount: entry.preview_data?.branch_count, continuation: entry.preview_data?.continuation, createdAt: Date.parse(entry.created_at) || 0, updatedAt: Date.parse(entry.updated_at) || 0 }));
+      this.$('#current-badge').innerHTML = glyph('cloud', 22);
+      this.$('#current-info').innerHTML = `<div class="overline">当前账号 · 云端存档</div><h3>${escHtml(remote.user.global_name || remote.user.username || '我的云存档')}</h3><p>${remote.storage ? `${remote.storage.used_slots} / ${remote.storage.max_slots} 个槽位 · 已用 ${size(remote.storage.used_uncompressed_bytes)} · 单份上限 ${size(remote.storage.max_save_bytes)}` : `${remote.saves.length} 份云存档`} · 支持完整档与轻量副本</p>`;
+      this.$('#hint').textContent = '云档按登录账号保存。下载先加入本地库，读取前保留当前进度；覆盖或删除云档前，会先保存一份完整本机副本。读取云档后，自动同步会继续更新这份云档；发生冲突时可保留双方副本。';
+      this.renderList(); this.updateDisabled();
+    } catch (error) {
+      if (!this.isConnected || requestId !== this._cloudListRequestId || !this.cloudView) return;
+      this.$('#hint').textContent = '云端暂不可用，可返回本机继续管理存档；本地进度没有改变。';
+      this.status(error.message || '无法获取云存档，本地进度仍保留', true);
+    }
   }
 
   actionButton(action, id, label, { image, primary = false, disabled = false, title = label } = {}) {
@@ -233,6 +290,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     if (lines) entries.sort((a, b) => Number(b.id === 'branch_main') - Number(a.id === 'branch_main'));
     this.$('#list').innerHTML = entries.length ? entries.map(entry => lines ? this.lineCard(entry) : this.saveCard(entry)).join('')
       : `<div class="empty"><div class="empty-mark">${glyph(lines ? 'git-branch' : this.cloudView ? 'cloud' : 'archive', 30)}</div><h3>${query ? '没有找到匹配记录' : this.cloudView && this.kind === PERSONAL_SAVE_KIND ? '云端还没有收藏' : lines ? '故事还没有分歧' : this.kind === ROOM_SAVE_KIND ? '还没有房间记录' : '收藏你的第一段冒险'}</h3><p>${query ? '换一个名称、角色或地点再试试。' : this.cloudView && this.kind === PERSONAL_SAVE_KIND ? '上传当前进度，或返回本机，在已有个人存档卡片上选择「上传到云端」。' : lines ? '先创建角色或读取个人存档，即可从任意历史回合开辟 IF 线。' : this.kind === ROOM_SAVE_KIND ? '加入联机房间后，这里会留下本账号的记录。保存并退出，还能留住当时的正文、日报与变量。' : '保存当前进度，或导入旧 JSON / gzip 存档。过去的故事和新的开局可以同时保留。'}</p></div>`;
+    this.updateCloudStatusScopes();
   }
 
   nodeFor(branch) { return this.nodes.find(node => node.id === branch.head_node_id); }
@@ -260,9 +318,12 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     const button = (action, label, options = {}) => this.actionButton(action, entry.id, label, options);
     const backup = String(entry.reason || '').startsWith('before-') || entry.reason === 'library-open';
     return `<article class="entry" data-save-id="${escAttr(entry.id)}"${rooms ? ' style="--entry-color:#77bca6"' : ''}>
-      <div class="entry-head"><h3>${escHtml(entry.label)}</h3><span class="tag">${rooms ? '联机' : backup ? '自动备份' : '个人档'}</span></div>
+      <div class="entry-head"><h3>${escHtml(entry.label)}</h3><span class="tag${entry.continuation ? ' light' : ''}">${rooms ? '联机' : entry.continuation ? '轻量续玩' : backup ? '自动备份' : '个人档'}</span></div>
       <div class="metadata"><span>${glyph(rooms ? 'users' : 'user', 13)}${rooms ? `玩家 ${escHtml(entry.seat || '—')}` : escHtml(entry.character || '忍者冒险')}</span><span>第 ${Number(entry.turn) || 0} 回合</span>${rooms ? '' : `<span>${entry.branchCount == null ? '完整时间线' : `${Number(entry.branchCount) || 0} 条 IF 线`}</span>`}</div>
       <p class="excerpt">${rooms ? `${escHtml(entry.roomCode || '')} · ${entry.snapshotAt ? '已保存正文、日报与可见变量快照' : '仅房间历史，尚未保存快照'}` : [entry.location, entry.branchName, entry.summary].filter(Boolean).map(escHtml).join(' · ') || '完整时间线已保存，可读取后继续冒险。'}</p>
+      ${!rooms && usesProjectServerFeatures() ? `<cloud-sync-status data-sync-save-id="${escAttr(entry.id)}" aria-label="此存档上传状态"></cloud-sync-status>` : ''}
+      ${entry.continuation ? `<p class="save-scope">${continuationRange(entry.continuation)}<br>此前记忆保留；其他线路请读取原档。</p>` : ''}
+      ${rooms ? '' : `<div class="entry-actions">${button('continuation', '生成轻量副本')}</div>`}
       <div class="entry-footer">${!rooms || isMultiplayerEntryVisible() ? button('load', rooms ? '重新进入' : '读取', { primary: true, image: rooms ? 'users' : 'archive' }) : ''}<div class="entry-ops">${entry.snapshotAt ? button('preview', '查看快照', { image: 'zen' }) : ''}${button('rename', '改名', { image: 'pencil' })}${entry.snapshotAt ? button('export', '导出', { image: 'export' }) : ''}${!rooms && usesProjectServerFeatures() ? button('cloud', '上传到云端', { image: 'cloud' }) : ''}${button('delete', '删除本地记录', { image: 'trash' })}</div></div>
       <p class="entry-time">${escHtml(date(entry.snapshotAt || entry.updatedAt))} · ${size(entry.bytes)}</p></article>`;
   }
@@ -282,6 +343,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     }
     const entry = await localSaveLibrary.get(id, this.kind, this.owner);
     if (action === 'cloud') return this.uploadCloud(entry);
+    if (action === 'continuation') return this.createContinuation(entry);
     if (action === 'load') {
       if (this.kind === ROOM_SAVE_KIND && !isMultiplayerEntryVisible()) return;
       if (this.kind === ROOM_SAVE_KIND) await localRoomHistory.resume(id, this.connectRoom || (roomId => eventBus.request('app:open-multiplayer', { roomId })));
@@ -301,11 +363,29 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
       const label = await this.editName(entry.label);
       if (label !== null) await localSaveLibrary.rename(id, this.kind, this.owner, label);
       await this.refresh();
-    } else if (action === 'export') { const result = await localSaveLibrary.export(id, this.kind, this.owner); this.status(result.cancelled ? '已取消导出，原存档仍保留。' : '已导出完整存档文件。'); }
+    } else if (action === 'export') { const result = await localSaveLibrary.export(id, this.kind, this.owner); this.status(result.cancelled ? '已取消导出，原存档仍保留。' : entry.continuation ? `轻量副本已导出。${continuationRange(entry.continuation)}；此前记忆保留。` : '已导出完整存档文件。'); }
     else if (action === 'delete') {
       const confirmed = await customElements.get('game-modal').confirm({ title: '删除本地存档', message: `删除「${entry.label}」？这不会删除服务器房间、当前游戏进度或其他存档。`, okLabel: '删除', cancelLabel: '取消' });
       if (confirmed) { await localSaveLibrary.remove(id, this.kind, this.owner); await this.refresh(); }
     }
+  }
+
+  async createContinuation(source = null) {
+    const from = source?.label || '当前冒险';
+    const turn = source?.turn ?? this.current?.turn_number ?? 0;
+    const fields = await this.form({ title: '生成轻量续玩副本', label: '保留原档并生成', content: `
+      <label>副本名称<input id="continuation-name" required maxlength="100" value="${escAttr(`${from} · 轻量续玩`.slice(0, 100))}"></label>
+      <label>保留最近多少回合<input id="continuation-turns" type="number" required min="1" step="1" value="50"></label>
+      <p>以「${escHtml(from)}」保存的第 ${Number(turn)} 回合为终点，保留所选线路近期的正文、日报、变量与回退点。历史事实、角色关系、置顶记忆和线索继续保留。</p>
+      <p>更早的正文与其他 IF 线保留在原档中，副本不包含这些回退点。${source ? '原档不会被覆盖。' : '先将当前进度与全部 IF 线保存到存档库，保存失败则停止。'}生成后当前游戏不切换，可在副本卡片上选择读取、导出或上传云端。</p>
+      <p>原档与副本会同时占用本机空间。需要腾出空间时，请先导出原档备份，再自行管理原档。</p>`,
+      read: root => ({ label: root.querySelector('#continuation-name').value.trim(), keepTurns: Number(root.querySelector('#continuation-turns').value) }) });
+    if (!fields) { this.status(''); return; }
+    const { entry, source: original } = await eventBus.request('app:create-continuation-save', {
+      ...fields, sourceId: source?.id || '', onProgress: message => this.status(message)
+    });
+    await this.refresh();
+    this.status(`轻量副本已生成（${size(entry.bytes)}），原档「${original.label}」（${size(original.bytes)}）仍保留。\n${continuationRange(entry.continuation)}；历史记忆保留，当前游戏没有切换。`);
   }
 
   async createLine(fromNodeId = this.meta.current_node_id) {
@@ -336,18 +416,21 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
 
   cloudCard(entry) {
     const button = (action, label, options = {}) => this.actionButton(action, entry.id, label, options);
-    return `<article class="entry" data-cloud-id="${escAttr(entry.id)}" style="--entry-color:#83b6d4"><div class="entry-head"><h3>${escHtml(entry.label)}</h3><span class="tag">${entry.slot_name === '默认云存档' ? '自动同步' : '云端'}</span></div><div class="metadata"><span>${glyph('user', 13)}${escHtml(entry.character || '忍者冒险')}</span><span>${entry.turn == null ? '已保存进度' : `第 ${Number(entry.turn) || 0} 回合`}</span>${entry.branchCount == null ? '' : `<span>${Number(entry.branchCount) || 0} 条 IF 线</span>`}</div><p class="excerpt">${escHtml(entry.location || '完整个人时间线')} · ${escHtml(entry.preview_data?.branch_name || '下载后可管理其中的 IF 线')}</p><div class="entry-footer">${button('load', '读取云档', { primary: true, image: 'cloud' })}<div class="entry-ops">${button('download', '下载到本地存档库', { image: 'download' })}${button('rename', '云档改名', { image: 'pencil' })}${button('delete', '删除云档', { image: 'trash' })}</div></div><p class="entry-time">${escHtml(date(entry.updated_at))} · ${size(entry.compressed_size_bytes || entry.size_bytes)}</p></article>`;
+    return `<article class="entry" data-cloud-id="${escAttr(entry.id)}" style="--entry-color:#83b6d4"><div class="entry-head"><h3>${escHtml(entry.label)}</h3><span class="tag${entry.continuation ? ' light' : ''}">${entry.continuation ? '轻量续玩 · 云端' : entry.slot_name === '默认云存档' ? '自动同步' : '云端'}</span></div><div class="metadata"><span>${glyph('user', 13)}${escHtml(entry.character || '忍者冒险')}</span><span>${entry.turn == null ? '已保存进度' : `第 ${Number(entry.turn) || 0} 回合`}</span>${entry.branchCount == null ? '' : `<span>${Number(entry.branchCount) || 0} 条 IF 线</span>`}</div><p class="excerpt">${escHtml(entry.location || '个人时间线')} · ${escHtml(entry.preview_data?.branch_name || '下载后可管理其中的 IF 线')}</p>${entry.continuation ? `<p class="save-scope">${continuationRange(entry.continuation)}<br>此前记忆保留；更早正文请读取原档。</p>` : ''}<div class="entry-footer">${button('load', '读取云档', { primary: true, image: 'cloud' })}<div class="entry-ops">${button('download', '下载到本地存档库', { image: 'download' })}${button('rename', '云档改名', { image: 'pencil' })}${button('delete', '删除云档', { image: 'trash' })}</div></div><p class="entry-time">${escHtml(date(entry.updated_at))} · ${size(entry.compressed_size_bytes || entry.size_bytes)}</p></article>`;
   }
 
   async uploadCloud(entry) {
     this.status('正在获取云端槽位…');
     const remote = await saveLibraryCloud.list();
     const choices = remote.saves.map(save => `<option value="${escAttr(save.id)}">覆盖「${escHtml(save.slot_name)}」</option>`).join('');
-    const fields = await this.form({ title: '上传个人存档到云端', label: '上传', content: `<label>云端名称<input id="cloud-name" required maxlength="50" value="${escAttr(entry.label.slice(0, 50))}"></label><label>保存位置<select id="cloud-target"><option value="">新建云端槽位</option>${choices}</select></label><p>包含此档全部 IF 线。选择覆盖已有槽位时，会先将旧云档保存到本机；备份失败将停止上传。</p>`, read: root => ({ slotName: root.querySelector('#cloud-name').value.trim(), saveId: root.querySelector('#cloud-target').value }) });
+    const fields = await this.form({ title: '上传个人存档到云端', label: '上传', content: `<label>云端名称<input id="cloud-name" required maxlength="50" value="${escAttr(entry.label.slice(0, 50))}"></label><label>保存位置<select id="cloud-target"><option value="">新建云端槽位</option>${choices}</select></label><p>${entry.continuation ? `这是轻量副本。${continuationRange(entry.continuation)}；历史记忆保留，更早正文及生成时未保留的 IF 线请读取原档。` : '包含此档全部 IF 线。'}选择覆盖已有槽位时，会先将旧云档保存到本机；备份失败将停止上传。</p>`, read: root => ({ slotName: root.querySelector('#cloud-name').value.trim(), saveId: root.querySelector('#cloud-target').value }) });
     if (!fields) { this.status(''); return; }
-    this.status('正在上传完整存档到云端…');
+    this._manualSyncId = entry.id;
+    this._manualSyncLabel = entry.label;
+    this.updateCloudStatusScopes();
+    this.status(entry.continuation ? '正在上传轻量副本到云端…' : '正在上传完整存档到云端…');
     await saveLibraryCloud.upload(entry.id, fields);
-    await this.refresh(); this.status(`「${fields.slotName}」已上传，全部 IF 线一同保留。`);
+    await this.refresh(); this.status(entry.continuation ? `「${fields.slotName}」已上传。${continuationRange(entry.continuation)}；历史记忆保留。` : `「${fields.slotName}」已上传，全部 IF 线一同保留。`);
   }
 
   async actCloud(action, id) {

@@ -47,7 +47,7 @@ async function walk(directory) {
   }
 }
 await walk(payload);
-for (const relative of ['index.html', 'manifest.json', 'sw.js']) {
+for (const relative of ['index.html', 'manifest.json', 'sw.js', 'announcements.html']) {
   const bytes = await fs.readFile(path.join(root, relative));
   const expected = relative.endsWith('.html') ? Buffer.from(bytes.toString().replace(/\?v=\d+/g, '?v=' + build)) : bytes;
   if (hash(expected) !== files['static/' + relative]?.sha256) throw new Error('Stale static entry: ' + relative);
@@ -71,5 +71,7 @@ for (const name of await fs.readdir(path.join(root, 'server/multiplayer/persiste
 }
 const version = JSON.parse(await fs.readFile(path.join(payload, 'static/version.json'), 'utf8'));
 if (version.build !== build || version.environment !== mode) throw new Error('Release metadata differs from requested target');
+const announcement = await fs.readFile(path.join(payload, 'static/announcements.html'), 'utf8');
+if (!announcement.includes(`data-release-version="${version.version}"`)) throw new Error('Website announcement is missing or belongs to another release');
 await fs.writeFile(path.join(payload, 'release-manifest.json'), JSON.stringify({ schema: 'naruto.deploy-release/v1', mode, build, release_id: releaseId, version: version.version, files, source_hashes: sourceHashes }, null, 2) + '\n');
 console.log(`RELEASE_FILES=${Object.keys(files).length}; BACKEND_IMPORTS=${seen.size}; SOURCE_FINGERPRINT=${hash(JSON.stringify(sourceHashes))}`);

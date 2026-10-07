@@ -103,6 +103,18 @@ const previousDocument = globalThis.document;
 let hostActionButton = null;
 try {
   globalThis.document = { createElement: tagName => new FakeElement(tagName) };
+  for (const text of ['', ' \n\t ']) {
+    const host = new FakeElement();
+    appShell._renderPresetPresentation(host, {
+      kind: 'markdown', text, fallbackText: '展示层保存的安全正文。'
+    }, '管线安全正文。');
+    assert.match(host.innerHTML, /展示层保存的安全正文/);
+  }
+  const legacyHost = new FakeElement();
+  appShell._renderPresetPresentation(legacyHost, { kind: 'markdown', text: '' },
+    '<reasoning>PRIVATE_FALLBACK_REASONING</reasoning>管线安全正文。');
+  assert.match(legacyHost.innerHTML, /管线安全正文/);
+  assert.doesNotMatch(legacyHost.innerHTML, /PRIVATE_FALLBACK_REASONING/);
   const structuredHost = new FakeElement();
   appShell._renderPresetPresentation(structuredHost, fallback, '安全正文');
   assert.equal(structuredHost.children.length, 4);

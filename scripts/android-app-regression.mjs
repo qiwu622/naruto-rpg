@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import {
   getRuntimePlatform,
   isNativeAndroidApp,
+  isMultiplayerEntryVisible,
   usesProjectServerFeatures
 } from '../js/core/runtime-platform.js';
 import {
@@ -34,7 +35,8 @@ globalThis.Capacitor = {
 };
 assert.equal(getRuntimePlatform(), 'android');
 assert.equal(isNativeAndroidApp(), true);
-assert.equal(usesProjectServerFeatures(), false);
+assert.equal(isMultiplayerEntryVisible(), true, 'the shared multiplayer entry is enabled');
+assert.equal(usesProjectServerFeatures(), true, 'Android can optionally connect to the existing cloud service');
 assert.equal(
   resolveImageTransport('https://images.example.test/v1').route,
   'native-direct',
@@ -64,7 +66,7 @@ const updates = new AndroidAppUpdateService({
       status: 200,
       async json() {
         return {
-          platform: 'android', version: '3.6.0', versionCode: 30600,
+          platform: 'android', version: '99.0.0-test', versionCode: ANDROID_APP_VERSION_CODE + 1,
           apkUrl: ANDROID_APP_DOWNLOAD_URL
         };
       }
@@ -117,6 +119,7 @@ assert.throws(
 
 if (previousCapacitor === undefined) delete globalThis.Capacitor;
 else globalThis.Capacitor = previousCapacitor;
+assert.equal(isMultiplayerEntryVisible(), true, 'multiplayer remains available on the website');
 
 const releaseManifest = JSON.parse(fs.readFileSync(new URL('../app/android/update.json', import.meta.url), 'utf8'));
 assert.equal(releaseManifest.version, ANDROID_APP_VERSION);
@@ -136,4 +139,4 @@ assert.match(shellSource, /multiplayerEntryVisible \? '<button class="topbar-btn
 assert.match(settingsSource, /usesProjectServerFeatures\(\).*_syncFavoritesFromServer/s);
 assert.match(agentSource, /isNativeAndroidApp\(\)[\s\S]*directFetch/);
 
-console.log('PASS Android App runtime, local-mode isolation, music, download and update contracts');
+console.log('PASS Android App runtime, optional cloud, direct AI/music, download and update contracts');

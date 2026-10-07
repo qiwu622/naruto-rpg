@@ -455,7 +455,7 @@ await test('main single-call request receives its validated full example exactly
 
 await test('secondary updater always receives the daily contract after custom preset content', () => {
   const messages = buildVariableUpdaterMessages(DEFAULT_VARIABLE_UPDATER_PRESET, {
-    state: {}, compactState: {}, userInput: '查看公告', enrichedInput: '查看公告',
+    state: { _ui: { settings: { tacticalCombat: true } } }, compactState: {}, userInput: '查看公告', enrichedInput: '查看公告',
     narrativeResponse: '玩家在公开栏前停下。'
   });
   const prompt = messages.map(message => message.content).join('\n\n');

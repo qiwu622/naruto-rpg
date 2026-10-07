@@ -224,6 +224,12 @@ export function normalizeTechnique(input = {}, options = {}) {
   const rule = TECHNIQUE_POWER_RULES[rank];
   const explicitCost = firstNumber(input, ['cost', '\u6d88\u8017', 'resource_cost', 'chakra_cost']);
   const explicitPower = firstNumber(input, ['power', '\u5a01\u529b']);
+  // Keep the legacy display value while recording the unmodified base for the
+  // tactical resolver. An edited power invalidates this provenance marker.
+  const normalizedPower = Math.round(clamp(explicitPower ?? (rule.power * tier.power_multiplier), 0, 300));
+  const powerBasis = explicitPower === null
+    ? { base: rule.power, displayed: normalizedPower }
+    : input._power_basis?.displayed === explicitPower ? input._power_basis : null;
   const minCost = type === '\u652f\u63f4' ? 0 : 1;
   const technique = {
     '\u540d\u79f0': name,
@@ -231,7 +237,8 @@ export function normalizeTechnique(input = {}, options = {}) {
     '\u5c5e\u6027': String(firstValue(input, ['element', '\u5c5e\u6027']) || '\u65e0').trim(),
     '\u6d88\u8017': Math.round(clamp(explicitCost ?? minCost, minCost, 300)),
     '\u6d88\u8017\u8d44\u6e90': resource,
-    '\u5a01\u529b': Math.round(clamp(explicitPower ?? (rule.power * tier.power_multiplier), 0, 300)),
+    '\u5a01\u529b': normalizedPower,
+    ...(powerBasis ? { _power_basis: powerBasis } : {}),
     '\u719f\u7ec3\u5ea6': mastery,
     '\u63cf\u8ff0': String(firstValue(input, ['description', '\u63cf\u8ff0']) || '').trim(),
     '\u7c7b\u578b': type
@@ -280,16 +287,16 @@ export function normalizeNpcCombatStats(input = {}, existing = null, options = {
     const outputKey = OUTPUT_FIELDS[stat];
     const range = benchmark[stat];
     const incoming = firstNumber(input, inputKeys);
-    const previous = firstNumber(existingCard, [outputKey, stat]);
+    const previous = firstNumber(existingCard, inputKeys);
     const fallback = previous ?? benchmarkValue(range, percentile);
-    card[outputKey] = Math.round(clamp(incoming ?? fallback, range[0], range[1]));
+    // Rank describes a typical starting point, not a ceiling on an individual's
+    // recorded growth. Keep the same numeric domain as player attributes.
+    card[outputKey] = Math.round(clamp(incoming ?? fallback, 0, 9999));
   }
 
   const incomingChakra = firstNumber(input, ['查克拉', 'chakra', 'enemy_chakra']);
   const previousChakra = firstNumber(existingCard, ['查克拉', 'chakra']);
-  const desiredChakra = previousChakra === null
-    ? (incomingChakra ?? card.查克拉上限)
-    : Math.min(previousChakra, incomingChakra ?? previousChakra);
+  const desiredChakra = incomingChakra ?? previousChakra ?? card.查克拉上限;
   card.查克拉 = Math.round(clamp(desiredChakra, 0, card.查克拉上限));
 
   const resourcePairs = [
@@ -299,8 +306,9 @@ export function normalizeNpcCombatStats(input = {}, existing = null, options = {
   ];
   for (const [currentKey, maxKey, inputKeys] of resourcePairs) {
     const incoming = firstNumber(input, inputKeys);
-    const previous = firstNumber(existingCard, [currentKey]);
-    const desired = previous === null ? (incoming ?? card[maxKey]) : Math.min(previous, incoming ?? previous);
+    const previous = firstNumber(existingCard, inputKeys);
+    // Omission preserves damage/exhaustion; an explicit value can also heal.
+    const desired = incoming ?? previous ?? card[maxKey];
     card[currentKey] = Math.round(clamp(desired, 0, card[maxKey]));
   }
 
@@ -313,45 +321,52 @@ export function normalizeNpcCombatStats(input = {}, existing = null, options = {
   ];
   for (const [outputKey, inputKeys] of masteryFields) {
     const incoming = firstNumber(input, inputKeys);
-    const previous = firstNumber(existingCard, [outputKey]);
-    card[outputKey] = Math.round(clamp(incoming ?? previous ?? masteryDefault, masteryRange[0], masteryRange[1]));
+    const previous = firstNumber(existingCard, inputKeys);
+    card[outputKey] = Math.round(clamp(incoming ?? previous ?? masteryDefault, 0, 100));
   }
 
   const incomingNatures = firstValue(input, ['查克拉属性', 'chakra_nature']);
   const existingNatures = firstValue(existingCard, ['查克拉属性', 'chakra_nature']);
-  card.查克拉属性 = normalizeNature(incomingNatures ?? existingNatures);
+  card.查克拉属性 = [...new Set([...normalizeNature(existingNatures), ...normalizeNature(incomingNatures)])];
 
   const incomingTechniques = firstValue(input, ['忍术', 'jutsu']);
   const existingTechniques = firstValue(existingCard, ['忍术', 'jutsu']);
-  const techniqueSource = Array.isArray(incomingTechniques) && incomingTechniques.length
-    ? incomingTechniques
-    : Array.isArray(existingTechniques) ? existingTechniques : [];
   const existingTechniqueList = Array.isArray(existingTechniques) ? existingTechniques : [];
-  const existingTechniqueByKey = new Map(existingTechniqueList.map(technique => {
+  const techniqueIdentity = technique => {
     const techniqueName = firstValue(technique, ['name', '\u540d\u79f0', 'action_name']);
     const resolution = resolveCanonTechnique(techniqueName);
-    const identity = resolution.status === 'matched'
+    return resolution.status === 'matched'
       ? 'id:' + resolution.technique.id
       : 'name:' + String(techniqueName || '').normalize('NFKC').toLowerCase();
-    return [identity, technique];
-  }));
-  const seenTechniques = new Set();
-  card['\u5fcd\u672f'] = techniqueSource.map(techniqueInput => {
-    const techniqueName = firstValue(techniqueInput, ['name', '\u540d\u79f0', 'action_name']);
-    const resolution = resolveCanonTechnique(techniqueName);
-    const identity = resolution.status === 'matched'
-      ? 'id:' + resolution.technique.id
-      : 'name:' + String(techniqueName || '').normalize('NFKC').toLowerCase();
-    const existingTechnique = existingTechniqueByKey.get(identity);
+  };
+  const techniques = new Map(existingTechniqueList.map(technique => [
+    techniqueIdentity(technique), normalizeTechnique(technique)
+  ]));
+  // Relationship instructions carry increments. Practising one technique or
+  // learning a new one must not replace the rest of the NPC's repertoire.
+  for (const techniqueInput of Array.isArray(incomingTechniques) ? incomingTechniques : []) {
+    const identity = techniqueIdentity(techniqueInput);
+    const existingTechnique = techniques.get(identity);
     const isExisting = Boolean(existingTechnique);
     const mergedInput = isExisting ? { ...existingTechnique, ...techniqueInput } : techniqueInput;
-    return normalizeTechnique(mergedInput, { canonicalize: !isExisting, markOriginal: !isExisting });
-  }).filter(technique => {
+    techniques.set(identity, normalizeTechnique(mergedInput, { canonicalize: !isExisting, markOriginal: !isExisting }));
+  }
+  const seenTechniques = new Set();
+  card['\u5fcd\u672f'] = [...techniques.values()].filter(technique => {
     const key = technique['\u540d\u79f0'];
     if (!key || seenTechniques.has(key)) return false;
     seenTechniques.add(key);
     return true;
   });
+
+  // Legacy English aliases must not keep competing with the updated canonical
+  // values (combatMasteriesFromNpcCard also accepts those older shapes).
+  const canonicalKeys = new Set([...Object.values(OUTPUT_FIELDS), '查克拉', '生命力', '体力', '精神力',
+    '忍阶', '查克拉属性', '忍术', ...masteryFields.map(([key]) => key)]);
+  const aliases = [...Object.values(STAT_FIELDS).flat(), 'chakra', 'enemy_chakra',
+    ...resourcePairs.flatMap(([, , keys]) => keys), ...masteryFields.flatMap(([, keys]) => keys),
+    'rank', 'enemy_rank', 'chakra_nature', 'jutsu'];
+  for (const key of aliases) if (!canonicalKeys.has(key)) delete card[key];
 
   card.战力等级 = calculateCombatLevel(
     combatAttributesFromNpcCard(card),

@@ -290,6 +290,49 @@ test('shows the live tool flow and streams the answer before completion', async 
   await expect(companion.locator('.message.assistant').last().locator('strong')).toHaveText('查克拉状态正常');
 });
 
+test('Chinese IME confirmation does not send until composition has finished', async ({ page }) => {
+  const companion = await openLingXi(page);
+  const input = companion.locator('.composer textarea');
+  await input.fill('你好灵希');
+  await input.dispatchEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true });
+  expect(await page.evaluate(() => window.__LINGXI_HARNESS__.getSendStarted())).toBe(false);
+  await expect(input).toHaveValue('你好灵希');
+  await input.press('Enter');
+  await expect(companion.locator('.message.user').last()).toContainText('你好灵希');
+});
+
+test('reattaching the companion restores message and proposal subscriptions', async ({ page }) => {
+  const companion = await openLingXi(page);
+  await page.evaluate(() => {
+    const harness = window.__LINGXI_HARNESS__;
+    for (let i = 0; i < 2; i++) {
+      harness.companion.remove();
+      document.body.append(harness.companion);
+    }
+    harness.seedHistory();
+    harness.stageProposal();
+  });
+  await expect(companion.locator('.messages')).toContainText('好的，我会保留这条上下文。');
+  await expect(companion.locator('.proposal-review')).toBeVisible();
+  await expect(page.locator('body')).toHaveClass(/lingxi-companion-open/);
+  await companion.locator('.composer textarea').fill('重新挂载后继续');
+  await companion.locator('.composer textarea').press('Enter');
+  await expect(companion.locator('.message.user').filter({ hasText: '重新挂载后继续' })).toHaveCount(1);
+});
+
+test('reattaching with a pending animation frame resumes streamed replies', async ({ page }) => {
+  const companion = await openLingXi(page);
+  await page.evaluate(() => {
+    const host = window.__LINGXI_HARNESS__.companion;
+    host._busy = true;
+    host._handleAgentEvent({ type: 'text-delta', delta: '第一段' });
+    host.remove();
+    document.body.append(host);
+    host._handleAgentEvent({ type: 'text-delta', delta: '，重新挂载后的第二段' });
+  });
+  await expect(companion.locator('.streaming-bubble')).toContainText('第一段，重新挂载后的第二段');
+});
+
 test('renders assistant markdown without exposing raw markers', async ({ page }) => {
   const companion = await openLingXi(page);
   await page.evaluate(() => window.__LINGXI_HARNESS__.pushMarkdown());
@@ -304,19 +347,20 @@ test('renders assistant markdown without exposing raw markers', async ({ page })
 test('pet can be dragged and restores its saved position', async ({ page }) => {
   const companion = await loadLingXi(page);
   const pet = companion.locator('.pet-button');
-  const before = await pet.boundingBox();
+  // The button lifts 3px on hover; compare the actual dock position instead.
+  const before = await companion.boundingBox();
   await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
   await page.mouse.down();
   await page.mouse.move(before.x - 150, before.y - 120, { steps: 8 });
   await page.mouse.up();
-  const moved = await pet.boundingBox();
+  const moved = await companion.boundingBox();
   expect(Math.abs(moved.x - before.x)).toBeGreaterThan(80);
   expect(Math.abs(moved.y - before.y)).toBeGreaterThan(60);
   expect(await page.evaluate(() => localStorage.getItem('naruto_lingxi_position_v1'))).toBeTruthy();
 
   await page.reload();
   await page.waitForFunction(() => window.__LINGXI_HARNESS_READY__ === true);
-  const restored = await page.locator('lingxi-companion').locator('.pet-button').boundingBox();
+  const restored = await page.locator('lingxi-companion').boundingBox();
   expect(Math.abs(restored.x - moved.x)).toBeLessThan(3);
   expect(Math.abs(restored.y - moved.y)).toBeLessThan(3);
 });

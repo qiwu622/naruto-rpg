@@ -5,14 +5,18 @@
 模型不能直接改存档。它只能检索、提议，或在白名单内做可逆小改动。删除、开局、云存档、剧情推进必须先展示精确影响，再由真实点击批准。
 
 **正式站：** https://www.qiwu.asia/  
-**源码：** https://github.com/2024053347-a11y/naruto-rpg  
-**版本：** v3.5.1<br>
+**源码：** https://github.com/qiwu622/naruto-rpg<br>
+**版本：** v3.6.0<br>
 **安卓 App：** 共用本项目页面和游戏逻辑；[开发进度与打包说明](docs/android-app.md)。
 **规模：** 约 1700 名注册用户；正史 K001–K086（385 剧情日 / 786 场景 / 2894 原子事件）；741 条规范忍术
 
-### v3.5.1 更新
+### v3.6.0 更新
 
-存档库与 IF 线管理统一，支持旧档保留、导入导出和云端管理；修复世界书误注入与变量更新重试，新增 NovelAI 画师串。网站可[下载安卓测试版](https://www.qiwu.asia/app/android/naruto-rpg.apk)，App 使用原创图标并修复系统栏遮挡。联机入口暂时隐藏，已有房间存档保留。完整说明见 [更新日志](CHANGELOG.md)。
+联机入口重新开放，大厅与房间面板统一改版；新增手动开启的战术回合战斗、轻量续玩副本、云同步冲突处理、记忆纠错与回合结果卡。安卓可选择连接网站现有云端账号，云端异常仍可本地操作。新增默认关闭的 DeepSeek 专用缓存优化和回车模式切换，修复正文消失、未选选项污染记忆、NPC 成长、大档导出及切档串写。
+
+网站可[下载安卓最新版](https://www.qiwu.asia/app/android/naruto-rpg.apk)，请覆盖安装以保留本地数据。完整说明见[更新日志](CHANGELOG.md)和[本次公告](docs/releases/v3.6.0-discord.md)。
+
+每次正式更新同步发布[网站公告](https://www.qiwu.asia/announcements.html)，可从登录页或游戏设置查看历史版本。公告由当前版本的发布说明生成，部署时核对版本，避免网站和安装包说明脱节。
 
 ## 系统设计要点
 
@@ -105,7 +109,7 @@ server/             # Express：Discord OAuth、JWT、云存档、AI 代理、�
 
 ## 快速开始
 
-1. 安装 Node.js 18+，克隆仓库并安装依赖。
+1. 安装 Node.js 22+，克隆仓库并使用 `npm ci` 安装锁定依赖。
 2. 将 `.env.example` 复制为 `.env`。本地开发可保留 `AUTH_BYPASS=true`；生产环境应关闭旁路并配置 Discord OAuth 与随机 `JWT_SECRET`。
 3. 启动 Node 服务，打开 `http://localhost:3000`。
 4. 首次进入配置 AI API（支持 OpenAI 兼容接口），创建角色后开始冒险。
@@ -154,6 +158,9 @@ chmod 600 deploy.local.env
 # 测试站：https://www.qiwu.asia:8080/
 bash deploy-wsl.sh staging
 
+# 仅更新测试站网页，不改动或重启共用正式站后端
+bash deploy-wsl.sh staging --frontend-only
+
 # 测试站离线打包检查，不连接服务器
 bash deploy-wsl.sh staging --dry-run
 
@@ -167,7 +174,7 @@ bash deploy-wsl.sh production --confirm-production
 bash deploy-wsl.sh staging --skip-build
 ```
 
-也可以不用配置文件，临时设置 `NARUTO_DEPLOY_SERVER` 和 `NARUTO_DEPLOY_SSH_KEY` 环境变量。测试站与正式站共用 `/opt/naruto-rpg` 后端，因此发布测试站也会更新并重启共享后端。旧的 `deploy-v3.sh` 继续保留为正式站兼容入口。
+也可以不用配置文件，临时设置 `NARUTO_DEPLOY_SERVER` 和 `NARUTO_DEPLOY_SSH_KEY` 环境变量。测试站与正式站共用 `/opt/naruto-rpg` 后端，默认全量发布会更新并重启共享后端。只授权测试站网页更新时使用 `staging --frontend-only`：保留共享后端、运行数据、全局配置与安卓下载，仅替换测试站网页；同样执行哈希核验、登录保护检查和失败回退。旧的 `deploy-v3.sh` 继续保留为正式站兼容入口。
 
 ### 版本信息生成
 
@@ -208,7 +215,7 @@ node scripts/generate-version.mjs --out public/version.json
 ## 技术栈
 
 - 前端：JavaScript ES Modules、Web Components、IndexedDB、Service Worker（PWA），无 React/Vue
-- 后端：Node.js 18+、Express、Discord OAuth、JWT、JSON 文件仓储、云存档与图片资产
+- 后端：Node.js 22+、Express、Discord OAuth、JWT、JSON 文件仓储、云存档与图片资产
 - Agent：OpenAI 兼容接口、工具调用 / 文本工具协议、结构化提案、风险分级审批、多阶段叙事管线
 - 验证：Node 回归脚本 + Playwright（灵希界面）
 - 部署：nginx、systemd、PowerShell / bash 发布脚本
@@ -217,7 +224,7 @@ node scripts/generate-version.mjs --out public/version.json
 
 忍者手记由个人独立开发并持续维护。你可以通过 [爱发电支持忍者手记](https://www.ifdian.net/a/2608_1?utm_source=copylink&utm_medium=link)，赞助完全自愿，不影响任何游戏功能。
 
-即使不进行赞助，也欢迎体验游戏、[提出建议或反馈问题](https://github.com/2024053347-a11y/naruto-rpg/issues)，共同帮助项目持续成长。
+即使不进行赞助，也欢迎体验游戏、[提出建议或反馈问题](https://github.com/qiwu622/naruto-rpg/issues)，共同帮助项目持续成长。
 
 ## License
 

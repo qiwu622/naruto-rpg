@@ -135,8 +135,8 @@ test('all main-model rules are visible as editable preset entries', () => {
 });
 
 test('preset mode entries are visible but only the matching variable mode is sent', () => {
-  const on = resolvePresetMacros(DEFAULT_MAIN_PRESET.entries, { variableUpdaterEnabled: true });
-  const off = resolvePresetMacros(DEFAULT_MAIN_PRESET.entries, { variableUpdaterEnabled: false });
+  const on = resolvePresetMacros(DEFAULT_MAIN_PRESET.entries, { variableUpdaterEnabled: true, tacticalCombat: true });
+  const off = resolvePresetMacros(DEFAULT_MAIN_PRESET.entries, { variableUpdaterEnabled: false, tacticalCombat: true });
   assert.ok(on.some(entry => entry.activation === 'variable_updater_enabled'));
   assert.ok(!on.some(entry => entry.activation === 'variable_updater_disabled'));
   assert.ok(off.some(entry => entry.activation === 'variable_updater_disabled'));
@@ -224,7 +224,7 @@ test('main-model fallback tags match the executable updater contracts', () => {
   const editable = DEFAULT_MAIN_PRESET.entries
     .filter(entry => entry.activation === 'variable_updater_disabled')
     .map(entry => entry.content).join('\n');
-  const generated = generateMainVarInstructions(false);
+  const generated = generateMainVarInstructions(false, { tacticalCombat: true });
   for (const prompt of [editable, generated]) {
     assert.match(prompt, /完整[^\n]*世界·时间[^\n]*自动同步[^\n]*世界·月份/);
     assert.doesNotMatch(prompt, /完整 世界·时间 和数字 世界·月份/);
@@ -677,6 +677,7 @@ test('runtime updater prompt is deduplicated and ordered system before user data
 
 test('shared variable updater runtime contract covers every project invariant exactly once', () => {
   const state = {
+    _ui: { settings: { tacticalCombat: true } },
     '系统·回合数': 1,
     '进度·突破待处理': 3,
     skills: {

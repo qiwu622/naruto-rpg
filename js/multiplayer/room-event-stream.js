@@ -1,4 +1,6 @@
 import { MULTIPLAYER_EVENT_TYPES, assertPathIdentifier } from './contracts.js';
+import { isNativeAndroidApp } from '../core/runtime-platform.js';
+import { NativeRoomEventSource } from './native-room-event-source.js';
 
 class ListenerSet {
   constructor() {
@@ -74,7 +76,9 @@ function parseEnvelope(raw, roomId, expectedType = null) {
 export class MultiplayerRoomEventStream {
   constructor({
     apiClient,
-    eventSourceFactory = (url, init) => new EventSource(url, init),
+    eventSourceFactory = (url, init) => isNativeAndroidApp()
+      ? new NativeRoomEventSource(url)
+      : new EventSource(url, init),
     eventTypes = MULTIPLAYER_EVENT_TYPES,
     cursorStore = null,
     reconnectInitialMs = 500,

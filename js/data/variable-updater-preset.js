@@ -1,5 +1,6 @@
 import { eventBus } from '../core/event-bus.js';
 import { getStructuredVariableContractPrompt } from './var-schema.js';
+import { projectSystemCombatPrompt } from './combat-prompt-mode.js';
 
 export const VARIABLE_UPDATER_PRESET_STORAGE_KEY = 'naruto_variable_updater_preset';
 export const VARIABLE_UPDATER_PRESET_BACKUP_PREFIX = 'naruto_variable_updater_preset_backup_';
@@ -256,6 +257,10 @@ export function resolveVariableUpdaterPreset(preset, context = {}) {
     .filter(entry => entry.enabled !== false && entry.content.trim())
     .map(entry => {
       let content = entry.content;
+      const canonical = DEFAULT_VARIABLE_UPDATER_PRESET.entries.find(item => item.id === entry.id);
+      if (canonical && content === canonical.content) {
+        content = projectSystemCombatPrompt(content, { tacticalCombat: context.tacticalCombat === true, entryId: entry.id });
+      }
       for (const [key, value] of Object.entries(values)) content = content.split(`{{${key}}}`).join(value);
       return { role: normalizeRole(entry.role), content };
     });

@@ -1,3 +1,4 @@
+import { multiplayerPanelStyles } from '../../css/components/multiplayer-panel.css.js';
 import { turnProgressLabel } from './contracts.js';
 import { detailedOpeningDraft, multiplayerOpeningDraft } from './opening-draft-bridge.js';
 import {
@@ -147,686 +148,27 @@ function generationTemplate(prefix) {
 
 function shellTemplate() {
   return `
-    <style>
-      :host {
-        display: block;
-        color: var(--text-primary, #f4f1ea);
-        font: 14px/1.6 var(--font-body, system-ui, sans-serif);
-        --panel-radius: var(--r-lg, 16px);
-        --panel-accent: var(--c-shuiro, #eb613f);
-        --panel-bg: var(--surface-base, #0e1218);
-        --panel-card: rgba(11, 14, 19, 0.55);
-        --panel-border: var(--border-subtle, rgba(255,255,255,0.08));
-        --panel-input: rgba(0, 0, 0, 0.25);
-        --panel-muted: var(--text-tertiary, rgba(244,241,234,0.45));
-      }
-      * { box-sizing: border-box; }
-      .panel {
-        background:
-          radial-gradient(1000px 500px at 15% -10%, rgba(235, 97, 63, 0.10), transparent 60%),
-          var(--panel-bg);
-        border: 1px solid var(--panel-border);
-        border-radius: var(--panel-radius);
-        box-shadow: var(--shadow-lg, 0 24px 48px rgba(0,0,0,0.6));
-        overflow: hidden;
-      }
-      .panel-header {
-        display: flex;
-        align-items: flex-start;
-        gap: 14px;
-        padding: 22px 26px 18px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.045), transparent);
-        border-bottom: 1px solid var(--border-hairline, rgba(255,255,255,0.04));
-      }
-      .brand { display: flex; align-items: center; gap: 14px; }
-      .brand-icon {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 42px;
-        height: 42px;
-        border-radius: 13px;
-        background: var(--panel-accent);
-        color: #fff;
-        flex: none;
-        box-shadow: var(--shadow-glow, 0 8px 32px rgba(235,97,63,0.25));
-      }
-      .panel-header h2 {
-        margin: 0;
-        font: 700 19px/1.3 var(--font-title, 'Noto Serif SC', serif);
-        letter-spacing: 0.02em;
-      }
-      .panel-header .muted { margin: 4px 0 0; max-width: 720px; }
-      section { padding: 16px 22px; }
-      .setup { padding: 26px; }
-      .setup-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-        gap: 22px;
-        align-items: start;
-      }
-      .card {
-        background: var(--panel-card);
-        border: 1px solid var(--panel-border);
-        border-radius: var(--r-lg, 16px);
-        padding: 20px;
-        backdrop-filter: var(--blur-md, blur(12px));
-        transition: border-color 0.2s ease, background 0.2s ease;
-      }
-      .card:hover { border-color: var(--border-strong, rgba(255,255,255,0.18)); }
-      .card-title {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 6px;
-      }
-      .card-title h3 { margin: 0; font: 650 16px/1.4 var(--font-title, serif); }
-      .card-title svg { color: var(--panel-accent); }
-      .field { display: grid; gap: 6px; margin: 12px 0; }
-      .field > span { color: var(--text-secondary, rgba(244,241,234,0.7)); }
-      label { display: grid; gap: 6px; margin: 10px 0; color: var(--text-secondary, rgba(244,241,234,0.7)); }
-      input, textarea, select {
-        width: 100%;
-        font: inherit;
-        color: var(--text-primary, #f4f1ea);
-        background: var(--panel-input);
-        border: 1px solid var(--border-default, rgba(255,255,255,0.14));
-        border-radius: var(--r-md, 10px);
-        padding: 10px 12px;
-        outline: none;
-        transition: border-color 0.2s ease, box-shadow 0.2s ease;
-      }
-      input:hover, textarea:hover, select:hover { border-color: var(--border-strong, rgba(255,255,255,0.22)); }
-      input:focus, textarea:focus, select:focus {
-        border-color: var(--panel-accent);
-        box-shadow: 0 0 0 3px rgba(235, 97, 63, 0.16);
-      }
-      textarea { min-height: 84px; resize: vertical; }
-      select {
-        cursor: pointer;
-        appearance: none;
-        background-image: url("data:image/svg+xml,%3Csvg width='10' height='6'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23d1cec7' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
-        background-repeat: no-repeat;
-        background-position: right 14px center;
-        padding-right: 36px;
-      }
-      button, .btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        padding: 10px 18px;
-        font: 600 14px/1 var(--font-body, system-ui);
-        color: var(--text-primary, #f4f1ea);
-        background: rgba(255,255,255,0.06);
-        border: 1px solid var(--border-default, rgba(255,255,255,0.14));
-        border-radius: var(--r-md, 10px);
-        cursor: pointer;
-        transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
-      }
-      button:hover, .btn:hover { background: rgba(255,255,255,0.10); border-color: var(--border-strong, rgba(255,255,255,0.22)); }
-      button:active, .btn:active { transform: scale(0.97); }
-      button:disabled, .btn:disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(1); }
-      .btn-primary {
-        background: var(--panel-accent);
-        border-color: transparent;
-        color: #fff;
-        box-shadow: 0 4px 16px rgba(235, 97, 63, 0.22);
-      }
-      .btn-primary:hover { background: color-mix(in srgb, var(--panel-accent) 88%, white); }
-      .btn-danger {
-        background: transparent;
-        border-color: rgba(201, 23, 30, 0.35);
-        color: #ff9b9b;
-      }
-      .btn-danger:hover { background: rgba(201, 23, 30, 0.14); border-color: rgba(201, 23, 30, 0.6); }
-      .btn-sm { padding: 7px 12px; font-size: 13px; }
-      .muted { color: var(--panel-muted); font-size: 13px; }
-      .notice {
-        padding: 10px 12px;
-        border-left: 3px solid #b34b4b;
-        background: rgba(180, 60, 60, 0.10);
-        border-radius: 0 var(--r-md, 10px) var(--r-md, 10px) 0;
-        white-space: pre-wrap;
-      }
-      .notice.good { border-left-color: #4f9d70; background: rgba(79, 157, 112, 0.10); }
-      .error { color: #ffb8b8; border-color: #8e3d3d; }
-      .tabs {
-        display: flex;
-        gap: 2px;
-        padding: 0 22px;
-        border-bottom: 1px solid var(--border-hairline, rgba(255,255,255,0.04));
-        overflow-x: auto;
-      }
-      .tabs button {
-        appearance: none;
-        border: 0;
-        background: transparent;
-        color: var(--panel-muted);
-        padding: 13px 14px;
-        font: 600 14px/1 var(--font-body, system-ui);
-        cursor: pointer;
-        border-bottom: 2px solid transparent;
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        white-space: nowrap;
-        transition: color 0.2s ease, border-color 0.2s ease;
-      }
-      .tabs button:hover { color: var(--text-secondary, rgba(244,241,234,0.72)); }
-      .tabs button[aria-selected="true"] {
-        color: var(--text-primary, #f4f1ea);
-        border-bottom-color: var(--panel-accent);
-      }
-      .tabs button svg { flex: none; }
-      [data-view][hidden], [hidden] { display: none !important; }
-      pre {
-        margin: 8px 0 0;
-        padding: 10px 12px;
-        max-height: 320px;
-        overflow: auto;
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-        background: rgba(0,0,0,0.22);
-        border: 1px solid var(--border-hairline, rgba(255,255,255,0.04));
-        border-radius: var(--r-md, 10px);
-        font: 12px/1.6 var(--font-mono, monospace);
-        color: var(--text-secondary, rgba(244,241,234,0.72));
-      }
-      .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-      .row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
-      .messages { display: flex; flex-direction: column; gap: 10px; max-height: 360px; overflow: auto; }
-      .message {
-        padding: 10px 12px;
-        border-radius: 10px;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid var(--border-hairline, rgba(255,255,255,0.04));
-      }
-      .message[data-own="true"] { background: rgba(235, 97, 63, 0.08); }
-      .message small { color: var(--panel-muted); }
-      .actions, .deliveries, .records { display: grid; gap: 12px; }
-      .scheme-import {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        gap: 8px;
-        align-items: end;
-        margin-top: 10px;
-      }
-      .scheme-import label, .scheme-import select { min-width: 0; }
-      .credential-policy-options {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 8px;
-        margin: 12px 0;
-      }
-      .credential-policy-options button {
-        min-width: 0;
-        min-height: 72px;
-        display: grid;
-        align-content: center;
-        justify-items: start;
-        gap: 4px;
-        padding: 11px 12px;
-        text-align: left;
-      }
-      .credential-policy-options button strong { font-size: 13px; }
-      .credential-policy-options button span {
-        color: var(--panel-muted);
-        font-size: 11.5px;
-        font-weight: 400;
-      }
-      .credential-policy-options button[aria-checked="true"] {
-        border-color: var(--panel-accent);
-        background: rgba(255,107,74,0.10);
-      }
-      .policy-binding-status {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        margin-top: 10px;
-      }
-      .scope { grid-template-columns: auto 1fr; align-items: center; }
-      .scope select { grid-column: 1 / -1; }
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        border: 1px solid var(--border-default, rgba(255,255,255,0.14));
-        border-radius: 999px;
-        padding: 4px 10px;
-        font-size: 12px;
-        color: var(--text-secondary, rgba(244,241,234,0.72));
-        background: rgba(255,255,255,0.04);
-      }
-      .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
-      .wide { grid-column: 1 / -1; }
-      .status-line {
-        padding: 12px 22px;
-        border-top: 1px solid var(--border-hairline, rgba(255,255,255,0.04));
-        min-height: 20px;
-      }
-      .error-box { margin: 16px 22px; }
-      .room-status { margin: 18px 22px; }
-      .room-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-      .room-id-line { display: flex; align-items: center; gap: 8px; font-size: 16px; }
-      .room-id-line svg { color: var(--panel-accent); }
-      .room-id-line .btn { padding: 5px 8px; }
-      .custom-codes { margin: 10px 0; }
-      .custom-codes summary { cursor: pointer; color: var(--panel-text-2); font-size: 13px; }
-      .custom-code-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding-top: 10px; }
-      .share-grid { display: grid; gap: 8px; margin-top: 8px; }
-      .share-row { display: grid; grid-template-columns: 68px minmax(0, 1fr) auto; align-items: center; gap: 8px; }
-      .share-row code { min-width: 0; overflow-wrap: anywhere; font: 600 13px/1.5 var(--font-mono, ui-monospace, monospace); color: #f5f5f7; }
-      .share-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-      .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
-      .member-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
-      .details-group {
-        margin: 18px 22px;
-        border: 1px solid var(--panel-border);
-        border-radius: var(--r-lg, 16px);
-        background: rgba(11, 14, 19, 0.30);
-        overflow: hidden;
-      }
-      .details-group summary {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 16px 20px;
-        cursor: pointer;
-        font-weight: 600;
-        color: var(--text-secondary, rgba(244,241,234,0.72));
-        list-style: none;
-        user-select: none;
-      }
-      .details-group summary::-webkit-details-marker { display: none; }
-      .details-group summary svg { color: var(--panel-accent); }
-      .details-group[open] summary {
-        border-bottom: 1px solid var(--border-hairline, rgba(255,255,255,0.04));
-        color: var(--text-primary, #f4f1ea);
-      }
-      .details-body { padding: 16px 20px; display: grid; gap: 16px; }
-      /* ═══ v2 redesign · 简约大厂风（克制 / 细描边 / 单强调色） ═══ */
-      :host {
-        color-scheme: dark;
-        --panel-accent: #ff6b4a;
-        --panel-bg: #0a0a0b;
-        --panel-card: #131316;
-        --panel-raised: #1a1a1e;
-        --panel-border: rgba(255,255,255,0.08);
-        --panel-strong: rgba(255,255,255,0.16);
-        --panel-input: #0f0f11;
-        --panel-muted: rgba(255,255,255,0.45);
-        --panel-text-2: rgba(255,255,255,0.66);
-        font: 400 14px/1.65 var(--font-body, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif);
-        font-feature-settings: "tnum";
-        letter-spacing: 0.01em;
-        -webkit-font-smoothing: antialiased;
-        text-rendering: optimizeLegibility;
-      }
-      .panel { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 16px; box-shadow: none; }
-      .panel-header { background: transparent; border-bottom: 1px solid var(--panel-border); padding: 22px 24px 20px; }
-      .brand-icon {
-        width: 38px; height: 38px; border-radius: 10px;
-        background: var(--panel-raised); border: 1px solid var(--panel-border);
-        color: var(--panel-accent); box-shadow: none;
-      }
-      .eyebrow {
-        display: block; margin-bottom: 5px;
-        font: 600 10.5px/1 var(--font-body, system-ui, sans-serif);
-        letter-spacing: 0.14em; text-transform: uppercase;
-        color: var(--panel-accent);
-      }
-      .panel-header h2 { font: 600 18px/1.4 var(--font-title, "Noto Serif SC", serif); letter-spacing: 0.04em; }
-      .card {
-        background: var(--panel-card);
-        border: 1px solid var(--panel-border);
-        border-radius: 14px;
-        box-shadow: none;
-        backdrop-filter: none;
-        padding: 18px 20px;
-      }
-      .card:hover { border-color: var(--panel-strong); }
-      .card-title h3 { font: 600 13px/1.4 var(--font-body, system-ui, sans-serif); letter-spacing: 0.02em; }
-      .field > span, label { font-size: 12.5px; color: var(--panel-text-2); letter-spacing: 0.02em; }
-      input, textarea, select {
-        background: var(--panel-input);
-        border: 1px solid var(--panel-border);
-        border-radius: 9px;
-        padding: 9px 12px;
-        font-size: 13.5px;
-        color: #f5f5f7;
-      }
-      input::placeholder, textarea::placeholder { color: var(--panel-muted); }
-      input:focus, textarea:focus, select:focus { border-color: var(--panel-accent); box-shadow: 0 0 0 2px rgba(255,107,74,0.16); }
-      button, .btn {
-        background: var(--panel-raised);
-        border: 1px solid var(--panel-border);
-        border-radius: 9px;
-        padding: 8px 14px;
-        font: 500 13px/1.2 var(--font-body, system-ui, sans-serif);
-        color: #f5f5f7;
-        box-shadow: none;
-      }
-      button:hover, .btn:hover { background: #202025; border-color: var(--panel-strong); }
-      button:focus-visible, .btn:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
-        outline: 2px solid rgba(255,107,74,0.55);
-        outline-offset: 2px;
-      }
-      .btn-primary { background: #f5f5f7; border-color: transparent; color: #0a0a0b; font-weight: 600; }
-      .btn-primary:hover { background: #ffffff; }
-      .btn-danger { background: transparent; border-color: rgba(229,72,77,0.38); color: #f38a8e; }
-      .btn-danger:hover { background: rgba(229,72,77,0.12); border-color: rgba(229,72,77,0.58); }
-      .btn-sm { padding: 6px 11px; font-size: 12px; }
-      .muted { color: var(--panel-muted); font-size: 12.5px; }
-      .notice {
-        background: rgba(255,255,255,0.03);
-        border: 1px solid var(--panel-border);
-        border-left: 2px solid var(--panel-strong);
-        border-radius: 10px;
-        color: var(--panel-text-2);
-      }
-      .notice.good { border-left-color: #3fb68b; background: rgba(63,182,139,0.06); }
-      .error { border-color: rgba(229,72,77,0.4); border-left-color: #e5484d; background: rgba(229,72,77,0.07); color: #ffb8b8; }
-      .tabs { border-bottom: 1px solid var(--panel-border); padding: 0 24px; }
-      .tabs button {
-        padding: 13px 12px;
-        font: 500 13px/1 var(--font-body, system-ui, sans-serif);
-        color: var(--panel-muted);
-        border: 0;
-        border-radius: 0;
-        border-bottom: 2px solid transparent;
-        background: transparent;
-        box-shadow: none;
-      }
-      .tabs button:hover { color: var(--panel-text-2); background: transparent; border-bottom-color: transparent; }
-      .tabs button[aria-selected="true"] { color: #f5f5f7; border-bottom-color: var(--panel-accent); }
-      .tabs button svg { color: var(--panel-muted); }
-      .tabs button[aria-selected="true"] svg { color: var(--panel-accent); }
-      .pill {
-        border: 1px solid var(--panel-border);
-        background: transparent;
-        color: var(--panel-text-2);
-        border-radius: 999px;
-        padding: 3px 10px;
-        font-size: 12px;
-        letter-spacing: 0.02em;
-      }
-      .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--panel-muted); }
-      pre {
-        background: #0d0d0f;
-        border: 1px solid var(--panel-border);
-        border-radius: 10px;
-        color: var(--panel-text-2);
-        font: 12px/1.65 var(--font-mono, "JetBrains Mono", ui-monospace, monospace);
-      }
-      .message { background: var(--panel-card); border: 1px solid var(--panel-border); border-radius: 10px; }
-      .message[data-own="true"] { background: rgba(255,107,74,0.07); border-color: rgba(255,107,74,0.22); }
-      .room-id-line strong { font: 600 15px/1.3 var(--font-mono, ui-monospace, monospace); }
-      .room-id-line svg { color: var(--panel-accent); }
-      .details-group { border: 1px solid var(--panel-border); border-radius: 14px; background: var(--panel-card); }
-      .details-group summary { font: 600 13px/1.4 var(--font-body, system-ui, sans-serif); color: var(--panel-text-2); }
-      .details-group[open] summary { border-bottom: 1px solid var(--panel-border); color: #f5f5f7; }
-      .details-group summary svg:first-child { color: var(--panel-accent); }
-      .details-group summary svg:last-child { margin-left: auto; color: var(--panel-muted); transition: transform 0.2s ease; }
-      .details-group[open] summary svg:last-child { transform: rotate(180deg); }
-      .segmented {
-        display: inline-flex; gap: 2px;
-        background: var(--panel-input);
-        border: 1px solid var(--panel-border);
-        border-radius: 10px;
-        padding: 3px;
-        margin: 2px 0 4px;
-      }
-      .segmented button {
-        border: 0; border-radius: 7px; background: transparent;
-        color: var(--panel-muted);
-        padding: 7px 14px;
-        font: 500 12.5px/1.2 var(--font-body, system-ui, sans-serif);
-        box-shadow: none;
-      }
-      .segmented button:hover { background: transparent; color: var(--panel-text-2); }
-      .segmented button[aria-pressed="true"] { background: var(--panel-raised); color: #f5f5f7; box-shadow: inset 0 0 0 1px var(--panel-strong); }
-      .segmented button svg { color: var(--panel-muted); }
-      .segmented button[aria-pressed="true"] svg { color: var(--panel-accent); }
-      .visually-hidden {
-        position: absolute !important; width: 1px; height: 1px; margin: -1px; padding: 0;
-        overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
-      }
-      .setup-grid .card { display: flex; flex-direction: column; }
-      .setup-grid .card > .btn-primary { margin-top: auto; width: 100%; }
-      .turn-settings-grid {
-        grid-template-columns: minmax(210px, 0.6fr) minmax(480px, 1.4fr);
-        align-items: start;
-      }
-      .ai-settings-card { display: grid; gap: 14px; }
-      .ai-settings-card .card-title { margin-bottom: 0; }
-      .ai-settings-editor { display: grid; gap: 14px; }
-      .ai-settings-summary {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 14px;
-        min-height: 54px;
-        padding: 11px 13px;
-        border: 1px solid rgba(63,182,139,0.28);
-        border-radius: 11px;
-        background: rgba(63,182,139,0.06);
-      }
-      .ai-settings-summary strong { font-size: 13.5px; font-weight: 600; }
-      .ai-settings-summary .muted { margin-top: 2px; }
-      .ai-settings-grid {
-        display: grid;
-        grid-template-columns: minmax(0, 1.2fr) minmax(230px, 0.8fr);
-        gap: 16px;
-        align-items: start;
-      }
-      .ai-section-label {
-        color: var(--panel-text-2);
-        font-size: 12.5px;
-        font-weight: 600;
-        letter-spacing: 0.02em;
-      }
-      .ai-profile-field {
-        padding: 12px 14px;
-        border: 1px solid var(--panel-border);
-        border-radius: 11px;
-        background: rgba(255,255,255,0.02);
-      }
-      .ai-profile-field label { margin-top: 0; }
-      .ai-profile-actions {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        flex-wrap: wrap;
-        gap: 8px;
-      }
-      .ai-current-turn {
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        min-height: 42px;
-        padding: 9px 12px;
-        border: 1px solid var(--panel-border);
-        border-radius: 10px;
-        background: rgba(255,255,255,0.025);
-        color: var(--panel-text-2);
-      }
-      .ai-current-turn svg { color: var(--panel-accent); flex: none; }
-      .ai-confirmation-status { color: var(--panel-text-2); }
-      .policy-binding-status .pill[data-state="ready"]::before { background: #3fb68b; }
-      .policy-binding-status .pill[data-state="waiting"]::before { background: #e6a44f; }
-      .policy-binding-status .pill[data-state="unused"]::before { background: var(--panel-muted); }
-      .ai-primary-action { width: 100%; min-height: 42px; }
-      .ai-disclosure {
-        border-top: 1px solid var(--panel-border);
-        padding-top: 10px;
-      }
-      .ai-disclosure summary {
-        width: fit-content;
-        color: var(--panel-muted);
-        cursor: pointer;
-        font-size: 12px;
-        list-style: none;
-      }
-      .ai-disclosure summary::-webkit-details-marker { display: none; }
-      .ai-disclosure summary::after { content: " ›"; }
-      .ai-disclosure[open] summary::after { content: " ⌄"; }
-      .ai-disclosure p { margin: 8px 0 0; color: var(--panel-muted); font-size: 12px; }
-      .member-alert {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-top: 12px;
-        padding: 12px 14px;
-        border: 1px solid rgba(230, 164, 79, 0.38);
-        border-radius: 12px;
-        background: rgba(230, 164, 79, 0.13);
-        color: #ffe0a7;
-        font-weight: 650;
-      }
-      .generation-full { padding: 0 22px 18px; }
-      .generation-card { padding: 18px; border: 1px solid #49464c; border-radius: 14px; background: #191a20; margin-bottom: 12px; }
-      .generation-card[data-tone="running"] { border-color: #897143; background: #252119; }
-      .generation-card[data-tone="error"] { border: 2px solid #ea776b; background: #351c20; box-shadow: 0 0 0 3px rgba(234,119,107,.07); }
-      .generation-card[data-tone="warning"] { border-color: #d7ad61; background: #2c251b; }
-      .generation-card[data-tone="success"] { border-color: #5aad91; }
-      .generation-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; color: #fff2e7; }
-      .generation-heading strong { flex: 1; min-width: 150px; font-size: 17px; line-height: 1.5; }
-      .generation-indicator { width: 12px; height: 12px; border-radius: 50%; background: #88858c; flex: none; }
-      [data-tone="running"] .generation-indicator { background: transparent; border: 2px solid #66573c; border-top-color: #f5c77e; animation: generation-spin 1s linear infinite; }
-      [data-tone="error"] .generation-indicator { background: #ff897d; border-radius: 3px; }
-      [data-tone="warning"] .generation-indicator { background: #d7ad61; }
-      .generation-time { color: #e2cbae; font-size: 12px; font-variant-numeric: tabular-nums; }
-      .generation-steps { list-style: none; margin: 15px 0; padding: 0; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 7px; }
-      .generation-steps li { border-top: 3px solid #49444a; padding-top: 7px; color: #ada4ad; font-size: 12px; line-height: 1.6; }
-      .generation-steps li[data-state="done"] { color: #a2dfc7; border-color: #699d89; }
-      .generation-steps li[data-state="active"] { color: #ffe2a9; border-color: #f5c77e; }
-      .generation-steps li[data-state="paused"] { color: #ffb4aa; border-color: #ea776b; }
-      .generation-detail { color: #e2d6ce; line-height: 1.75; font-size: 13px; margin: 0 0 14px; }
-      .generation-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-      .generation-diagnostics { margin-top: 12px; color: #c7bbc3; font-size: 12px; }
-      .generation-diagnostics summary { cursor: pointer; }
-      .generation-diagnostics pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.7 var(--font-body, sans-serif); }
-      #active-generation { padding: 14px; }
-      #active-generation .generation-heading strong { font-size: 15px; }
-      @keyframes generation-spin { to { transform: rotate(360deg); } }
-      @media (prefers-reduced-motion: reduce) { .generation-indicator { animation: none !important; } }
-      .opening-workspace { padding: 18px 22px 22px; }
-      .opening-intro {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 18px;
-        margin-bottom: 14px;
-      }
-      .opening-intro h3 { margin: 0 0 4px; font: 700 18px/1.4 var(--font-title, serif); }
-      .opening-conflicts { display: grid; gap: 8px; margin-bottom: 14px; }
-      .opening-conflict {
-        padding: 9px 12px;
-        border-radius: 10px;
-        border: 1px solid rgba(255,255,255,0.1);
-        background: rgba(255,255,255,0.04);
-      }
-      .opening-conflict[data-severity="blocking"] { border-color: rgba(255,91,91,.5); color: #ffc0c0; background: rgba(190,45,45,.12); }
-      .opening-conflict[data-severity="warning"] { border-color: rgba(230,164,79,.45); color: #ffe0a7; }
-      .opening-conflict[data-severity="info"] { border-color: rgba(93,167,214,.38); color: #c9e8ff; }
-      .opening-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-      .opening-card { margin: 0; }
-      .opening-card[data-own="false"] { background: rgba(255,255,255,0.018); }
-      .opening-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
-      .opening-card-head > div { display: flex; align-items: center; gap: 9px; }
-      .seat-mark {
-        display: inline-grid;
-        place-items: center;
-        width: 28px;
-        height: 28px;
-        border-radius: 9px;
-        background: rgba(235,97,63,.18);
-        color: #ffad91;
-        font-weight: 800;
-      }
-      #opening-shared-time { margin: 0 0 14px; padding: 12px 14px 14px; }
-      #opening-shared-time legend { padding: 0 6px; color: var(--panel-muted); font-size: 12px; }
-      .opening-time-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-      .opening-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 10px; }
-      .opening-wide { grid-column: 1 / -1; }
-      .opening-card textarea { min-height: 66px; }
-      .opening-card [disabled] { opacity: .72; cursor: default; }
-      .opening-readonly-note { margin: 4px 0 10px; }
-      .opening-save { width: 100%; }
-      .room-tools { margin-top: 8px; }
-      .active-session {
-        min-width: 320px;
-        background: linear-gradient(160deg, rgba(25,30,39,.98), rgba(12,15,20,.98));
-        border: 1px solid rgba(255,255,255,.13);
-        border-radius: 16px;
-        box-shadow: 0 18px 55px rgba(0,0,0,.55);
-        overflow: hidden;
-      }
-      .active-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 15px 11px; border-bottom: 1px solid var(--panel-border); }
-      .active-title { display: flex; align-items: center; gap: 9px; }
-      .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb68b; box-shadow: 0 0 0 4px rgba(63,182,139,.12); }
-      .active-turn-label { color: var(--panel-muted); font-size: 12px; }
-      .active-body { padding: 12px 14px 14px; display: grid; gap: 10px; }
-      .compact-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-      .compact-action { padding: 9px 10px; border: 1px solid var(--panel-border); border-radius: 11px; background: rgba(255,255,255,.03); }
-      .compact-action strong { display: block; font-size: 12px; color: var(--panel-muted); }
-      .compact-action span { display: block; margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
-      .compact-action[data-state="sent"] { border-color: rgba(63,182,139,.32); background: rgba(63,182,139,.07); }
-      .compact-toolbar { display: flex; align-items: center; gap: 8px; }
-      .compact-toolbar label { display: flex; align-items: center; gap: 6px; margin: 0; flex: 1; }
-      .compact-toolbar select { padding: 8px 30px 8px 10px; }
-      .chat-toggle { position: relative; flex: none; }
-      .unread-badge {
-        display: inline-grid;
-        place-items: center;
-        min-width: 18px;
-        height: 18px;
-        padding: 0 5px;
-        border-radius: 999px;
-        background: #e53935;
-        color: white;
-        font: 800 11px/1 system-ui;
-      }
-      .active-chat { display: grid; gap: 8px; padding-top: 2px; }
-      .active-chat .messages { max-height: 230px; min-height: 100px; padding: 10px; }
-      .active-chat-form { display: grid; grid-template-columns: 1fr auto; gap: 7px; }
-      .active-chat-form input { min-width: 0; }
-      .active-footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 2px; }
-      @media (max-width: 820px) {
-        .turn-settings-grid, .ai-settings-grid { grid-template-columns: 1fr; }
-        .scheme-import { grid-template-columns: 1fr; }
-        .credential-policy-options { grid-template-columns: 1fr; }
-        .ai-settings-summary { align-items: flex-start; }
-        .opening-grid { grid-template-columns: 1fr; }
-        .opening-time-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .custom-code-grid { grid-template-columns: 1fr; }
-        .share-row { grid-template-columns: 60px minmax(0, 1fr); }
-        .share-row button { grid-column: 1 / -1; justify-self: start; }
-      }
-    </style>
+    <style>${multiplayerPanelStyles}</style>
+    <template id="history-empty-template"><div class="history-empty">${icon('archive', 24)}<div><strong>故事从第一次相遇开始</strong><span>暂无本机记录，连接过的房间会显示在这里。</span></div></div></template>
+    <template id="chat-empty-template"><div class="chat-empty">${icon('send', 26)}<strong>暂无聊天消息</strong><span>先打个招呼，一起商量下一步。</span></div></template>
     <div class="panel">
       <header class="panel-header">
         <div class="brand">
           <span class="brand-icon">${icon('zap', 18)}</span>
           <div>
-            <span class="eyebrow">Multiplayer Session</span>
-            <h2>双人联机跑团</h2>
-            <div class="muted">双方确认后自动生成开场。这里会显示当前进度、暂停原因和后续操作。</div>
+            <span class="eyebrow">SHINOBI / CO-OP</span>
+            <h2>双人联机</h2>
+            <div class="muted">与同伴，共写一段忍者物语。</div>
           </div>
         </div>
+        <div class="header-aside"><strong>两位玩家 · 一个世界</strong><span>共同开局 / 各自选择</span></div>
       </header>
 
       <section id="setup-view" class="setup">
-        <section class="card" aria-label="本机房间历史">
-          <div class="card-title">${icon('book-open', 18)}<h3>本机房间历史</h3></div>
-          <p class="muted">按当前账号保存在此浏览器。可以重新进入原房间，也可以导入、导出和查看已保存的快照。</p>
-          <div id="local-room-history" class="muted">正在读取…</div>
-          <button id="manage-room-history" class="btn" type="button">全部房间与本地存档</button>
-        </section>
+        <div class="setup-intro"><h3>开启共同的冒险</h3><span class="muted">创建新故事，或赴一位同伴之约。</span></div>
         <div class="setup-grid">
           <form id="create-room-form" class="card">
-            <div class="card-title">${icon('play', 18)}<h3>创建房间</h3></div>
+            <div class="card-title">${icon('plus', 18)}<h3>创建房间</h3><span class="card-index" aria-hidden="true">01</span></div>
             <p class="muted">选择一种方式，开始新的联机跑团。</p>
 
             <div class="field">
@@ -867,7 +209,7 @@ function shellTemplate() {
           </form>
 
           <form id="join-room-form" class="card">
-            <div class="card-title">${icon('external-link', 18)}<h3>加入房间</h3></div>
+            <div class="card-title">${icon('log-in', 18)}<h3>加入房间</h3><span class="card-index" aria-hidden="true">02</span></div>
             <p class="muted">填入房主给你的房间号和房间密码。</p>
 
             <label class="field">
@@ -887,12 +229,21 @@ function shellTemplate() {
               <div id="guest-character-label" class="muted">只导入版本化角色快照，不会合并你的原世界。</div>
             </details>
 
+            <div class="muted">首次加入请填写密码；已经加入过的房间只需房间号。页面重载后会自动尝试恢复。</div>
+
             <div class="toolbar">
               <button class="btn btn-primary" type="submit">${icon('log-in', 15)}进入房间</button>
             </div>
-            <div class="muted">首次加入请填写密码；已经加入过的房间只需房间号。页面重载后会自动尝试恢复。</div>
           </form>
         </div>
+        <section class="card history-card" aria-label="本机房间历史">
+          <div class="history-head">
+            <div class="card-title">${icon('book-open', 18)}<h3>最近的房间</h3></div>
+            <button id="manage-room-history" class="btn btn-sm" type="button">全部房间与存档 ${icon('external-link', 13)}</button>
+          </div>
+          <div id="local-room-history" class="muted">正在读取…</div>
+          <div class="history-caption">记录保存在本机当前账号下，可重新进入房间或管理已保存的快照。</div>
+        </section>
       </section>
 
       <div id="room-workspace" hidden>
@@ -911,7 +262,7 @@ function shellTemplate() {
             <strong>邀请另一名玩家</strong>
             <div class="share-grid">
               <div class="share-row"><span>房间号</span><code id="invite-room-code"></code><button id="copy-room-code" class="btn btn-sm" type="button">${icon('copy', 13)}复制房间码</button></div>
-              <div class="share-row"><span>房间密码</span><code id="invite-code"></code><button id="copy-invite-code" class="btn btn-sm" type="button">${icon('copy', 13)}复制邀请码</button></div>
+              <div class="share-row"><span>房间密码</span><code id="invite-code"></code><button id="copy-invite-code" class="btn btn-sm" type="button">${icon('copy', 13)}复制密码</button></div>
             </div>
             <div class="share-actions"><button id="copy-room-invite" class="btn btn-primary btn-sm" type="button">${icon('copy', 13)}复制全部</button><span id="invite-expiry" class="muted"></span></div>
           </div>
@@ -920,53 +271,31 @@ function shellTemplate() {
             <div id="genesis-review-detail" class="muted"></div>
             <pre id="genesis-audience-diff">等待服务端返回当前成员的受众安全差异</pre>
           </div>
-          <div class="toolbar">
+          <div class="toolbar room-actions">
             <button id="ready-room" class="btn btn-primary" type="button">${icon('check', 15)}我已准备</button>
             <button id="exit-room" class="btn btn-danger" type="button">${icon('close', 14)}退出联机</button>
           </div>
         </section>
 
-        <section id="opening-workspace" class="opening-workspace" hidden aria-label="双方开局设置">
-          <div class="opening-intro">
-            <div>
-              <h3>双方开局</h3>
-              <div class="muted">席位 A 设定共同时间；每人只需填写自己的角色设定。保存任何修改后，双方都要重新确认。</div>
-            </div>
-            <span id="opening-ready-summary" class="pill">等待双方填写</span>
-          </div>
-          <fieldset id="opening-shared-time" class="card">
-            <legend>共同开局时间</legend>
-            <div class="opening-time-grid">
-              <label>年份<input id="opening-year" type="number" min="0" max="9999" required></label>
-              <label>月份<input id="opening-month" type="number" min="1" max="12" required></label>
-              <label>日期<input id="opening-day" type="number" min="1" max="31" required></label>
-              <label>时段<select id="opening-phase"><option value="DAWN">清晨</option><option value="DAY">白天</option><option value="DUSK">黄昏</option><option value="NIGHT">夜晚</option></select></label>
-            </div>
-            <div id="opening-time-note" class="muted">由席位 A 设定，席位 B 保存开局时自动沿用。</div>
-          </fieldset>
-          <div id="opening-conflicts" class="opening-conflicts" aria-live="polite"></div>
-          <div class="opening-grid">
-            ${openingCardTemplate('A')}
-            ${openingCardTemplate('B')}
-          </div>
-        </section>
-
         <div class="generation-full">${generationTemplate('turn')}</div>
-        <nav class="tabs" aria-label="联机功能">
-          <button type="button" data-tab="turn" aria-selected="true">${icon('settings', 16)}房间设置</button>
-          <button type="button" data-tab="chat" aria-selected="false">${icon('send', 16)}聊天 <span id="chat-unread-badge" class="unread-badge" hidden></span></button>
+        <nav class="tabs" role="tablist" aria-label="联机功能">
+          <button type="button" id="room-settings-tab" data-tab="turn" role="tab" aria-controls="room-settings-view" aria-selected="true" tabindex="0">${icon('settings', 16)}房间设置</button>
+          <button type="button" id="room-chat-tab" data-tab="chat" role="tab" aria-controls="room-chat-view" aria-selected="false" tabindex="-1">${icon('send', 16)}聊天 <span id="chat-unread-badge" class="unread-badge" hidden></span></button>
         </nav>
 
-        <section data-view="turn">
+        <section id="room-settings-view" data-view="turn" role="tabpanel" aria-labelledby="room-settings-tab">
           <div class="grid turn-settings-grid">
-            <div class="card">
+            <div class="card narrative-card">
+              <div class="narrative-mode">
               <div class="card-title">${icon('book-open', 16)}<h3>正文模式</h3></div>
               <div class="toolbar">
                 <button id="mode-shared" class="btn btn-sm" type="button">相同正文</button>
                 <button id="mode-dual" class="btn btn-sm" type="button">双视角</button>
               </div>
               <div id="mode-note" class="muted"></div>
-              <h3>正文预设</h3>
+              </div>
+              <div class="narrative-presets">
+              <h3 class="subsection">正文预设</h3>
               <p class="muted">使用一位玩家当前主面板的正文预设；双方共用同一份叙事要求。</p>
               <div class="row">
                 <button id="preset-seat-a" class="btn btn-sm" type="button">使用 A 的预设</button>
@@ -974,6 +303,7 @@ function shellTemplate() {
               </div>
               <button id="sync-narrative-preset" class="btn btn-sm" type="button">同步我的正文预设</button>
               <p id="narrative-preset-note" class="muted"></p>
+              </div>
             </div>
             <div class="card ai-settings-card">
               <div class="card-title">${icon('settings', 16)}<h3>联机 AI 设置</h3></div>
@@ -1024,6 +354,31 @@ function shellTemplate() {
             </div>
           </div>
 
+        <section id="opening-workspace" class="opening-workspace" hidden aria-label="双方开局设置">
+          <div class="opening-intro">
+            <div>
+              <h3>双方开局</h3>
+              <div class="muted">席位 A 设定共同时间；每人只需填写自己的角色设定。保存任何修改后，双方都要重新确认。</div>
+            </div>
+            <span id="opening-ready-summary" class="pill">等待双方填写</span>
+          </div>
+          <fieldset id="opening-shared-time" class="card">
+            <legend>共同开局时间</legend>
+            <div class="opening-time-grid">
+              <label>年份<input id="opening-year" type="number" min="0" max="9999" required></label>
+              <label>月份<input id="opening-month" type="number" min="1" max="12" required></label>
+              <label>日期<input id="opening-day" type="number" min="1" max="31" required></label>
+              <label>时段<select id="opening-phase"><option value="DAWN">清晨</option><option value="DAY">白天</option><option value="DUSK">黄昏</option><option value="NIGHT">夜晚</option></select></label>
+            </div>
+            <div id="opening-time-note" class="muted">由席位 A 设定，席位 B 保存开局时自动沿用。</div>
+          </fieldset>
+          <div id="opening-conflicts" class="opening-conflicts" aria-live="polite"></div>
+          <div class="opening-grid">
+            ${openingCardTemplate('A')}
+            ${openingCardTemplate('B')}
+          </div>
+        </section>
+
           <div class="notice">进入对局后，请直接使用游戏主输入框提交并锁定行动；本页只保留房间级设置。</div>
           <section id="turn-recovery" class="card" hidden>
             <div class="card-title">${icon('settings', 16)}<h3>回合需要处理</h3></div>
@@ -1035,12 +390,12 @@ function shellTemplate() {
           </section>
         </section>
 
-        <section data-view="chat" hidden>
-          <div class="notice">聊天只用于玩家协调，默认不进入 Agent、记忆、日报或 canonical 世界状态。</div>
+        <section id="room-chat-view" data-view="chat" role="tabpanel" aria-labelledby="room-chat-tab" hidden>
+          <div class="notice">聊天只用于同伴间交流，不会被当作角色行动，也不会写入剧情记忆或日报。</div>
           <button id="load-chat-history" class="btn btn-sm" type="button">${icon('book-open', 14)}加载更早消息</button>
           <div id="chat-messages" class="messages card"></div>
           <form id="chat-form" class="row">
-            <input id="chat-text" maxlength="1000" required placeholder="与另一名玩家商量，无行动超时">
+            <input id="chat-text" maxlength="1000" required aria-label="聊天消息" placeholder="和同伴聊聊接下来的计划…">
             <button class="btn btn-primary" type="submit">${icon('send', 15)}发送</button>
           </form>
         </section>
@@ -1095,7 +450,7 @@ function shellTemplate() {
           <div id="active-chat" class="active-chat" hidden>
             <div id="active-chat-messages" class="messages"></div>
             <form id="active-chat-form" class="active-chat-form">
-              <input id="active-chat-text" maxlength="1000" required placeholder="和对方说点什么…">
+              <input id="active-chat-text" maxlength="1000" required aria-label="悬浮窗聊天消息" placeholder="和同伴说点什么…">
               <button class="btn btn-primary" type="submit">发送</button>
             </form>
           </div>
@@ -1326,15 +681,20 @@ export class NarutoMultiplayerPanel extends HTMLElementBase {
       output.replaceChildren();
       for (const entry of entries.slice(0, 5)) {
         const row = document.createElement('div');
-        row.style.cssText = 'display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 0;flex-wrap:wrap';
-        const description = document.createElement('span');
-        description.textContent = `${entry.label} · 玩家 ${entry.seat || '—'} · 第 ${entry.turn || 0} 回合 · ${entry.snapshotAt ? '已保存快照' : '房间记录'}`;
+        row.className = 'history-row';
+        const description = document.createElement('div');
+        description.className = 'history-copy';
+        const title = document.createElement('strong');
+        title.textContent = entry.label;
+        const detail = document.createElement('small');
+        detail.textContent = `玩家 ${entry.seat || '—'} · 第 ${entry.turn || 0} 回合 · ${entry.snapshotAt ? '已保存快照' : '房间记录'}`;
+        description.append(title, detail);
         const button = document.createElement('button');
         button.className = 'btn btn-sm'; button.type = 'button'; button.textContent = '重新进入';
         button.onclick = () => this._run('重新进入房间', () => localRoomHistory.resume(entry.id, roomId => this.connectRoom(roomId)));
         row.append(description, button); output.append(row);
       }
-      if (!entries.length) output.textContent = '暂无本机记录，连接过的房间会显示在这里。';
+      if (!entries.length) output.append(this.$('#history-empty-template').content.cloneNode(true));
     } catch (error) { output.textContent = `无法读取本机记录：${error.message}`; }
   }
 
@@ -1393,6 +753,16 @@ export class NarutoMultiplayerPanel extends HTMLElementBase {
 
     this.$$('.tabs [data-tab]').forEach(button => {
       button.addEventListener('click', () => this._selectTab(button.dataset.tab));
+      button.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const tabs = this.$$('.tabs [data-tab]');
+        const index = tabs.indexOf(button);
+        const target = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs.at(-1)
+          : tabs[(index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+        this._selectTab(target.dataset.tab);
+        target.focus();
+      });
     });
 
     this.$$('.segmented [data-value]').forEach(button => {
@@ -1582,6 +952,7 @@ export class NarutoMultiplayerPanel extends HTMLElementBase {
   _selectTab(tab) {
     this.$$('.tabs [data-tab]').forEach(button => {
       button.setAttribute('aria-selected', String(button.dataset.tab === tab));
+      button.tabIndex = button.dataset.tab === tab ? 0 : -1;
     });
     this.$$('[data-view]').forEach(view => {
       view.hidden = view.dataset.view !== tab;
@@ -1959,8 +1330,9 @@ export class NarutoMultiplayerPanel extends HTMLElementBase {
     this.$('#opening-workspace').hidden = !editableOpening;
     this.$('#room-id').textContent = `房间 ${room?.room_code ?? state.roomId ?? '—'}`;
     this.$('#viewer-seat').textContent = `席位 ${room?.viewer_seat ?? '—'}`;
-    this.$('#room-lifecycle').textContent = text(room?.lifecycle, '连接中');
+    this.$('#room-lifecycle').textContent = ({ LOBBY: '准备开局', READY: '双方已准备', ACTIVE: '对局中', ARCHIVED: '已归档' })[room?.lifecycle] ?? text(room?.lifecycle, '连接中');
     this.$('#connection-status').textContent = this._connectionLabel(state.connection);
+    this.$('#connection-status').dataset.state = state.connection?.status ?? 'idle';
     this._renderMembers(state);
     this._renderPresenceNotice(state);
     this._renderInvite(
@@ -2035,27 +1407,30 @@ export class NarutoMultiplayerPanel extends HTMLElementBase {
   _renderMembers(state) {
     const list = this.$('#member-list');
     list.replaceChildren();
-    for (const member of state.room?.members ?? []) {
-      const item = document.createElement('span');
-      item.className = 'pill';
-      item.dataset.state = member.ready_at ? 'ready' : 'waiting';
-      const own = member.seat === state.room?.viewer_seat ? '（你）' : '';
-      item.textContent = `玩家 ${member.seat}${own} · ${member.ready_at ? '已确认开局' : '已加入，待确认'}`;
-      list.append(item);
-    }
     for (const seat of ['A', 'B']) {
-      if (state.room?.members?.some(member => member.seat === seat)) continue;
-      const waiting = document.createElement('span');
-      waiting.className = 'pill';
-      waiting.dataset.state = 'waiting';
-      waiting.textContent = `玩家 ${seat} · 等待加入`;
-      list.append(waiting);
-    }
-    if (!list.childNodes.length) {
-      const item = document.createElement('span');
-      item.className = 'muted';
-      item.textContent = '正在读取成员投影';
-      list.append(item);
+      const member = state.room?.members?.find(item => item.seat === seat);
+      const own = seat === state.room?.viewer_seat ? '（你）' : '';
+      const draft = state.room?.opening?.drafts?.[seat]?.draft;
+      const card = document.createElement('div');
+      card.className = 'member-card';
+      card.dataset.seat = seat;
+      card.dataset.empty = String(!member);
+      card.dataset.state = member?.ready_at ? 'ready' : 'waiting';
+      const avatar = document.createElement('span');
+      avatar.className = 'member-avatar';
+      avatar.textContent = seat;
+      avatar.setAttribute('aria-hidden', 'true');
+      const copy = document.createElement('div');
+      copy.className = 'member-copy';
+      const name = document.createElement('strong');
+      name.className = 'member-name';
+      name.textContent = draft?.display_name || (member ? `席位 ${seat}${own}` : '留一席，待同伴');
+      const meta = document.createElement('span');
+      meta.className = 'member-meta';
+      meta.textContent = `玩家 ${seat}${member ? own : ''} · ${!member ? '等待加入' : member.ready_at ? '已确认开局' : '已加入，待确认'}`;
+      copy.append(name, meta);
+      card.append(avatar, copy);
+      list.append(card);
     }
   }
 
@@ -2534,7 +1909,7 @@ export class NarutoMultiplayerPanel extends HTMLElementBase {
         item.append(meta, body);
         container.append(item);
       }
-      if (!state.chat.messages.length) container.textContent = '暂无聊天消息';
+      if (!state.chat.messages.length) container.append(this.$('#chat-empty-template').content.cloneNode(true));
       queueMicrotask(() => { container.scrollTop = container.scrollHeight; });
     }
   }
@@ -2553,6 +1928,7 @@ export class NarutoMultiplayerPanel extends HTMLElementBase {
       : (turn?.turn_no
       ? `第 ${turn.turn_no} 回合 · 你是玩家 ${viewerSeat}`
       : `你是玩家 ${viewerSeat} · 等待回合`);
+    this.$('#active-connection').dataset.state = state.connection?.status ?? 'idle';
     this.$('#active-connection').textContent = this._connectionLabel(state.connection)
       .replace(/ · #\d+$/u, '');
     const ownCard = this.$('#active-own-action');

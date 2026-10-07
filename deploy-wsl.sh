@@ -33,6 +33,7 @@ usage() {
   --mode <环境>           与位置参数等价
   --dry-run               只构建并校验部署包，不连接服务器
   --skip-build            使用当前 public/，跳过 npm 构建
+  --frontend-only         仅发布测试站网页，不修改或重启共用后端
   --keep-package          保留本地部署包与清单供核对
   --confirm-production    明确授权正式站发布
   --config <文件>         本地配置文件，默认 deploy.local.env
@@ -41,6 +42,7 @@ usage() {
 
 示例：
   bash deploy-wsl.sh staging
+  bash deploy-wsl.sh staging --frontend-only
   bash deploy-wsl.sh staging --dry-run
   bash deploy-wsl.sh production --dry-run
   bash deploy-wsl.sh production --confirm-production
@@ -63,6 +65,7 @@ MODE=""
 DRY_RUN=false
 SKIP_BUILD=false
 KEEP_PACKAGE=false
+FRONTEND_ONLY=false
 CONFIRM_PRODUCTION=false
 CONFIG_FILE="$DEFAULT_CONFIG"
 REQUESTED_RELEASE=""
@@ -92,6 +95,10 @@ while (($# > 0)); do
       KEEP_PACKAGE=true
       shift
       ;;
+    --frontend-only)
+      FRONTEND_ONLY=true
+      shift
+      ;;
     --confirm-production)
       CONFIRM_PRODUCTION=true
       shift
@@ -118,6 +125,7 @@ done
 
 MODE="${MODE:-staging}"
 [[ "$MODE" == staging || "$MODE" == production ]] || fail "部署环境只能是 staging 或 production"
+[[ "$FRONTEND_ONLY" == false || "$MODE" == staging ]] || fail "--frontend-only 仅用于测试站"
 
 command -v node >/dev/null 2>&1 || fail "缺少 node"
 command -v npm >/dev/null 2>&1 || fail "缺少 npm"
@@ -294,6 +302,9 @@ log "环境：$MODE"
 log "版本：v$RELEASE_VERSION"
 log "构建：$BUILD_ID"
 log "目标：$PUBLIC_URL"
+if [[ "$FRONTEND_ONLY" == true ]]; then
+  log "范围：仅测试站网页；共用后端、正式站和安卓下载保持现状"
+fi
 if [[ "$DRY_RUN" == true ]]; then
   warn "DryRun：不会连接或修改服务器"
 fi
@@ -398,6 +409,7 @@ log "STEP 3/6：校验部署包"
 REQUIRED_FILES=(
   'static/index.html'
   'static/login.html'
+  'static/announcements.html'
   'static/js/app.js'
   'static/version.json'
   'static/js/data/generated/canon-runtime-data.js'
@@ -452,6 +464,7 @@ if [[ "$DRY_RUN" == true ]]; then
   printf 'DRY_RUN_OK=%s\n' "$MODE"
   printf 'RELEASE_VERSION=%s\n' "$RELEASE_VERSION"
   printf 'BUILD_VERSION=%s\n' "$BUILD_ID"
+  printf 'FRONTEND_ONLY=%s\n' "$FRONTEND_ONLY"
   exit 0
 fi
 
@@ -476,6 +489,8 @@ SSH_OPTIONS=(
 REMOTE_ARCHIVE="/tmp/naruto-rpg-${MODE}-${DEPLOYMENT_ID}.tar.gz"
 REMOTE_ARCHIVE_PART="${REMOTE_ARCHIVE}.part"
 REMOTE_RELEASE="/tmp/naruto-rpg-release-${MODE}-${DEPLOYMENT_ID}"
+INSTALLER_SCOPE=''
+if [[ "$FRONTEND_ONLY" == true ]]; then INSTALLER_SCOPE='--frontend-only'; fi
 
 log "STEP 4/6：上传部署包"
 node "$PROJECT_DIR/scripts/deploy-manifest.mjs" --check-source "$PAYLOAD_DIR"
@@ -490,7 +505,7 @@ REMOTE_STEPS=(
   "if test -f '$REMOTE_ARCHIVE_PART'; then printf '%s  %s\\n' '$ARCHIVE_SHA256' '$REMOTE_ARCHIVE_PART' | sha256sum -c -; mv -f '$REMOTE_ARCHIVE_PART' '$REMOTE_ARCHIVE'; else test -f '$REMOTE_ARCHIVE'; printf '%s  %s\\n' '$ARCHIVE_SHA256' '$REMOTE_ARCHIVE' | sha256sum -c -; fi"
   "mkdir -p '$REMOTE_RELEASE'"
   "if test ! -s '$REMOTE_RELEASE/release-manifest.json'; then tar xzf '$REMOTE_ARCHIVE' -C '$REMOTE_RELEASE'; fi"
-  "python3 '$REMOTE_RELEASE/ops/apply-release.py' --mode '$MODE' --build '$BUILD_ID'"
+  "python3 '$REMOTE_RELEASE/ops/apply-release.py' --mode '$MODE' --build '$BUILD_ID' $INSTALLER_SCOPE"
 )
 
 REMOTE_DEPLOY_COMMAND="$(printf '%s; ' "${REMOTE_STEPS[@]}")"
@@ -503,7 +518,7 @@ log "STEP 6/6：清理远端临时包"
 sleep 12
 if ! retry_remote "清理远端临时文件" 3 10 \
   ssh "${SSH_OPTIONS[@]}" "$DEPLOY_SERVER" \
-    "python3 '$REMOTE_RELEASE/ops/apply-release.py' --mode '$MODE' --build '$BUILD_ID' --cleanup && rm -f '$REMOTE_ARCHIVE' '$REMOTE_ARCHIVE_PART'"; then
+    "python3 '$REMOTE_RELEASE/ops/apply-release.py' --mode '$MODE' --build '$BUILD_ID' $INSTALLER_SCOPE --cleanup && rm -f '$REMOTE_ARCHIVE' '$REMOTE_ARCHIVE_PART'"; then
   warn "远端临时文件清理失败，不影响已完成部署"
 fi
 
@@ -511,4 +526,5 @@ printf '\nDEPLOY_OK=%s\n' "$PUBLIC_URL"
 printf 'DEPLOY_ENVIRONMENT=%s\n' "$MODE"
 printf 'RELEASE_VERSION=%s\n' "$RELEASE_VERSION"
 printf 'BUILD_VERSION=%s\n' "$BUILD_ID"
+printf 'FRONTEND_ONLY=%s\n' "$FRONTEND_ONLY"
 printf 'VERIFY_URL=%s\n' "$VERIFY_URL"

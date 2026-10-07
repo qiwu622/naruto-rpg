@@ -1,8 +1,10 @@
 import { stateManager } from './state-manager.js';
 import { AIClient, aiClient } from './ai-client.js';
+import { markTurnContext } from './deepseek-mode.js';
 import { instructionParser } from './instruction-parser.js';
 import { eventBus } from './event-bus.js';
 import { ALLOWED_TAGS, generateMainVarInstructions } from '../data/var-schema.js';
+import { projectSystemCombatPrompt } from '../data/combat-prompt-mode.js';
 import { getMemoryConfig } from '../data/memory-config.js';
 import { getMainPreset, normalizePresetActivation, resolvePresetMacros } from '../data/default-preset.js';
 import { formatGameTime } from '../utils/format.js';
@@ -51,6 +53,8 @@ import {
 import { ImageSettingsStore } from './image-studio/settings.js';
 import { resolveAICallPolicy } from './ai-call-policy.js';
 import { beginTurnCommit } from './turn-commit.js';
+import { buildTurnReceipt, normalizeTurnReceipt, createTurnStageTracker, TURN_STAGE_LABELS } from './turn-receipt.js';
+import { projectCorrectedMemory } from './memory-corrections.js';
 import {
   buildUpdaterObligations,
   projectCharacterMemoryDeltaForUpdater,
@@ -68,6 +72,8 @@ import {
   assertMainOutputContract
 } from './main-output-contract.js';
 import { buildContinuityDelta } from './continuity-delta.js';
+import { createContinuityCasToken, isContinuityCasCurrent } from './continuity-ledger.js';
+import { FACTUAL_MEMORY_GUIDANCE, projectNarrativeForMemory } from './narrative-memory.js';
 import { toWriterCharacterDecision } from './agent-contracts.js';
 import {
   IMPORTED_PRESET_SINGLE_CALL_NO_CHANGE_EXAMPLE,
@@ -75,6 +81,9 @@ import {
 } from '../data/prompts.js';
 import { applyPresetPromptRegex } from './preset-regex-runtime.js';
 import { readLoadedBuild } from '../utils/build-version.js';
+import { listTacticalMoves } from '../systems/tactical-combat.js';
+import { tacticalCombatEnabled, tacticalSourceFingerprint, buildTacticalPlan, inferTacticalMoveId, filterTacticalInstructions } from '../systems/tactical-combat-session.js';
+import { buildTacticalEncounterGuidance, TACTICAL_ENCOUNTER_REGISTRATION_GUIDANCE } from '../systems/tactical-engagement.js';
 import {
   clearImportedPresetDebugLog,
   recordImportedPresetDebugFailure
@@ -270,6 +279,7 @@ class MessagePipeline {
     this._lastImportedPresetRevision = '';
     this._lastAssistantPrefill = '';
     this._npcSummaryInFlight = new Set();
+    this._stateRestoreEpoch = 0;
     this._onPresetEdited = () => {
       this._staticSystemPrompt = null;
       this._lastImportedPresetProfile = inspectImportedPresetOutputProfile(null);
@@ -278,9 +288,15 @@ class MessagePipeline {
       this._lastPromptTrace = null;
     };
     eventBus.on('preset:edited', this._onPresetEdited);
-    eventBus.on('timeline:branch-switched', () => this._agentContextBroker?.invalidate());
-    eventBus.on('timeline:jumped', () => this._agentContextBroker?.invalidate());
-    eventBus.on('state:restored', () => this._agentContextBroker?.invalidate());
+    const invalidateStateWork = () => {
+      this._stateRestoreEpoch++;
+      this._agentContextBroker?.invalidate();
+      this._invalidateActiveTurn?.();
+    };
+    eventBus.on('timeline:branch-switched', invalidateStateWork);
+    eventBus.on('timeline:jumped', invalidateStateWork);
+    eventBus.on('state:restored', invalidateStateWork);
+    eventBus.on('state:reset', invalidateStateWork);
   }
 
   cancel() {
@@ -339,22 +355,81 @@ class MessagePipeline {
     }
   }
 
-  async process(userInput) {
+  async process(userInput, turnOptions = {}) {
     if (this.isProcessing) return null;
     this.isProcessing = true;
     this._cancelled = false;
     this._lastUserInput = userInput;
+    this._activeTacticalPlan = null;
+    let tacticalPlan = null;
+    let tacticalNotification = null;
     let turnCommit = null;
+    let turnEpoch = this._stateRestoreEpoch;
+    const turnHistory = this.chatHistory;
+    let contextChanged = false;
+    const isTurnCurrent = () => !contextChanged
+      && turnEpoch === this._stateRestoreEpoch && this.chatHistory === turnHistory;
+    const assertTurnCurrent = () => {
+      if (isTurnCurrent()) return;
+      const error = new Error('生成期间已切换进度，本次旧结果已丢弃。请在当前进度重新行动。');
+      error.code = 'PIPELINE_CONTEXT_CHANGED';
+      throw error;
+    };
+    const invalidateTurn = () => {
+      contextChanged = true;
+      turnCommit?.abandon();
+      this._retryTacticalSelection = null;
+      this.cancel();
+    };
+    this._invalidateActiveTurn = invalidateTurn;
+    const rollbackTurn = () => {
+      assertTurnCurrent();
+      // Our own rollback emits state:restored too. It restores this turn's
+      // source, whereas an external restore must abandon the snapshots.
+      this._invalidateActiveTurn = null;
+      try { return turnCommit?.rollback(); }
+      finally {
+        turnEpoch = this._stateRestoreEpoch;
+        this._invalidateActiveTurn = invalidateTurn;
+      }
+    };
     let modelRawResponse = '';
     let importedProjectedResponse = '';
     let importedValidationResponse = '';
     let importedValidationStage = '';
+    const receiptStartedAt = performance.now();
+    const receiptStages = createTurnStageTracker();
+    const receiptUnknownRetries = new Set();
+    let receiptAgentStage = null;
+    let turnReceipt = null;
+    let receiptDraftResponse = '';
+    let receiptVariablesStatus = 'unknown';
+    let receiptMemoryStatus = 'unknown';
+    let receiptDaily = null;
+    let receiptSaveStatus = 'skipped';
+    let receiptBeforeState = null;
+    const receiptTurnNumber = (Number(stateManager.get('系统·回合数')) || 0) + 1;
+    const receiptSnapshot = ({ saving = false } = {}) => receiptStages.snapshot().map(stage => ({
+      ...stage,
+      retries: receiptUnknownRetries.has(stage.key) ? null : stage.retries,
+      ...(saving && stage.key === 'save' ? { status: 'success', durationMs: null } : {})
+    }));
+    const makeReceipt = (save = { status: receiptSaveStatus }, { saving = false } = {}) => buildTurnReceipt({
+      beforeState: receiptBeforeState, afterState: stateManager.get(),
+      turnNumber: receiptTurnNumber,
+      variables: { status: receiptVariablesStatus }, memory: { status: receiptMemoryStatus },
+      daily: { status: receiptDaily ? 'success' : 'skipped', issue: receiptDaily?.issue },
+      // The transaction has not finished when its receipt is serialized. Only
+      // the runtime receipt can report the full elapsed time, including save.
+      save, stages: receiptSnapshot({ saving }), durationMs: saving ? null : performance.now() - receiptStartedAt
+    });
     clearImportedPresetDebugLog();
     stateManager.resetLevelUpGuard();
     this.knowledgeBase?.invalidateCache?.();
     eventBus.emit('pipeline:processing', { userInput });
 
     try {
+      assertTurnCurrent();
       let state = stateManager.get();
       const migratedContract = resolveOpeningContract(state);
       if (!state._opening_contract && migratedContract) {
@@ -389,6 +464,29 @@ class MessagePipeline {
       this._activeCallPolicy = callPolicy;
       eventBus.emit('pipeline:call-policy', callPolicy);
 
+      if (tacticalCombatEnabled(state) && this.combatSystem?.commitTacticalRound) {
+        const sourceFingerprint = tacticalSourceFingerprint(state);
+        if (state._combat?.is_active) {
+          eventBus.emit('combat:phase', { phase: 'resolving', message: '正在判定招式与行动顺序' });
+          const selected = turnOptions.combatMoveId || (this._retryTacticalSelection?.input === userInput
+            && this._retryTacticalSelection?.sourceFingerprint === sourceFingerprint && this._retryTacticalSelection.moveId);
+          const moves = listTacticalMoves(state);
+          const moveId = (selected && moves.some(move => move.id === selected) ? selected : null)
+            || inferTacticalMoveId(state, userInput)
+            || moves.find(move => move.kind === 'maneuver')?.id;
+          tacticalPlan = buildTacticalPlan(state, { moveId, text: userInput });
+          if (tacticalPlan) {
+            tacticalPlan.sourceFingerprint = sourceFingerprint;
+            tacticalPlan.sourceEnemyName ||= state._combat.enemy_name;
+            this._activeTacticalPlan = tacticalPlan;
+            this._retryTacticalSelection = { input: userInput, sourceFingerprint, moveId };
+            // Opening belongs to the model's structured state, never a local
+            // match against player prose. Existing rounds commit with the story.
+            eventBus.emit('combat:phase', { phase: 'narrating', message: '判定已完成，正在描写本回合' });
+          }
+        }
+      }
+
       // Agent turns always delegate variables, memory and the daily report to
       // their continuity updater.  Freeze that ownership before constructing
       // the main prompt so the writer and commit path cannot disagree.
@@ -399,6 +497,15 @@ class MessagePipeline {
         updaterEnabled: updaterOwnedTurn,
         strictSingleCall: callPolicy.strictSingleCall
       });
+      if (tacticalCombatEnabled(state)) {
+        const content = [buildTacticalEncounterGuidance({ updaterOwned: updaterOwnedTurn }), tacticalPlan?.prompt,
+          tacticalPlan ? '以上为本轮已确定的结算：不得重新掷骰、反转成败、追加其他攻击或代写玩家下一行动。自由描述可补足轨迹与细节，不改变已结算结果。本地已结算变化无需重复业务标签。' : '',
+          tacticalPlan ? (updaterOwnedTurn ? '正文只负责故事，变量、记忆和日报由后续更新模型负责。' : '若没有其他变化，可在 state_update 中声明 changed:false。state_update、memory、shinobi_daily 契约仍须完整输出。') : '']
+          .filter(Boolean).join('\n\n');
+        messages.push({ role: 'system', content });
+        this._lastPromptTrace?.messageSources?.push({ source: 'tactical-combat', label: '战术判定与现场' });
+        this._lastPromptTrace?.injections?.push({ name: '战术判定与现场', content });
+      }
       const importedPresetProfile = this._lastImportedPresetProfile;
       const importedAssistantPrefill = this._lastAssistantPrefill;
       const projectImportedResponse = response => importedPresetProfile?.active
@@ -427,9 +534,12 @@ class MessagePipeline {
         ...this._getGenerationOptions(),
         ...callPolicy.mainGenerationOptions
       };
+      receiptStages.start('narrative');
+      if (agentWillRun || generationOptions.maxRetries !== 0) receiptUnknownRetries.add('narrative');
       let directTracePublished = false;
 
       const generateDirect = async () => {
+        assertTurnCurrent();
         if (!directTracePublished) {
           publishPromptTrace({
             kind: 'main',
@@ -448,16 +558,19 @@ class MessagePipeline {
         }
         if (reviewEnabled || mainConfig.disableStreaming) {
           modelRawResponse = String(await aiClient.chat(messages, generationOptions) || '');
+          assertTurnCurrent();
           const response = projectImportedResponse(modelRawResponse);
           if (!reviewEnabled) eventBus.emit('pipeline:chunk', { chunk: response, response });
           return modelRawResponse;
         }
         let streamed = '';
         const response = await aiClient.chatStream(messages, generationOptions, chunk => {
+          if (!isTurnCurrent()) return;
           streamed += chunk;
           const projected = projectImportedResponse(streamed);
           eventBus.emit('pipeline:chunk', { chunk, response: projected });
         });
+        assertTurnCurrent();
         modelRawResponse = String(response || streamed || '');
         return modelRawResponse;
       };
@@ -472,12 +585,30 @@ class MessagePipeline {
         });
 
         const onProgress = (stage, detail) => {
+          if (!isTurnCurrent()) return;
+          if (receiptAgentStage && receiptAgentStage !== stage) {
+            // Optional reviews absorb individual reviewer failures. A stage
+            // transition proves completion, but not a fully successful review.
+            const reviewOutcomeUnknown = ['review_outline', 'review_draft', 'final_audit'].includes(receiptAgentStage);
+            receiptStages.finish(receiptAgentStage, stage === 'error' ? 'failed' : reviewOutcomeUnknown ? 'unknown' : 'success');
+          }
+          if (Object.prototype.hasOwnProperty.call(TURN_STAGE_LABELS, stage)) {
+            receiptStages.start(stage);
+            receiptUnknownRetries.add(stage);
+            receiptAgentStage = stage;
+          } else if (stage === 'done' || stage === 'error') receiptAgentStage = null;
           eventBus.emit('agent:progress', { stage, detail });
         };
 
         const activeAgentPipeline = this._agentPipeline;
+        const stopReceiptSkips = eventBus.on('agent:stage-skip', ({ stage } = {}) => {
+          if (stage !== receiptAgentStage) return;
+          receiptStages.finish(stage, 'skipped');
+          receiptAgentStage = null;
+        });
         try {
           const agentResult = await activeAgentPipeline.execute(state, userInput, onProgress, messages);
+          assertTurnCurrent();
           if (!String(agentResult || '').trim()) {
             const error = new Error('Agent 未返回有效正文，本回合已中止');
             error.code = 'AGENT_PIPELINE_EMPTY_RESULT';
@@ -490,17 +621,22 @@ class MessagePipeline {
           modelRawResponse = String(agentResult || '');
           fullResponse = modelRawResponse;
           agentSelfUpdater = activeAgentPipeline.didAgentProduceUpdaterTags?.() || false;
+          // This optional agent can fall back to the regular updater without
+          // throwing; completing the agent pipeline alone is not its success.
+          receiptStages.finish('continuity_updater', agentSelfUpdater ? 'success' : 'skipped');
           // Agent 模式通过 agent:stream 事件实时流式推送正文。
         } catch (error) {
           activeAgentPipeline.discardPendingCharacterMemoryDelta?.();
           activeAgentPipeline.discardPendingStoryPlan?.();
           throw error;
         } finally {
+          stopReceiptSkips();
           if (this._agentPipeline === activeAgentPipeline) this._agentPipeline = null;
         }
       } else {
         fullResponse = await generateDirect();
       }
+      assertTurnCurrent();
 
       fullResponse = projectImportedResponse(fullResponse);
       importedProjectedResponse = fullResponse;
@@ -517,6 +653,7 @@ class MessagePipeline {
       assertImportedPresetOutputEnvelope(fullResponse, importedPresetProfile, {
         draftResponse: instructionParser.cleanupResponse(fullResponse)
       });
+      receiptStages.finish('narrative', 'success');
 
       // 只保留主叙事模型本回合显式输出的可展示推演摘要。
       // 它通过完成事件交给 UI，但不会进入正文、聊天历史或时间线存档。
@@ -533,15 +670,20 @@ class MessagePipeline {
           eventBus.emit('pipeline:cancelled', { partialResponse: '' });
           return { cancelled: true, partialResponse: '' };
         }
+        receiptStages.start('review');
+        receiptUnknownRetries.add('review');
         acceptedArtifact = await this._resolveNarrativeReview({
           mainConfig,
           state,
           userInput,
           candidateArtifact: acceptedArtifact,
-          agentAudit
+          agentAudit,
+          validateCurrent: assertTurnCurrent
         });
+        assertTurnCurrent();
+        receiptStages.finish('review', 'success');
         fullResponse = [
-          acceptedArtifact.displayText,
+          acceptedArtifact.presentationText ?? acceptedArtifact.displayText,
           renderNarrativeInstructions(acceptedArtifact)
         ].filter(Boolean).join('\n\n');
         // 只有用户最终选择后的安全正文可以进入普通聊天流。
@@ -593,13 +735,16 @@ class MessagePipeline {
       });
       const instructionText = renderNarrativeInstructions(acceptedArtifact);
       const displayResponse = toPersistedNarrative(acceptedArtifact).replace(/极其|共犯/g, '');
+      receiptDraftResponse = displayResponse;
+      const factualResponse = projectNarrativeForMemory(fullResponse).replace(/极其|共犯/g, '');
       const instructions = instructionParser.parse(instructionText);
       if (!updaterEnabledTurn) {
         assertMainOutputContract({
           artifact: acceptedArtifact,
           dailyResult: mainDailyResult,
           playerName: state['玩家·姓名'],
-          draftResponse: displayResponse
+          draftResponse: displayResponse,
+          settledCombat: Boolean(tacticalPlan)
         });
       }
       const obligationState = stateManager.get();
@@ -607,7 +752,7 @@ class MessagePipeline {
         ? this._compileUpdaterEvidence({
           state: obligationState,
           userInput,
-          narrativeResponse: displayResponse
+          narrativeResponse: factualResponse
         })
         : this._lastTurnEvidencePacket;
       const updaterCharacterMemoryDelta = projectCharacterMemoryDeltaForUpdater(
@@ -615,7 +760,7 @@ class MessagePipeline {
       );
       const updateObligations = buildUpdaterObligations({
         state: obligationState,
-        narrativeResponse: displayResponse,
+        narrativeResponse: factualResponse,
         evidencePacket: obligationEvidence,
         characterMemoryDelta: updaterCharacterMemoryDelta
       });
@@ -626,7 +771,17 @@ class MessagePipeline {
 
       // 之后的状态、记忆与历史写入必须和时间线节点同生共死。
       // 草稿生成及可选复检位于此边界之外，失败内容不会污染运行态。
+      assertTurnCurrent();
+      if (tacticalPlan && tacticalSourceFingerprint(stateManager.get(), { enemyName: tacticalPlan.sourceEnemyName }) !== tacticalPlan.sourceFingerprint) {
+        const stale = new Error('战斗期间已切换进度或修改战况，本次旧结果未写入。请在当前进度重新行动。');
+        stale.code = 'TACTICAL_STATE_CHANGED';
+        throw stale;
+      }
       turnCommit = beginTurnCommit({ stateManager, chatHistory: this.chatHistory });
+      receiptBeforeState = turnCommit.stateSnapshot;
+      receiptStages.start('variables');
+      receiptVariablesStatus = 'pending';
+      if (tacticalPlan) tacticalNotification = this.combatSystem.commitTacticalRound(tacticalPlan);
       if (pendingCharacterMemoryDelta) {
         const mergedAgentMemories = mergeCharacterMemoryDelta(
           stateManager.getSub('_agent_memories') || {},
@@ -649,6 +804,7 @@ class MessagePipeline {
       let finalMemorySummary = null;
 
       this._applyInstructions(instructions);
+      receiptVariablesStatus = 'success';
 
       // 解析 <recall> 协议 — 主模型声明需要哪些实体的历史记忆
       if (this.memorySystem && getMemoryConfig().recallEnabled) {
@@ -660,12 +816,12 @@ class MessagePipeline {
       if (memories.length) {
         const mergedMem = this._mergeMemoryUpdates(memories);
         if (mergedMem.summary) finalMemorySummary = mergedMem.summary;
-        this._applyMemoryUpdate(mergedMem, userInput, displayResponse);
+        this._applyMemoryUpdate(mergedMem, userInput, factualResponse);
         memoryRecorded = true;
       } else if (!updaterEnabledTurn || agentSelfUpdater) {
         // 二次模型未启用，或 agent 自带了更新但未产出 <memory> 标签时，走本地兜底，
         // 保证回合记忆总是被记录(否则提交审计会因记忆缺失而整回合失败)。
-        this._rememberRecentTurn(userInput, displayResponse);
+        this._rememberRecentTurn(userInput, factualResponse);
         memoryRecorded = true;
       }
 
@@ -673,7 +829,7 @@ class MessagePipeline {
       const cleanResponse = displayResponse;
 
       this.chatHistory.push({ role: 'user', content: `[玩家操作]\n${userInput}` });
-      this.chatHistory.push({ role: 'assistant', content: displayResponse });
+      this.chatHistory.push({ role: 'assistant', content: factualResponse });
       this._trimHistory();
 
       // B-13: 等待 secondary updater 完成后再创建 timeline 节点
@@ -688,8 +844,10 @@ class MessagePipeline {
       let secondaryCorrectionInstruction = '';
       let secondaryRepairCandidate = '';
       let secondaryRepairContext = null;
+      let secondaryAttempts = 0;
 
       const applySecondaryResponse = (response, recoveryNote = '') => {
+        assertTurnCurrent();
         const payload = typeof response === 'string' ? { output: response, shinobiDaily: null } : (response || {});
         const output = String(payload.output || '');
         const candidateSecondaryThinkContent = instructionParser.extractVarThinkContent(output);
@@ -701,7 +859,7 @@ class MessagePipeline {
         if (secMemories.length) {
           const secMergedMem = this._mergeMemoryUpdates(secMemories);
           if (secMergedMem.summary) finalMemorySummary = secMergedMem.summary;
-          this._applyMemoryUpdate(secMergedMem, userInput, displayResponse);
+          this._applyMemoryUpdate(secMergedMem, userInput, factualResponse);
           memoryRecorded = true;
         }
         eventBus.emit('pipeline:vars-updated');
@@ -709,11 +867,13 @@ class MessagePipeline {
       };
       
       while (shouldRunSecondary && !secondarySuccess && !this._cancelled) {
+        assertTurnCurrent();
+        if (secondaryAttempts++ > 0) receiptStages.retry('variables');
         const secondaryPromise = this._runSecondaryVariableUpdate({
           userInput,
           enrichedInput,
           state,
-          narrativeResponse: displayResponse,
+          narrativeResponse: factualResponse,
           updateObligations,
           correctionInstruction: secondaryCorrectionInstruction,
           repairCandidate: secondaryRepairCandidate,
@@ -723,14 +883,18 @@ class MessagePipeline {
 
         try {
           const additionalResponse = await secondaryPromise;
+          assertTurnCurrent();
           if (additionalResponse) {
             applySecondaryResponse(additionalResponse);
+            receiptVariablesStatus = 'success';
             secondarySuccess = true;
           } else {
             secondaryDegraded = true;
+            receiptVariablesStatus = 'skipped';
             secondarySuccess = true; // Disabled or missing config
           }
         } catch (err) {
+          assertTurnCurrent();
           console.warn('[Pipeline] Background variable updater failed:', err?.message);
           // A later repair attempt may regress only the daily contract. Keep the
           // latest already-validated edition until a newer valid one replaces it.
@@ -754,6 +918,7 @@ class MessagePipeline {
             recovery: candidateRecovery,
             failedOutput: err?.failedOutput || ''
           });
+          assertTurnCurrent();
           if (decision.action === 'regenerate') {
             secondaryCorrectionInstruction = '';
             secondaryRepairCandidate = '';
@@ -776,14 +941,18 @@ class MessagePipeline {
             const recoveryNote = `【二次变量降级】已按你的选择安全保留 ${keptCount} 项可执行更新，丢弃 ${droppedCount} 项无效标签。`;
             try {
               applySecondaryResponse(candidateRecovery.output, recoveryNote);
+              receiptVariablesStatus = 'partial';
               if (err?.shinobiDaily) shinobiDaily = err.shinobiDaily;
               eventBus.emit('pipeline:warning', { warning: recoveryNote });
               console.warn('[Pipeline] Secondary updater safe subset applied:', recoveryNote);
             } catch (recoveryError) {
+              assertTurnCurrent();
+              receiptVariablesStatus = 'skipped';
               console.warn('[Pipeline] Secondary updater recovery rejected:', recoveryError?.message);
               eventBus.emit('pipeline:warning', { warning: `二次变量降级恢复失败，已跳过：${recoveryError?.message || '未知错误'}` });
             }
           } else if (decision.action === 'skip') {
+            receiptVariablesStatus = 'skipped';
             secondaryDegraded = true;
             if (err?.shinobiDaily) shinobiDaily = err.shinobiDaily;
             eventBus.emit('pipeline:warning', { warning: '已跳过本回合二次变量更新，正文将正常提交。' });
@@ -792,8 +961,9 @@ class MessagePipeline {
         }
       }
 
+      assertTurnCurrent();
       if (this._cancelled) {
-        turnCommit.rollback();
+        rollbackTurn();
         this.isProcessing = false;
         eventBus.emit('pipeline:cancelled', { partialResponse: '' });
         return { cancelled: true, partialResponse: '' };
@@ -801,9 +971,20 @@ class MessagePipeline {
 
       // 二次模型超时/跳过时，用本地兜底记忆
       if (shouldRunSecondary && !memoryRecorded) {
-        this._rememberRecentTurn(userInput, displayResponse);
+        this._rememberRecentTurn(userInput, factualResponse);
         memoryRecorded = true;
       }
+      if (tacticalPlan && this.memorySystem) {
+        const facts = (tacticalPlan.events || []).map(event => String(event.message || '').trim()).filter(Boolean).slice(0, 16);
+        if (facts.length) {
+          this.memorySystem.apply({ facts: facts.map(fact => `战斗第 ${tacticalPlan.nextCombat?.turn || 1} 回合：${fact}`) },
+            { source: 'tactical-combat', userInput, aiResponse: factualResponse });
+          memoryRecorded = true;
+        }
+      }
+      receiptStages.finish('variables', receiptVariablesStatus);
+      receiptMemoryStatus = !this.memorySystem ? 'skipped' : memoryRecorded ? 'success' : 'unknown';
+      receiptDaily = shinobiDaily;
 
       if (agentAudit) {
         const commitAudit = this._buildAgentCommitAudit({
@@ -822,7 +1003,7 @@ class MessagePipeline {
         stateManager.setSub('_agent_last_audit', commitAudit);
         eventBus.emit('agent:commit-audit', commitAudit);
         if (!commitAudit.valid) {
-          turnCommit.rollback();
+          rollbackTurn();
           const auditError = new Error(`Agent 提交前系统审计失败：${commitAudit.errors.join('；')}`);
           auditError.code = 'AGENT_TURN_SYSTEM_AUDIT_FAILED';
           auditError.details = commitAudit;
@@ -836,16 +1017,19 @@ class MessagePipeline {
         { key: '系统·回合数', op: '=', value: currentTurn }
       ]);
       let timelineNode = null;
-      if (this.timelineSystem) {
+      if (typeof this.timelineSystem?.createNode === 'function') {
+        receiptStages.start('save');
+        receiptSaveStatus = 'pending';
         try {
           const continuityDelta = buildContinuityDelta({
             beforeState: turnCommit.stateSnapshot,
             afterState: stateManager.snapshot(),
-            displayText: displayResponse,
+            displayText: factualResponse,
             memorySummary: finalMemorySummary,
             turn: currentTurn,
             evidenceRefs: acceptedArtifact.evidenceRefs
           });
+          turnReceipt = makeReceipt({ status: 'success' }, { saving: true });
           timelineNode = await this.timelineSystem.createNode({
             turnNumber: currentTurn,
             playerInput: userInput,
@@ -856,14 +1040,24 @@ class MessagePipeline {
             memorySummary: finalMemorySummary,
             imageContract,
             shinobiDaily,
-            continuityDelta
-          });
+            continuityDelta,
+            turnReceipt
+          }, { validateCurrent: assertTurnCurrent });
+          assertTurnCurrent();
           turnCommit.commit();
+          receiptSaveStatus = timelineNode?.id ? 'success' : 'unknown';
+          receiptStages.finish('save', receiptSaveStatus);
+          // Older/custom timeline adapters may save the node but omit receipts.
+          // Their missing receipt is an unknown result, never invented history.
+          turnReceipt = makeReceipt({ status: normalizeTurnReceipt(timelineNode?.turn_receipt) ? receiptSaveStatus : 'unknown' });
           this._lastTimelineError = null;
         } catch (timelineErr) {
+          assertTurnCurrent();
+          receiptSaveStatus = 'failed';
+          receiptStages.finish('save', 'failed');
           console.error('[Pipeline] Timeline node creation failed:', timelineErr.message);
           this._lastTimelineError = timelineErr.message;
-          turnCommit.rollback();
+          rollbackTurn();
           const commitError = new Error(`回合未提交，状态与记忆已回滚：${timelineErr.message}`);
           commitError.code = 'TURN_COMMIT_FAILED';
           commitError.cause = timelineErr;
@@ -872,6 +1066,7 @@ class MessagePipeline {
       } else {
         // 无时间线的兼容模式以运行态写入作为提交边界。
         turnCommit.commit();
+        turnReceipt = makeReceipt({ status: 'skipped' });
       }
 
       // AI 记忆任务全部是显式可选功能。严格单调用时只保留本地压缩/投影，绝不发后台请求。
@@ -936,6 +1131,13 @@ class MessagePipeline {
         });
       }
 
+      if (tacticalNotification) {
+        if (tacticalNotification.started) eventBus.emit('combat:started', { enemy_name: tacticalNotification.combat.enemy_name, combat: tacticalNotification.combat });
+        if (tacticalNotification.ended) eventBus.emit('combat:ended', { result: tacticalNotification.combat.result, combat: tacticalNotification.combat });
+        eventBus.emit('combat:phase', { phase: 'settled', message: '本回合已结算并保存' });
+        this._retryTacticalSelection = null;
+      }
+
       const thinkContent = this._buildTurnVerificationSummary({
         mainReasoning: currentTurnThinkContent,
         variableReasoning: secondaryThinkContent,
@@ -954,22 +1156,43 @@ class MessagePipeline {
         turnCount: currentTurn,
         timelineError: this._lastTimelineError || null,
         timelineNodeId: timelineNode?.id || null,
-        shinobiDaily
+        shinobiDaily,
+        turnReceipt
       });
 
       this.isProcessing = false;
-      return { cleanResponse, rawResponse: fullResponse, hasHUD, instructions, shinobiDaily, timelineNodeId: timelineNode?.id || null };
+      return { cleanResponse, rawResponse: fullResponse, hasHUD, instructions, shinobiDaily, timelineNodeId: timelineNode?.id || null, turnReceipt };
 
     } catch (error) {
       this.isProcessing = false;
 
+      if (!isTurnCurrent()) {
+        turnCommit?.abandon();
+        this._retryTacticalSelection = null;
+        const result = { cancelled: true, contextChanged: true, partialResponse: '' };
+        eventBus.emit('pipeline:cancelled', result);
+        return result;
+      }
+
       if (turnCommit?.isActive) {
         try {
-          turnCommit.rollback();
+          rollbackTurn();
         } catch (rollbackError) {
           console.error('[Pipeline] Turn rollback failed:', rollbackError);
         }
       }
+      for (const stage of receiptStages.snapshot()) {
+        if (stage.status === 'pending') receiptStages.finish(stage.key, 'failed');
+      }
+      if (turnCommit?.status === 'rolled_back') {
+        receiptVariablesStatus = 'failed';
+        receiptMemoryStatus = 'failed';
+        receiptStages.finish('variables', 'failed');
+      }
+      turnReceipt = makeReceipt({
+        status: receiptSaveStatus === 'failed' ? 'failed' : 'skipped',
+        reasonCode: error?.cause?.name === 'QuotaExceededError' ? 'quota' : 'write_failed'
+      });
 
       if (this._cancelled) {
         const hideDraft = isNarrativeReviewEnabled(stateManager.getAPIConfig?.() || {});
@@ -1022,7 +1245,7 @@ class MessagePipeline {
       const hasPartialContent = partial && partial.trim().length > 50;
       if (hasPartialContent) {
         this._lastStreamedContent = partial;
-        this._displayPartialResponse(partial);
+        this._displayPartialResponse(partial, turnReceipt);
       }
 
       eventBus.emit('pipeline:error', {
@@ -1032,10 +1255,11 @@ class MessagePipeline {
           ? { ...error.details, importedPresetDiagnostic }
           : { importedPresetDiagnostic },
         missingContracts: error?.missingContracts || [],
-        draftResponse: error?.draftResponse || '',
+        draftResponse: error?.draftResponse || (receiptSaveStatus === 'failed' ? receiptDraftResponse : ''),
         isTruncated,
         partialResponse: partial,
-        lastUserInput: this._lastUserInput
+        lastUserInput: this._lastUserInput,
+        turnReceipt
       });
 
       if (hasPartialContent && isTruncated) return { partialResponse: partial };
@@ -1046,10 +1270,13 @@ class MessagePipeline {
       if (error?.details) surfacedError.details = error.details;
       if (error?.missingContracts) surfacedError.missingContracts = error.missingContracts;
       throw surfacedError;
+    } finally {
+      if (this._invalidateActiveTurn === invalidateTurn) this._invalidateActiveTurn = null;
+      this._activeTacticalPlan = null;
     }
   }
 
-  _displayPartialResponse(partial) {
+  _displayPartialResponse(partial, turnReceipt = null) {
     const projectedPartial = this._lastImportedPresetProfile?.active
       ? attachImportedAssistantPrefill(partial, this._lastAssistantPrefill)
       : partial;
@@ -1072,7 +1299,8 @@ class MessagePipeline {
       instructions,
       turnCount: stateManager.get('系统·回合数') || 1,
       isPartial: true,
-      timelineNodeId: null
+      timelineNodeId: null,
+      turnReceipt
     });
   }
 
@@ -1087,7 +1315,7 @@ class MessagePipeline {
     const currentState = useLatestRuntimeState
       ? (stateManager.get() || state || {})
       : (state || stateManager.get() || {});
-    const query = [userInput, narrativeResponse].map(value => String(value || '').trim()).filter(Boolean).join('\n\n');
+    const query = [userInput, projectNarrativeForMemory(narrativeResponse)].map(value => String(value || '').trim()).filter(Boolean).join('\n\n');
     const packet = this._turnEvidenceCompiler.compile({
       state: currentState,
       userInput: query,
@@ -1103,6 +1331,7 @@ class MessagePipeline {
     userInput, enrichedInput, state, narrativeResponse, updateObligations = null,
     correctionInstruction = '', repairCandidate = '', repairContext = null, forceEnabled = false
   }) {
+    narrativeResponse = projectNarrativeForMemory(narrativeResponse);
     const currentState = stateManager.get() || state || {};
     const updaterEvidence = this._compileUpdaterEvidence({
       state: currentState,
@@ -1141,7 +1370,8 @@ class MessagePipeline {
       compactState: updaterEvidence.current_state,
       openingContract: updaterEvidence.opening_contract,
       memoryContext: '',
-      knowledgeContext: evidenceContext,
+      knowledgeContext: [evidenceContext, tacticalCombatEnabled(currentState) ? TACTICAL_ENCOUNTER_REGISTRATION_GUIDANCE : '', this._activeTacticalPlan?.prompt,
+        this._activeTacticalPlan ? '战斗资源、物品消耗、伤害和胜负已经按上述判定写入当前状态，无需再次输出战斗标签或对应变量。请记录已经发生的事实及其余任务、关系和记忆变化。' : ''].filter(Boolean).join('\n\n'),
       updateObligations: updaterEvidence.update_obligations || updateObligations,
       correctionInstruction,
       repairCandidate,
@@ -1226,7 +1456,8 @@ class MessagePipeline {
     return view;
   }
 
-  async _resolveNarrativeReview({ mainConfig, state, userInput, candidateArtifact, agentAudit = null }) {
+  async _resolveNarrativeReview({ mainConfig, state, userInput, candidateArtifact, agentAudit = null, validateCurrent = null }) {
+    validateCurrent?.();
     const reviewerEvidence = this.getTurnEvidenceView('reviewer', { state, userInput });
     const sourceMessages = [
       {
@@ -1252,6 +1483,7 @@ class MessagePipeline {
     const transactionId = `turn-review:${state?._meta?.current_node_id || 'root'}:${state?.['系统·回合数'] || 0}`;
 
     while (!this._cancelled) {
+      validateCurrent?.();
       transaction = await runNarrativeReviewPreview({
         transaction,
         transactionId,
@@ -1261,11 +1493,13 @@ class MessagePipeline {
         candidateArtifact,
         onClient: client => { this._reviewClient = client; }
       });
+      validateCurrent?.();
       if (this._cancelled) return candidateArtifact;
 
       const previewView = toNarrativeReviewPreviewView(transaction);
       eventBus.emit('pipeline:review-preview-ready', previewView);
       const decision = await eventBus.request('pipeline:review-decision', previewView);
+      validateCurrent?.();
       const action = decision?.action;
       if (action === 'retry') {
         feedback = String(decision?.feedback || '').trim();
@@ -1302,6 +1536,7 @@ class MessagePipeline {
   }
 
   _applyInstructions(instructions, silent = false) {
+    if (this._activeTacticalPlan) instructions = filterTacticalInstructions(instructions, this._activeTacticalPlan);
     const flatVars = [];
     const pathVars = [];
     const combats = [];
@@ -1309,6 +1544,7 @@ class MessagePipeline {
     const relationships = [];
     const events = [];
     const entityRemovals = [];
+    const orderedVars = [];
 
     const seenHashes = new Set();
     const equipmentTypeByChinese = {
@@ -1324,7 +1560,9 @@ class MessagePipeline {
       const hash = `r:${path}|${normalizedKey}`;
       if (!seenHashes.has(hash)) {
         seenHashes.add(hash);
-        entityRemovals.push({ path, op: 'remove', key: normalizedKey });
+        const removal = { path, op: 'remove', key: normalizedKey };
+        entityRemovals.push(removal);
+        orderedVars.push(removal);
       }
       return true;
     };
@@ -1388,18 +1626,8 @@ class MessagePipeline {
         }
         replaceCustomTalentPlaceholder(obj.key);
 
-        const flatQuantityMatch = obj.key.match(/^物品·(武器|防具|道具|消耗品)·(.+)·数量$/);
-        if (flatQuantityMatch) {
-          const category = equipmentTypeByChinese[flatQuantityMatch[1]];
-          const itemName = flatQuantityMatch[2];
-          if (shouldRemoveDepletedItem(category, itemName, obj.op, obj.value)) {
-            queueEntityRemoval(`equipment.${category}`, itemName);
-            return;
-          }
-        }
-
         const hash = 'k:' + obj.key + '|' + obj.op + '|' + JSON.stringify(obj.value);
-        if (!seenHashes.has(hash)) { seenHashes.add(hash); flatVars.push(obj); }
+        if (!seenHashes.has(hash)) { seenHashes.add(hash); flatVars.push(obj); orderedVars.push(obj); }
         return;
       }
 
@@ -1453,18 +1681,11 @@ class MessagePipeline {
           return;
         }
 
-        const pathQuantityMatch = obj.path.match(/^equipment\.(weapons|armor|tools|consumables)\.(.+)\.quantity$/);
-        if (pathQuantityMatch && shouldRemoveDepletedItem(
-          pathQuantityMatch[1], pathQuantityMatch[2], obj.op, obj.value
-        )) {
-          queueEntityRemoval(`equipment.${pathQuantityMatch[1]}`, pathQuantityMatch[2]);
-          return;
-        }
-
         const hash = 'p:' + obj.path + '|' + obj.op + '|' + JSON.stringify(obj.key) + '|' + JSON.stringify(obj.value);
         if (!seenHashes.has(hash)) {
           seenHashes.add(hash);
           pathVars.push(obj);
+          orderedVars.push(obj);
         }
         return;
       }
@@ -1514,7 +1735,7 @@ class MessagePipeline {
       else routeObject(list, kind);
     }
 
-    this._canonicalizeNewPlayerSkillWrites(flatVars, pathVars);
+    this._canonicalizeNewPlayerSkillWrites(flatVars, pathVars, orderedVars);
 
     const hasAuthoritativePlayerAction = combats.some(combat => (
       combat.state === 'player_turn'
@@ -1545,19 +1766,47 @@ class MessagePipeline {
       }
     }
 
-    if (flatVars.length) stateManager.update(flatVars);
-    if (pathVars.length) stateManager.batchUpdate(pathVars);
-    for (const removal of entityRemovals) {
+    const removeEntity = removal => {
       const skillMatch = removal.path.match(/^skills\.(jutsu|taijutsu|genjutsu|support|talents|kekkei_genkai)$/);
       if (skillMatch) {
         skillSystem.forgetSkill(skillMatch[1], removal.key);
-        continue;
+        return;
       }
       const equipmentMatch = removal.path.match(/^equipment\.(weapons|armor|tools|consumables)$/);
       if (equipmentMatch) {
         equipmentSystem.removeItem(equipmentMatch[1], removal.key, Number.MAX_SAFE_INTEGER);
       }
+    };
+    const acceptedVars = new Set([...flatVars, ...pathVars]);
+    const removals = new Set(entityRemovals);
+    let pendingVars = [];
+    const flush = () => {
+      if (pendingVars.length) stateManager.batchUpdate(pendingVars);
+      pendingVars = [];
+    };
+    // Quantity checks must see earlier operations in this batch. Entity removal
+    // is an ordered operation too: removing then recreating an item is valid.
+    for (const update of orderedVars) {
+      if (removals.has(update)) {
+        flush();
+        removeEntity(update);
+        continue;
+      }
+      if (!acceptedVars.has(update)) continue;
+      const flatQuantity = String(update.key || '').match(/^物品·(武器|防具|道具|消耗品)·(.+)·数量$/);
+      const pathQuantity = String(update.path || '').match(/^equipment\.(weapons|armor|tools|consumables)\.(.+)\.quantity$/);
+      const category = flatQuantity ? equipmentTypeByChinese[flatQuantity[1]] : pathQuantity?.[1];
+      const name = flatQuantity?.[2] || pathQuantity?.[2];
+      if (category && name) {
+        flush();
+        if (shouldRemoveDepletedItem(category, name, update.op, update.value)) {
+          removeEntity({ path: `equipment.${category}`, key: name });
+          continue;
+        }
+      }
+      pendingVars.push(update);
     }
+    flush();
 
     if (relationships.length && typeof this.relationshipSystem?.processInstructions === 'function') {
       this.relationshipSystem.processInstructions(relationships);
@@ -1575,7 +1824,7 @@ class MessagePipeline {
     return instructions;
   }
 
-  _canonicalizeNewPlayerSkillWrites(flatVars, pathVars) {
+  _canonicalizeNewPlayerSkillWrites(flatVars, pathVars, orderedVars = []) {
     const groups = new Map();
     const addUpdate = (update, collection, parsed) => {
       if (!parsed || !parsed.name) return;
@@ -1646,9 +1895,12 @@ class MessagePipeline {
         }
       }
       for (const ref of group.refs) removals.add(ref.update);
-      additions.set(skill.type + '|' + normalizePlayerSkillName(skill.name), {
-        path: 'skills.' + skill.type + '.' + skill.name, op: 'set', value: skill
-      });
+      const replacement = { path: 'skills.' + skill.type + '.' + skill.name, op: 'set', value: skill };
+      const key = skill.type + '|' + normalizePlayerSkillName(skill.name);
+      const priorReplacement = additions.get(key);
+      const index = orderedVars.findIndex(update => update === priorReplacement || group.refs.some(ref => ref.update === update));
+      if (index >= 0) orderedVars.splice(index, 0, replacement);
+      additions.set(key, replacement);
     }
 
     for (let index = flatVars.length - 1; index >= 0; index--) if (removals.has(flatVars[index])) flatVars.splice(index, 1);
@@ -1790,6 +2042,7 @@ class MessagePipeline {
       includeOperationalIds: !updaterEnabled
     });
     const writerEvidenceText = renderEvidenceView(writerEvidence, { stage: 'main-writer' });
+    const dynamicMemory = this._buildMemoryContext(state._memory, userInput);
     this._lastTurnEvidencePacket = evidencePacket;
     this._lastTurnEvidenceViews = { writer: writerEvidence };
     const openingContract = resolveOpeningContract(state);
@@ -1858,7 +2111,7 @@ class MessagePipeline {
       const depth = historyLength - index;
       const projected = placement === null
         ? String(message?.content || '')
-        : projectPromptCopy(message?.content, placement, depth);
+        : projectPromptCopy(role === 'assistant' ? projectNarrativeForMemory(message?.content) : message?.content, placement, depth);
       return {
         message: { ...message, content: projected },
         source: '对话历史',
@@ -1877,8 +2130,13 @@ class MessagePipeline {
     const assembledConversation = injectPresetDepthMessages(conversation, depthPresetMessages);
     for (const row of assembledConversation) {
       if (row.currentUser) {
-        appendMessage({ role: 'system', content: writerEvidenceText }, '统一回合证据', 'writer 投影');
+        appendMessage(markTurnContext({ role: 'system', content: writerEvidenceText }), '统一回合证据', 'writer 投影');
         injections.push({ name: '统一回合证据 · writer', content: writerEvidenceText });
+        if (dynamicMemory) {
+          appendMessage(markTurnContext({ role: 'system', content: dynamicMemory }), '动态记忆', '当前分支与相关历史');
+          injections.push({ name: '动态记忆', content: dynamicMemory });
+        }
+        appendMessage({ role: 'system', content: FACTUAL_MEMORY_GUIDANCE }, '记忆事实指引', '选项与结果的区别');
       }
       appendMessage(row.message, row.source || '主预设 Depth', row.label || '深度注入');
     }
@@ -1908,6 +2166,7 @@ class MessagePipeline {
     if (compatibilityProfile?.active) {
       const modePrompt = buildImportedPresetModePrompt({
         updaterEnabled,
+        tacticalCombat: tacticalCombatEnabled(state),
         profile: compatibilityProfile
       });
       appendMessage(
@@ -1920,8 +2179,8 @@ class MessagePipeline {
 
     if (!updaterEnabled) {
       const outputPrompt = compatibilityProfile?.active
-        ? generateMainVarInstructions(false)
-        : MAIN_SINGLE_CALL_OUTPUT_PROMPT;
+        ? generateMainVarInstructions(false, { tacticalCombat: tacticalCombatEnabled(state) })
+        : projectSystemCombatPrompt(MAIN_SINGLE_CALL_OUTPUT_PROMPT, { tacticalCombat: tacticalCombatEnabled(state) });
       appendMessage({ role: 'system', content: outputPrompt }, '单次主模型记账', '固定完整性契约');
       injections.push({ name: '单次主模型结构化记账确认', content: outputPrompt });
       const noChangeExample = compatibilityProfile?.active
@@ -2010,7 +2269,8 @@ class MessagePipeline {
         charName: state['玩家·姓名'] || '',
         lastUserMessage: userInput,
         lastChatMessage,
-        variableUpdaterEnabled: updaterEnabled
+        variableUpdaterEnabled: updaterEnabled,
+        tacticalCombat: tacticalCombatEnabled(state)
       };
 
       const explicitPrefillMarker = Symbol('importedAssistantPrefill');
@@ -2186,7 +2446,7 @@ class MessagePipeline {
     const rels = state._relationships || {};
     const eventsStr = state['世界·活跃事件'] || '';
     const events = eventsStr ? eventsStr.split('\n').filter(Boolean) : [];
-    const isCombat = !!combat?.is_active;
+    const isCombat = tacticalCombatEnabled(state) && !!combat?.is_active;
 
     const parts = [];
 
@@ -2267,11 +2527,14 @@ ${isCombat ? `【战斗中】对手: ${combat.enemy_name} | 忍阶/战力: ${com
   }
 
   _currentKonohaYear(state) {
+    const memory = state._memory?.corrections?.length
+      ? projectCorrectedMemory(state._memory, state._continuity)
+      : state._memory;
     const values = [
       state['世界·时间'],
       state['世界·年代'],
-      state._memory?.recent_summary,
-      state._memory?.compressed_summary
+      memory?.recent_summary,
+      memory?.compressed_summary
     ];
     for (const value of values) {
       const year = this._extractKonohaYear(value);
@@ -2457,11 +2720,24 @@ ${isCombat ? `【战斗中】对手: ${combat.enemy_name} | 忍阶/战力: ${com
 
   async _checkPinnedNpcSummaries(apiCfg) {
     const rels = stateManager.getSub('_relationships') || {};
+    const restoreEpoch = this._stateRestoreEpoch;
+    const readBoundary = () => {
+      const state = stateManager.get();
+      return {
+        nodeId: state._meta?.current_node_id || 'uncommitted-root',
+        branchId: state._meta?.active_branch || 'branch_main',
+        ledger: state._continuity
+      };
+    };
+    const token = createContinuityCasToken(readBoundary());
+    const isCurrent = () => restoreEpoch === this._stateRestoreEpoch && isContinuityCasCurrent(token, readBoundary());
+    const captureNpc = name => JSON.stringify(stateManager.getSub('_relationships')?.[name] || null);
     const cfg = getMemoryConfig();
     const freq = cfg.npcSummaryFrequency || 10;
     let legacyRepairAttempted = false;
 
     for (const [npcName, rel] of Object.entries(rels)) {
+      if (!isCurrent()) return;
       if (!rel.pinned) continue;
       const counter = Number(rel.summary_turn_counter) || 0;
       const existingSummaries = Array.isArray(rel.summaries) ? rel.summaries : [];
@@ -2501,11 +2777,14 @@ ${historyText}
         // 旧存档中已经截断的摘要，只有还能对应到原始互动记录时才允许重建。
         if (repairCandidate) {
           legacyRepairAttempted = true;
+          const npcRevision = captureNpc(npcName);
           const repairResult = await requestCompleteNpcSummary(
             client,
             [{ role: 'user', content: buildStagePrompt(repairCandidate.historyEntries) }],
             NPC_SUMMARY_POLICIES.stage
           );
+          if (!isCurrent()) return;
+          if (captureNpc(npcName) !== npcRevision) continue;
           if (repairResult.text) {
             const allRels = stateManager.getSub('_relationships') || {};
             const currentRel = allRels[npcName];
@@ -2531,11 +2810,14 @@ ${historyText}
             : [];
           if (historyEntries.length) {
             console.log(`[Pipeline] Summarizing pinned NPC: ${npcName} (${latestCounter} interactions)`);
+            const npcRevision = captureNpc(npcName);
             const stageResult = await requestCompleteNpcSummary(
               client,
               [{ role: 'user', content: buildStagePrompt(historyEntries) }],
               NPC_SUMMARY_POLICIES.stage
             );
+            if (!isCurrent()) return;
+            if (captureNpc(npcName) !== npcRevision) continue;
 
             if (stageResult.text) {
               const summaryEntry = {
@@ -2583,11 +2865,14 @@ ${previousGrandSummary ? `此前的关系编年史: ${previousGrandSummary}\n请
 
 请直接输出完整的编年史内容，不要添加标签或前缀，并以完整句子结束。`;
 
+          const npcRevision = captureNpc(npcName);
           const grandResult = await requestCompleteNpcSummary(
             client,
             [{ role: 'user', content: grandPrompt }],
             NPC_SUMMARY_POLICIES.grand
           );
+          if (!isCurrent()) return;
+          if (captureNpc(npcName) !== npcRevision) continue;
           if (grandResult.text) {
             const allRels = stateManager.getSub('_relationships') || {};
             const currentRel = allRels[npcName];
@@ -2779,7 +3064,7 @@ ${previousGrandSummary ? `此前的关系编年史: ${previousGrandSummary}\n请
 
   _buildMemoryContext(memory, userInput = '') {
     if (this.memorySystem) {
-      const ctx = this.memorySystem.buildPromptContext(memory, { userInput });
+      const ctx = projectNarrativeForMemory(this.memorySystem.buildPromptContext(memory, { userInput }));
       if (!ctx) return '';
       if (!getMemoryConfig().recallEnabled) return ctx;
       return ctx + '\n\n[记忆协议] 当你需要剧情中已提及但你当前不掌握的信息时，在回复末尾输出 <recall entities="实体名1,实体名2"/>。系统中永久保留的历史记录将以检索词触达。';

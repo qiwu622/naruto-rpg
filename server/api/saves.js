@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 
 import { config } from '../config.js';
 import * as db from '../db/index.js';
+import { SaveRevisionConflict } from '../db/save-repository.js';
 import { requireAuth } from '../middleware/auth.js';
 import { asyncRoute } from '../middleware/async-route.js';
 import { inspectTimelineSave } from '../../js/core/timeline-save-schema.js';
@@ -25,6 +26,15 @@ const router = Router();
 const MiB = 1024 * 1024;
 
 router.use(requireAuth);
+router.use((req, res, next) => {
+  // A cookie can change while compression or a retry is waiting in the browser.
+  const expectedUser = req.get('X-Cloud-User-Id');
+  if (expectedUser && expectedUser !== req.user.id) {
+    req.resume();
+    return res.status(409).json({ error: '登录账号已改变，请在当前账号重新选择存档', code: 'CLOUD_ACCOUNT_CHANGED' });
+  }
+  next();
+});
 router.use(saveMutationAdmission);
 router.use(json({
   limit: `${config.saves.legacyMaxSizeMb}mb`,
@@ -65,7 +75,10 @@ function safelyInspectTimelineSave(saveData) {
 }
 
 function normalizeMetadata(metadata, { requireSlotName }) {
-  const { slot_name, preview_data } = metadata;
+  const { slot_name, preview_data, expected_revision } = metadata;
+  if (expected_revision !== undefined && (!Number.isSafeInteger(expected_revision) || expected_revision < 0)) {
+    throw new SaveUploadError('INVALID_SAVE_REVISION', '存档版本无效，请刷新后重试', 400);
+  }
   if ((requireSlotName || slot_name !== undefined)
       && (typeof slot_name !== 'string' || !slot_name.trim())) {
     throw new SaveUploadError('INVALID_SLOT_NAME', '存档名称必须为非空字符串', 400);
@@ -74,12 +87,13 @@ function normalizeMetadata(metadata, { requireSlotName }) {
   if (previewError) throw new SaveUploadError('INVALID_PREVIEW_DATA', previewError, 400);
   return {
     slot_name: slot_name === undefined ? undefined : slot_name.trim().substring(0, 50),
-    preview_data
+    preview_data,
+    expected_revision
   };
 }
 
 function sendUploadError(res, error) {
-  if (!(error instanceof SaveUploadError)) return false;
+  if (!(error instanceof SaveUploadError) && !(error instanceof SaveRevisionConflict)) return false;
   if (error.status === 429 || error.status === 503) res.setHeader('Retry-After', '5');
   res.status(error.status).json({
     error: error.message,
@@ -126,6 +140,7 @@ router.get('/capabilities', (_req, res) => {
   res.json({
     preferred_upload_protocol: 'gzip-multipart-v1',
     upload_protocols: ['gzip-multipart-v1', 'legacy-json-v1'],
+    revision_conflicts: true,
     limits: {
       max_uncompressed_bytes: config.saves.maxSizeMb * MiB,
       max_compressed_bytes: config.saves.maxCompressedSizeMb * MiB,
@@ -193,6 +208,7 @@ router.get('/:id/content', asyncRoute(async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${id}.json.gz"`);
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('X-Save-Revision', String(save.revision));
     if (save.content_sha256) res.setHeader('ETag', `"sha256-${save.content_sha256}"`);
     await pipeline(fs.createReadStream(save.file_path), res);
   } catch (error) {
@@ -232,7 +248,8 @@ router.get('/:id', asyncRoute(async (req, res) => {
       preview_data: save.preview_data,
       save_data: saveData,
       created_at: save.created_at,
-      updated_at: save.updated_at
+      updated_at: save.updated_at,
+      revision: save.revision
     });
   } catch (error) {
     console.error('[API SAVES] Legacy download error:', error);
@@ -322,7 +339,7 @@ async function createLegacySave(req, res) {
       content_sha256: createHash('sha256').update(jsonString).digest('hex')
     }, config.saves.maxSlots);
     if (!inserted) return rejectFullSlot(req, res);
-    res.status(201).json({ id: saveId, slot_name: slot_name.trim().substring(0, 50), message: '存档成功保存至云端' });
+    res.status(201).json({ id: saveId, slot_name: slot_name.trim().substring(0, 50), revision: 1, message: '存档成功保存至云端' });
   } catch (error) {
     console.error('[API SAVES] Legacy create error:', error);
     res.status(500).json({ error: '保存存档到云端失败', code: 'SAVE_CREATE_FAILED' });
@@ -336,7 +353,7 @@ router.post('/', asyncRoute(async (req, res) => {
   return res.status(415).json({ error: '仅支持 multipart/form-data 或 application/json', code: 'UNSUPPORTED_SAVE_MEDIA_TYPE' });
 }));
 
-async function updateMultipartSave(req, res, id, existing) {
+async function updateMultipartSave(req, res, id) {
   let upload;
   try {
     upload = await receiveMultipartSave(req);
@@ -348,11 +365,11 @@ async function updateMultipartSave(req, res, id, existing) {
       source_path: upload.tempPath,
       size_bytes: validation.sizeBytes,
       compressed_size_bytes: upload.compressedBytes,
-      content_sha256: validation.contentSha256
+      content_sha256: validation.contentSha256,
+      expected_revision: metadata.expected_revision
     });
     if (!updated) return res.status(404).json({ error: '未找到指定存档', code: 'SAVE_NOT_FOUND' });
-    const revision = (Number.isInteger(existing.revision) ? existing.revision : 0) + 1;
-    res.json({ id, revision, message: '云存档已成功覆盖更新' });
+    res.json({ id, revision: updated.revision, message: '云存档已成功覆盖更新' });
   } catch (error) {
     if (!req.readableEnded && !req.destroyed) req.resume();
     await removeUploadTemp(upload?.tempPath);
@@ -366,7 +383,10 @@ async function updateMultipartSave(req, res, id, existing) {
 }
 
 async function updateLegacySave(req, res, id) {
-  const { slot_name, save_data, preview_data } = req.body || {};
+  const { slot_name, save_data, preview_data, expected_revision } = req.body || {};
+  if (expected_revision !== undefined && (!Number.isSafeInteger(expected_revision) || expected_revision < 0)) {
+    return res.status(400).json({ error: '存档版本无效，请刷新后重试', code: 'INVALID_SAVE_REVISION' });
+  }
   if (slot_name !== undefined && (typeof slot_name !== 'string' || !slot_name.trim())) {
     return res.status(400).json({ error: '存档名称必须为非空字符串', code: 'INVALID_SLOT_NAME' });
   }
@@ -384,7 +404,7 @@ async function updateLegacySave(req, res, id) {
   }
 
   try {
-    const updates = {};
+    const updates = { expected_revision };
     if (slot_name !== undefined) updates.slot_name = slot_name.trim().substring(0, 50);
     if (preview_data !== undefined) updates.preview_data = preview_data;
     if (save_data !== undefined) {
@@ -400,9 +420,11 @@ async function updateLegacySave(req, res, id) {
       updates.size_bytes = sizeBytes;
       updates.content_sha256 = createHash('sha256').update(jsonString).digest('hex');
     }
-    await db.updateSave(id, updates);
-    res.json({ id, message: '云存档已成功覆盖更新' });
+    const updated = await db.updateSave(id, updates);
+    if (!updated) return res.status(404).json({ error: '未找到指定存档', code: 'SAVE_NOT_FOUND' });
+    res.json({ id, revision: updated.revision, message: '云存档已成功覆盖更新' });
   } catch (error) {
+    if (sendUploadError(res, error)) return;
     console.error('[API SAVES] Legacy update error:', error);
     res.status(500).json({ error: '更新云存档失败', code: 'SAVE_UPDATE_FAILED' });
   }
@@ -426,7 +448,7 @@ router.put('/:id', asyncRoute(async (req, res) => {
     req.resume();
     return res.status(403).json({ error: '无权操作此存档', code: 'SAVE_FORBIDDEN' });
   }
-  if (isMultipartRequest(req)) return updateMultipartSave(req, res, id, existing);
+  if (isMultipartRequest(req)) return updateMultipartSave(req, res, id);
   if (req.is('application/json') || req.is('application/*+json')) return updateLegacySave(req, res, id);
   req.resume();
   return res.status(415).json({ error: '仅支持 multipart/form-data 或 application/json', code: 'UNSUPPORTED_SAVE_MEDIA_TYPE' });

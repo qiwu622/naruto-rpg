@@ -6,7 +6,9 @@ import { createImageStore } from './storage.js';
 import { ImageWorldbookStore, mergeImageWorldbooks, renderImageWorldbookPrompts } from './worldbook.js';
 import { decryptApiKey, encryptApiKey } from '../../utils/api-crypto.js';
 import { stateManager } from '../state-manager.js';
-import { usesProjectServerFeatures } from '../runtime-platform.js';
+import { usesProjectServerFeatures, isNativeAndroidApp } from '../runtime-platform.js';
+import { authClient } from '../auth-client.js';
+import { cloudConnectionEnabled } from '../project-server.js';
 
 const TERMINAL_STATES = new Set(['succeeded', 'failed', 'cancelled', 'interrupted', 'blocked']);
 const ACTIVE_STATES = new Set(['queued', 'planning', 'generating', 'staging', 'uploading', 'binding']);
@@ -152,7 +154,7 @@ export class ImageStudio {
     this.worldbookStore = worldbookStore;
     this.adapters = adapterRegistry;
     this.cloud = cloudGallery;
-    this.cloudEnabled = usesProjectServerFeatures();
+    this._cloudEnabled = usesProjectServerFeatures();
     this.autoStart = autoStart;
     this.listeners = new Set();
     this.controllers = new Map();
@@ -165,6 +167,11 @@ export class ImageStudio {
     if (!this._readyPromise) this._readyPromise = this._initialize();
     return this._readyPromise;
   }
+
+  get cloudEnabled() {
+    return this._cloudEnabled && (!isNativeAndroidApp() || (cloudConnectionEnabled() && authClient.isAuthenticated() && !authClient.getCloudError()));
+  }
+  set cloudEnabled(value) { this._cloudEnabled = value; }
 
   async _initialize() {
     await this.store.ready();

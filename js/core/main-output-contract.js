@@ -235,7 +235,7 @@ function businessCoverage(blocks) {
   return coverage;
 }
 
-export function validateMainOutputContract({ artifact, dailyResult, playerName = '' } = {}) {
+export function validateMainOutputContract({ artifact, dailyResult, playerName = '', settledCombat = false } = {}) {
   const blocks = Array.isArray(artifact?.instructions) ? artifact.instructions : [];
   const errors = [];
   const missingContracts = [];
@@ -273,7 +273,7 @@ export function validateMainOutputContract({ artifact, dailyResult, playerName =
     missingContracts.push('business_update');
   }
 
-  if (stateUpdate?.changed === true && businessBlocks.length === 0) {
+  if (stateUpdate?.changed === true && businessBlocks.length === 0 && !settledCombat) {
     errors.push('<state_update> 声明 changed:true，但没有任何变量业务标签');
     missingContracts.push('business_update');
   }
@@ -282,13 +282,22 @@ export function validateMainOutputContract({ artifact, dailyResult, playerName =
     missingContracts.push(MAIN_STATE_UPDATE_TAG);
   }
   const narrativeSignals = detectNarrativeStateChangeSignals(artifact?.displayText, { playerName });
-  if (stateUpdate?.changed === false && narrativeSignals.length > 0) {
-    errors.push(`<state_update> 声明 changed:false，但正文已明确发生：${narrativeSignals.map(item => item.label).join('、')}`);
+  // The tactical engine already owns battle HP/CP/stamina/spirit and outcome.
+  // Do not require the writer to invent duplicate tags to prove those changes.
+  // Money, location, missions and relationships still need their usual evidence.
+  const unsettledSignals = settledCombat ? narrativeSignals.filter(signal => {
+    if (signal.id === 'health' || signal.id === 'combat') return false;
+    if (signal.id !== 'resources') return true;
+    const monetaryText = String(artifact?.displayText || '').replace(/查克拉|体力|精神力|生命力/gu, '');
+    return detectNarrativeStateChangeSignals(monetaryText, { playerName }).some(item => item.id === 'resources');
+  }) : narrativeSignals;
+  if (stateUpdate?.changed === false && unsettledSignals.length > 0) {
+    errors.push(`<state_update> 声明 changed:false，但正文已明确发生：${unsettledSignals.map(item => item.label).join('、')}`);
     missingContracts.push('business_update');
   }
-  if (stateUpdate?.changed === true && narrativeSignals.length > 0) {
+  if (stateUpdate?.changed === true && unsettledSignals.length > 0) {
     const coverage = businessCoverage(businessBlocks);
-    const uncoveredSignals = narrativeSignals.filter(signal => !coverage.has(signal.id));
+    const uncoveredSignals = unsettledSignals.filter(signal => !coverage.has(signal.id));
     if (uncoveredSignals.length > 0) {
       errors.push(`正文变化缺少对应变量业务标签：${uncoveredSignals.map(item => item.label).join('、')}`);
       missingContracts.push('business_update');

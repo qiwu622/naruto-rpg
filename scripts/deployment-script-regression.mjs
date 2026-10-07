@@ -69,11 +69,15 @@ if (process.platform !== 'win32') {
   }
   assert.match(run('bash',['deploy.sh','staging','--dry-run','--skip-build']),/DRY_RUN_OK=staging/);
   assert.match(run('bash',['deploy-v3.sh','--dry-run','--skip-build']),/DRY_RUN_OK=production/);
+  assert.match(run('bash',['deploy-wsl.sh','staging','--frontend-only','--dry-run','--skip-build']),/FRONTEND_ONLY=true/);
+  const invalidScope = spawnSync('bash',['deploy-wsl.sh','production','--frontend-only','--dry-run'],{cwd:root,encoding:'utf8'});
+  assert.notEqual(invalidScope.status,0);
+  assert.match(invalidScope.stdout + invalidScope.stderr,/--frontend-only 仅用于测试站/);
   const denied = spawnSync('bash',['deploy-wsl.sh','production','--skip-build'],{cwd:root,encoding:'utf8'});
   assert.notEqual(denied.status,0);
   assert.match(denied.stdout + denied.stderr,/--confirm-production/);
   const test = run('python3',['scripts/deployment-installer-regression.py']);
-  assert.match(test,/4 groups passed/);
+  assert.match(test,/9 groups passed/);
 } else {
   const powershell = path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe');
   for (const mode of ['staging','production']) assert.ok(run(powershell,['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','deploy.ps1','-Mode',mode,'-DryRun','-SkipBuild']).includes('DRY_RUN_OK='+mode));

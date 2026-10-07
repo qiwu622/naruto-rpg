@@ -34,5 +34,5 @@ export async function startCloudSaveTestServer({ staticFiles = false } = {}) {
   }
   const server = await new Promise(resolve => { const server = app.listen(0, '127.0.0.1', () => resolve(server)); });
   const url = `http://127.0.0.1:${server.address().port}`;
-  return { url, dataDir, db, tokens, async close() { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(dataDir, { recursive: true, force: true }); } };
+  return { app, url, dataDir, db, tokens, async close() { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(dataDir, { recursive: true, force: true }); } };
 }

@@ -176,7 +176,8 @@ export function bindCustomSelects(root) {
       // Calculate position so it doesn't overflow
       const rect = wrapper.getBoundingClientRect();
       const viewportHeight = window.innerHeight;
-      if (rect.bottom + 260 > viewportHeight) {
+      const dropdownHeight = Math.min(dropdown.scrollHeight + 2, 260);
+      if (rect.bottom + dropdownHeight + 4 > viewportHeight && rect.top >= dropdownHeight + 4) {
         dropdown.style.top = 'auto';
         dropdown.style.bottom = 'calc(100% + 4px)';
       } else {

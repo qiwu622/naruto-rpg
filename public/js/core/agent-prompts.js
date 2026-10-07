@@ -1,3 +1,9 @@
+import { projectSystemCombatPrompt } from '../data/combat-prompt-mode.js';
+
+export function getAgentPrompt(promptKey, { tacticalCombat = false } = {}) {
+  return projectSystemCombatPrompt(AGENT_PROMPTS[promptKey] || '', { tacticalCombat });
+}
+
 export const AGENT_PROMPTS = {
 
   BRAINSTORMER: `你是火影忍者TRPG的剧情头脑风暴器。

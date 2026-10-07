@@ -15,6 +15,7 @@ import { createOpeningDraft } from '/js/systems/opening-draft.js';
 import { multiplayerOpeningDraft } from '/js/multiplayer/opening-draft-bridge.js';
 import '/js/ui/character-creator.js';
 appShell.init(document.querySelector('main'));
+window.entryRequests = 0; eventBus.on('app:open-multiplayer', () => window.entryRequests++);
 window.created = 0; eventBus.on('character:created', () => window.created++);
 window.savedDraft = null;
 window.beforeSolo = JSON.stringify(stateManager.get());
@@ -30,6 +31,7 @@ const turn = { turn_id:'turn:one',epoch_id:'epoch:demo',turn_no:1,status:'COMMIT
 store.setTurn(turn);
 appShell.renderMultiplayerPublication(turn); appShell.setMultiplayerSessionState(store.state);
 store.setTurn({turn_id:'turn:two',epoch_id:'epoch:demo',turn_no:2,status:'COLLECTING_ACTIONS',actions:{A:{locked:false},B:{locked:false}}});
+store.patch({turnContext:{epochNo:1,turnNo:2,turnId:'turn:two'}});
 appShell.setMultiplayerSessionState(store.state);
 window.setupLobby=()=>{
   const draft=multiplayerOpeningDraft(createOpeningDraft('chunin',{identity:{name:'测试凛'}}));
@@ -50,7 +52,7 @@ window.ready=true;
 const server = http.createServer(async (req, res) => {
   try {
     const pathname = new URL(req.url, 'http://localhost').pathname;
-    if (pathname === '/') return res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'}).end('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/css/tokens.css"><link rel="stylesheet" href="/css/components.css"><style>body{background:#15171b;color:#eee;margin:0}main{min-height:100vh}button{cursor:pointer}</style><main></main><script type="module" src="/fixture.js"></script>');
+    if (pathname === '/') return res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'}).end('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/css/tokens.css"><link rel="stylesheet" href="/css/layout.css"><link rel="stylesheet" href="/css/components.css"><style>body{background:#15171b;color:#eee;margin:0}button{cursor:pointer}</style><main class="standalone-mode"></main><script type="module" src="/fixture.js"></script>');
     if (pathname === '/fixture.js') return res.writeHead(200, {'Content-Type':'text/javascript'}).end(harness);
     const target = path.resolve(root, '.' + decodeURIComponent(pathname));
     if (!target.startsWith(root+path.sep) || !/\.(?:js|css|json|png|webp|jpg|svg|woff2?)$/u.test(target)) throw new Error('unavailable');
@@ -66,6 +68,8 @@ try {
   await page.goto('http://127.0.0.1:'+server.address().port);
   await page.waitForFunction(()=>window.ready===true);
   const panel=page.locator('naruto-multiplayer-panel');
+  await page.locator('#btn-multiplayer').click();
+  assert.equal(await page.evaluate(()=>window.entryRequests),1,'the visible toolbar entry must open multiplayer');
   await page.evaluate(()=>window.handle.minimize());
   assert.equal(await panel.isVisible(),false,'minimizing must actually hide the panel despite inline display');
   await page.getByRole('button',{name:'展开联机状态悬浮窗'}).click();
@@ -79,6 +83,22 @@ try {
   const resize=await page.locator('[data-multiplayer-resize]').boundingBox();
   await page.mouse.move(resize.x+5,resize.y+5);await page.mouse.down();await page.mouse.move(resize.x-65,resize.y-80,{steps:6});await page.mouse.up();
   assert.ok((await page.locator('[data-multiplayer-overlay]').boundingBox()).width<after.width-30);
+  // A floating panel can cover Send after moving it or closing the character sidebar.
+  // Starting to write must make the complete action composer usable, without losing focus.
+  const sendBox=await page.locator('#btn-send').boundingBox();
+  const handleBox=await drag.boundingBox();
+  const floatBox=await page.locator('[data-multiplayer-overlay]').boundingBox();
+  await page.mouse.move(handleBox.x+20,handleBox.y+15);await page.mouse.down();
+  await page.mouse.move(handleBox.x+20+sendBox.x-floatBox.x-30,handleBox.y+15+sendBox.y-floatBox.y-180,{steps:6});await page.mouse.up();
+  assert.equal(await page.locator('#btn-send').evaluate(button=>{
+    const r=button.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('#btn-send')===button;
+  }),false,'fixture must reproduce an intercepted Send button');
+  await page.locator('#chat-input').fill('继续查问线索');
+  await page.locator('#btn-send').click({trial:true,timeout:1500});
+  assert.equal(await page.locator('#chat-input').evaluate(input=>document.activeElement===input),true,'collapsing must preserve input focus');
+  assert.equal(await panel.isVisible(),false,'an overlapping panel should collapse while composing an action');
+  await page.getByRole('button',{name:'展开联机状态悬浮窗'}).click();
+  assert.equal(await panel.isVisible(),true,'the panel can still be opened explicitly');
   await page.evaluate(()=>window.handle.minimize());
   assert.equal(await page.locator('[data-shinobi-daily-host]').count(),1,'committed daily must be mounted from its publication envelope');
   assert.match(await page.locator('[data-multiplayer-publication]').innerText(),/321.*400/u);

@@ -142,7 +142,7 @@ test('custom selects reopen immediately after another select was opened', async 
 
   const settings = page.locator('settings-panel');
   await settings.locator('[data-section="connection"]').click();
-  const wrappers = settings.locator('api-config-form .ns-select-wrapper');
+  const wrappers = settings.locator('api-config-form .ns-select-wrapper:has(#scheme-select), api-config-form .ns-select-wrapper:has(#settings-api-backend)');
   await expect(wrappers).toHaveCount(2);
 
   await wrappers.nth(0).locator('.ns-select-trigger').click();
@@ -188,9 +188,10 @@ test('project support stays optional and exposes safe Afdian and WeChat methods'
   expect(await qr.evaluate(image => image.naturalWidth)).toBe(1210);
 
   const communityLinks = settings.locator('.support-community-link');
-  await expect(communityLinks).toHaveCount(2);
-  await expect(communityLinks.nth(0)).toHaveAttribute('href', 'https://github.com/2024053347-a11y/naruto-rpg');
-  await expect(communityLinks.nth(1)).toHaveAttribute('href', 'https://github.com/2024053347-a11y/naruto-rpg/issues');
+  await expect(communityLinks).toHaveCount(3);
+  await expect(communityLinks.nth(0)).toHaveAttribute('href', 'https://www.qiwu.asia/announcements.html');
+  await expect(communityLinks.nth(1)).toHaveAttribute('href', 'https://github.com/qiwu622/naruto-rpg');
+  await expect(communityLinks.nth(2)).toHaveAttribute('href', 'https://github.com/qiwu622/naruto-rpg/issues');
   for (const link of await communityLinks.all()) {
     await expect(link).toHaveAttribute('target', '_blank');
     await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
@@ -400,6 +401,7 @@ test('player media exposes only daily image controls', async ({ page }) => {
   await imageMode.locator('.ns-select-trigger').click();
   await imageMode.locator('.ns-select-option', { hasText: '每回合自动' }).click();
   await settings.locator('.actions > [data-action="save"]').click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('naruto_rpg_image_settings_v1'))?.enabled)).toBe(true);
   const imageSettings = await page.evaluate(() => JSON.parse(localStorage.getItem('naruto_rpg_image_settings_v1')));
   expect(imageSettings.enabled).toBe(true);
   expect(imageSettings.turnMode).toBe('auto');

@@ -477,7 +477,23 @@ export class LingXiController {
     this.runtime?.abort?.(new Error('Ling Xi request cancelled'));
   }
 
+  _contextIdentity() {
+    const meta = this.stateManager.getSub?.('_meta') || this.stateManager.get()?._meta || {};
+    return canonicalStringify({ node: meta.current_node_id || null, branch: meta.active_branch || null });
+  }
+
+  _assertTurnContext(context = this._turnContext) {
+    if (!context) return;
+    if (context.invalidated || context.identity !== this._contextIdentity()) {
+      context.invalidated = true;
+      const error = new LingXiActionError('LINGXI_CONTEXT_CHANGED', '当前存档或时间线已切换，本轮灵希请求已停止。请在新存档中重新提问。');
+      this.runtime?.abort?.(error);
+      throw error;
+    }
+  }
+
   async stageVariableChange({ key, value, reason } = {}) {
+    this._assertTurnContext();
     const meta = this.stateManager.getSub?.('_meta') || {};
     if (!meta.current_node_id) {
       const error = new Error('当前还没有可恢复的时间线节点。请先完成开局，再修改存档变量。');
@@ -492,11 +508,18 @@ export class LingXiController {
   }
 
   async _stageProjectAction(tool, params) {
+    this._assertTurnContext();
     const proposal = await this.approvalBroker.stageAction(tool, params);
     return this._settleStagedProposal(proposal);
   }
 
   async _settleStagedProposal(proposal) {
+    try {
+      this._assertTurnContext();
+    } catch (error) {
+      this.discardProposal(proposal.id);
+      throw error;
+    }
     const policy = classifyProposalApproval(proposal);
     if (this.autoApplyLowRisk && policy.mode === 'automatic') {
       if (typeof this.approvalBroker?.applyLowRiskProposal !== 'function') {
@@ -679,6 +702,19 @@ export class LingXiController {
       .filter(Boolean));
 
     this._sendInFlight = true;
+    const turnContext = { identity: this._contextIdentity(), invalidated: false };
+    this._turnContext = turnContext;
+    const checkContext = () => {
+      try { this._assertTurnContext(turnContext); } catch { /* propagated by the active request */ }
+    };
+    const invalidateContext = () => { turnContext.invalidated = true; checkContext(); };
+    const contextUnsubs = [
+      eventBus.on('state:restored', checkContext),
+      eventBus.on('state:reset', invalidateContext),
+      eventBus.on('timeline:imported', invalidateContext),
+      eventBus.on('timeline:jumped', checkContext),
+      eventBus.on('timeline:branch-switched', checkContext)
+    ];
     try {
       this.messages.push({ role: 'user', content: userText });
       this.messages = this.messages.slice(-MAX_STORED_MESSAGES);
@@ -695,6 +731,7 @@ export class LingXiController {
       }
 
       const config = await this._resolveApiConfig();
+      this._assertTurnContext(turnContext);
       if (!configUsable(config)) {
         const message = {
           role: 'assistant',
@@ -722,13 +759,22 @@ export class LingXiController {
         const result = await this.runtime.runAgent({
           definition: LINGXI_ASSISTANT_DEFINITION,
           messages: contextMessages,
-          tools: this.tools,
+          tools: Object.fromEntries(Object.entries(this.tools).map(([name, tool]) => [name, {
+            ...tool,
+            execute: async (...args) => {
+              this._assertTurnContext(turnContext);
+              const result = await tool.execute(...args);
+              this._assertTurnContext(turnContext);
+              return result;
+            }
+          }])),
           budget: { maxSteps: 12, maxOutputTokens: 2200, temperature: 0.45, topP: 0.9, contextLimit: 1 },
           state: this.stateManager.get() || {},
           userInput: userText,
           audience: 'assistant',
           onEvent: guardedOnEvent
         });
+        this._assertTurnContext(turnContext);
         let mode = result.mode;
         let content = cleanMessageText(result.text) || '灵希没有收到完整回应，请再试一次。';
         const missingResearchKinds = narrativeResearchKinds.filter(kind => this.researchGate.missing(kind).length);
@@ -748,7 +794,11 @@ export class LingXiController {
           content = `唔，这轮没有完成项目规定的检索，所以灵希没有采用刚才生成的内容，也没有提交任何提案。${requirementMessage}。请再试一次，我会先查证资料再写。`;
           mode = 'research-required';
         } else if (result.mode === 'plain-chat') {
-          content = `${content}\n\n小提醒：这轮工具链没有跑完，所以内容仅为对话建议呀；灵希没有读到实时项目数据，也没有修改设置或存档。`;
+          const attemptedActions = result.toolOutcomes?.some(call => call.effect !== 'read');
+          const notice = attemptedActions
+            ? '这轮工具连接中断，已返回的结果已保留。操作是否生效请以执行回执为准；待确认的提案仍需点击确认。'
+            : '这轮工具链没有跑完，后续内容仅为对话建议；本轮没有修改设置或存档。';
+          content = `${content}\n\n小提醒：${notice}`;
         }
         const message = {
           role: 'assistant',
@@ -770,7 +820,17 @@ export class LingXiController {
         this._active = false;
         eventBus.emit('lingxi:status', { status: 'idle' });
       }
+    } catch (error) {
+      if (turnContext.invalidated) {
+        for (const proposal of this.approvalBroker?.listPendingProposals?.() || []) {
+          if (proposal?.id && !pendingBeforeTurn.has(proposal.id)) this.discardProposal(proposal.id);
+        }
+        this._lastStagedProposal = null;
+      }
+      throw error;
     } finally {
+      contextUnsubs.forEach(unsub => unsub());
+      this._turnContext = null;
       this._sendInFlight = false;
     }
   }

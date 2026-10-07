@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AppShell 回合结果集成检查</title>
+  <link rel="stylesheet" href="../../css/tokens.css"><link rel="stylesheet" href="../../css/layout.css">
+  <link rel="stylesheet" href="../../css/components.css">
+  <style>*,*::before,*::after{animation:none!important;transition:none!important}html,body,#app{margin:0;min-height:100%;background:#070a0e}.chat-message{opacity:1!important;transform:none!important}</style>
+</head><body><div id="app"></div>
+<script type="module">
+  const [{ appShell }, { eventBus }, { stateManager }, { timelineSystem }, { buildTurnReceipt }] = await Promise.all([
+    import('../../js/ui/app-shell.js'), import('../../js/core/event-bus.js'),
+    import('../../js/core/state-manager.js'), import('../../js/systems/timeline-system.js'),
+    import('../../js/core/turn-receipt.js')
+  ]);
+  localStorage.setItem('naruto_agent_config', JSON.stringify({ enabled: false }));
+  await stateManager.initDB();
+  stateManager.state = stateManager.getDefaultState();
+  stateManager.state['玩家·姓名'] = '回执检查者';
+  stateManager.state['系统·回合数'] = 8;
+  appShell.init(document.querySelector('#app'));
+  const receipt = buildTurnReceipt({
+    beforeState: { '进度·经验': 10, _memory: { facts: '' } },
+    afterState: { '进度·经验': 14, _memory: { facts: '已完成协作训练' } },
+    turnNumber: 8, variables: { status: 'success' }, memory: { status: 'success' },
+    daily: { status: 'skipped' }, save: { status: 'success' },
+    stages: [{ key: 'variables', status: 'success', durationMs: 320, retries: 1 }, { key: 'save', status: 'success', durationMs: null, retries: 0 }]
+  });
+  const story = '夕光落在训练场上。你收好忍具，与同伴一同返回木叶。';
+  window.fixture = { appShell, stateManager, eventBus, receipt, story,
+    complete(value = receipt) {
+      eventBus.emit('pipeline:processing', { userInput: '结束训练' });
+      eventBus.emit('pipeline:chunk', { response: story });
+      eventBus.emit('pipeline:complete', { cleanResponse: story, rawResponse: story, turnCount: 8, turnReceipt: value });
+    },
+    async persist(value = receipt) {
+      const node = await timelineSystem.createNode({ turnNumber: 8, playerInput: '结束训练', aiResponse: story,
+        cleanResponse: story, stateSnapshot: stateManager.snapshot(), turnReceipt: value });
+      localStorage.setItem('receipt-shell-node', node.id);
+      return node.id;
+    },
+    fail() { eventBus.emit('pipeline:error', { error: 'storage full', code: 'TURN_COMMIT_FAILED', lastUserInput: '继续训练',
+      turnReceipt: { ...receipt, turnNumber: 9, save: { status: 'failed', reasonCode: 'quota' } } }); }
+  };
+  const saved = localStorage.getItem('receipt-shell-node');
+  if (saved) {
+    const node = await stateManager.dbGet('timeline_nodes', saved);
+    if (node?.state_snapshot) stateManager.restore(node.state_snapshot);
+    appShell.restoreChatHistory([], node?.clean_response || story, { timelineNodeId: saved });
+  } else appShell.renderSinglePage('既有回合正文。');
+  window.__RECEIPT_SHELL_READY__ = true;
+</script></body></html>

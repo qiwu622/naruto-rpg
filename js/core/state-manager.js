@@ -978,6 +978,10 @@ class StateManager {
       const mx = Math.max(0, Number(s[maxKey]) || 0);
       s[curKey] = Math.max(0, Math.min(s[curKey], mx));
     }
+    // Recovery ends the knockout exemption, including restored snapshots.
+    if (s._combat?.player_incapacitated === true && s['属性·当前生命力'] > 0) {
+      delete s._combat.player_incapacitated;
+    }
 
     const clamp = (key, min, max) => {
       if (typeof s[key] !== 'number' || isNaN(s[key])) return;
@@ -1045,6 +1049,11 @@ class StateManager {
   _checkAlive() {
     const alive = this.state['玩家·存活'];
     const vitalityCur = this.state['属性·当前生命力'];
+    const combat = this.state._combat;
+    // Tactical defeat is incapacitation. Death still requires an explicit
+    // narrative consequence, rather than being caused by a sparring HP bar.
+    if (combat?.rules_version === 'tactical-v1' && combat.player_incapacitated === true
+      && combat.result === 'defeat' && alive !== '否') return;
     if (alive !== '否' && typeof vitalityCur === 'number' && vitalityCur <= 0) {
       this.state['玩家·存活'] = '否';
       this.state['玩家·死因'] = this.state['玩家·死因'] || '生命力归零';
@@ -1241,7 +1250,7 @@ class StateManager {
     });
   }
 
-  async dbMutateTimeline(mutator, { nodeKeys = null, branchKeys = null } = {}) {
+  async dbMutateTimeline(mutator, { nodeKeys = null, branchKeys = null, validateCurrent = null } = {}) {
     if (typeof mutator !== 'function') throw new TypeError('时间线事务需要同步变更函数');
     if (!this._db) await this.initDB();
     return new Promise((resolve, reject) => {
@@ -1253,13 +1262,16 @@ class StateManager {
       let mutationError = null;
       let mutationResult;
       let pendingReads = 0;
+      let stopGuard = () => {};
 
       const fail = () => {
         if (settled) return;
         settled = true;
+        stopGuard();
         reject(mutationError || tx.error || new Error('时间线事务写入失败'));
       };
       const abortWith = error => {
+        if (mutationError) return;
         mutationError = error instanceof Error ? error : new Error(String(error));
         try { tx.abort(); } catch { fail(); }
       };
@@ -1267,10 +1279,20 @@ class StateManager {
       tx.oncomplete = () => {
         if (settled) return;
         settled = true;
+        stopGuard();
         resolve(mutationResult);
       };
       tx.onerror = fail;
       tx.onabort = fail;
+      if (typeof validateCurrent === 'function') {
+        const check = () => {
+          try { validateCurrent(); } catch (error) { abortWith(error); }
+        };
+        const guards = ['state:changed', 'state:restored', 'state:reset', 'timeline:jumped', 'timeline:branch-switched']
+          .map(event => eventBus.on(event, check));
+        stopGuard = () => guards.forEach(stop => stop());
+        check();
+      }
 
       let nodes = [];
       let branches = [];
@@ -1278,11 +1300,13 @@ class StateManager {
       const applyMutation = () => {
         if (mutationError) return;
         try {
+          validateCurrent?.();
           const mutation = mutator({
             nodes: nodes.filter(Boolean),
             branches: branches.filter(Boolean),
             meta
           });
+          if (mutationError) return;
           if (mutation && typeof mutation.then === 'function') {
             throw new TypeError('时间线事务变更函数不能是异步函数');
           }
@@ -1410,6 +1434,8 @@ class StateManager {
         model: String(persistedConfig.model || ''),
         backend: String(persistedConfig.backend || 'openai'),
         disableStreaming: Boolean(persistedConfig.disableStreaming),
+        adaptationMode: persistedConfig.adaptationMode,
+        deepseekThinking: persistedConfig.deepseekThinking,
         promptPreset: persistedConfig.promptPreset,
         variableUpdater: persistedConfig.variableUpdater,
         narrativeReview: persistedConfig.narrativeReview,

@@ -1,4 +1,5 @@
 import { resolveContinuityEvents } from './continuity-ledger.js';
+import { projectNarrativeForMemory } from './narrative-memory.js';
 
 const TRACKED_FLAT_PREFIXES = Object.freeze([
   '玩家·', '属性·', '进度·', '技能·', '物品·', '世界·'
@@ -132,7 +133,7 @@ function missionRecords(state) {
 }
 
 function summaryEvent({ displayText, memorySummary, turn, evidenceRefs }) {
-  const summary = String(memorySummary || displayText || '').replace(/\s+/g, ' ').trim().slice(0, 600);
+  const summary = projectNarrativeForMemory(memorySummary || displayText).replace(/\s+/g, ' ').trim().slice(0, 600);
   if (!summary) return null;
   return {
     type: 'summary',

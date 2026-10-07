@@ -4,6 +4,8 @@ import {
   assertPathIdentifier,
   assertPositiveInteger
 } from './contracts.js';
+import { isNativeAndroidApp } from '../core/runtime-platform.js';
+import { fetchProjectServer } from '../core/project-server.js';
 
 const SAFE_API_BASE = /^\/(?!\/)[^?#]*$/u;
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -121,6 +123,8 @@ export function cookieValue(cookieHeader, name) {
 
 /** Double-submit token used by cookie-authenticated multiplayer writes. */
 export function defaultMultiplayerRequestHeaders({ method } = {}) {
+  // The native bridge adds the encrypted account's Bearer credential itself.
+  if (isNativeAndroidApp()) return {};
   if (SAFE_METHODS.has(String(method ?? 'GET').toUpperCase())) return {};
   // The browser UI is cookie-authenticated. Refuse to issue a mutation when
   // its double-submit cookie is absent or malformed instead of silently
@@ -134,6 +138,12 @@ export function defaultMultiplayerRequestHeaders({ method } = {}) {
   return { [CSRF_HEADER_NAME]: token };
 }
 
+export function defaultMultiplayerFetch(url, options) {
+  return isNativeAndroidApp()
+    ? fetchProjectServer(url, options)
+    : globalThis.fetch(url, options);
+}
+
 /**
  * Same-origin client for the complete documented multiplayer REST surface.
  * Custom model base URLs and API keys are always sent to this server API;
@@ -142,7 +152,7 @@ export function defaultMultiplayerRequestHeaders({ method } = {}) {
 export class MultiplayerApiClient {
   constructor({
     baseUrl = MULTIPLAYER_API_BASE,
-    fetchImpl = globalThis.fetch?.bind(globalThis),
+    fetchImpl = defaultMultiplayerFetch,
     credentials = 'same-origin',
     requestHeaders = defaultMultiplayerRequestHeaders
   } = {}) {

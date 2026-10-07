@@ -3,6 +3,7 @@ import {
   NARRATIVE_INTERNAL_TAGS,
   sanitizeNarrativeDisplayText
 } from './narrative-artifact.js';
+import { isNarrativeChoiceTag } from './narrative-memory.js';
 
 const DEFAULT_MAX_INPUT_LENGTH = 1_500_000;
 const DEFAULT_MAX_OUTPUT_LENGTH = 2_500_000;
@@ -421,15 +422,8 @@ const NON_PRESENTATION_TAG_PARTS = new Set([
   'format', 'protocol', 'schema', 'template', 'guideline', 'guidelines',
   'instruction', 'instructions', 'engine'
 ]);
-const ACTION_TAG_PARTS = new Set([
-  'option', 'options', 'choice', 'choices', 'selection', 'selections', 'selc',
-  'action', 'actions'
-]);
-
 function isActionWrapperTag(tag) {
-  const parts = String(tag || '').split(/[_.:\-]+/).filter(Boolean);
-  return !parts.some(part => NON_PRESENTATION_TAG_PARTS.has(part))
-    && parts.some(part => ACTION_TAG_PARTS.has(part));
+  return isNarrativeChoiceTag(tag);
 }
 
 function isStructuredStatusTag(tag) {
@@ -1375,6 +1369,7 @@ export function buildPresetPresentation(rawResponse, cleanResponse, scripts, opt
     return Object.freeze({
       kind: 'markdown',
       text: fallbackText,
+      fallbackText,
       actions,
       appliedScripts,
       warnings,
@@ -1396,7 +1391,10 @@ export function buildPresetPresentation(rawResponse, cleanResponse, scripts, opt
 
   return Object.freeze({
     kind: 'markdown',
-    text: sanitizeNarrativeDisplayText(safeDisplayText),
+    // A matched display script can erase the body or wrap it in tags removed
+    // by sanitization. Finalizing that presentation must retain safe prose.
+    text: sanitizeNarrativeDisplayText(safeDisplayText) || fallbackText,
+    fallbackText,
     actions,
     appliedScripts,
     warnings,

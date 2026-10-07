@@ -1,3 +1,5 @@
+import { projectSystemCombatPrompt } from './combat-prompt-mode.js';
+
 export const DEFAULT_MAIN_PRESET_VERSION = '20260929-kishu-persona-v38-relationship-rename-v18';
 export const MAIN_PRESET_STORAGE_KEY = 'naruto_main_preset';
 export const MAIN_PRESET_BACKUP_PREFIX = 'naruto_main_preset_backup_';
@@ -556,6 +558,10 @@ export function resolvePresetMacros(entries, context = {}) {
     if (!entry || entry.enabled === false || entry.isMarker || !activationMatches(entry, context)) continue;
     let text = String(entry.content || '');
     if (!text.trim()) continue;
+    const canonical = DEFAULT_MAIN_PRESET.entries.find(item => item.id === entry.id);
+    if (canonical && text === canonical.content) {
+      text = projectSystemCombatPrompt(text, { tacticalCombat: context.tacticalCombat === true, entryId: entry.id });
+    }
     text = consumePresetVariableMacros(text, vars, context);
     resolvedEntries.push({ ...entry, content: text });
   }

@@ -1,4 +1,7 @@
-﻿export const panelStyles = `
+import { gradeEffectStyles } from './grade-effects.css.js';
+export { gradeEffectStyles } from './grade-effects.css.js';
+
+export const panelStyles = `
         :host { display: block; height: 100%; }
         .panel {
           display: flex; flex-direction: column; height: 100%; overflow: hidden;
@@ -19,7 +22,7 @@
         }
         .panel-close-btn-mobile {
           background: transparent; border: none; color: var(--text-secondary);
-          font-size: 18px; cursor: pointer; padding: 4px; display: flex;
+          font-size: 18px; cursor: pointer; padding: 8px; min-width: 40px; min-height: 40px; display: flex;
           align-items: center; justify-content: center; transition: all 0.2s;
           line-height: 1;
         }
@@ -34,19 +37,19 @@
           z-index: 5;
         }
         .tab {
-          flex: 1; padding: 16px 2px 12px; font-size: 11px; text-align: center; color: var(--text-tertiary);
+          flex: 1; padding: 16px 2px 12px; font-size: 12px; text-align: center; color: var(--text-secondary);
           cursor: pointer; border: none; background: transparent; border-bottom: 2px solid transparent;
-          transition: all 0.2s; letter-spacing: 2px;
+          transition: color 0.2s, border-color 0.2s; letter-spacing: 1px;
           font-family: var(--font-title); margin-bottom: -1px;
         }
-        .tab:hover { color: var(--text-secondary); }
+        .tab:hover { color: var(--text-primary); }
         .tab.on { 
-          color: var(--text-primary); font-weight: 800; border-bottom-color: var(--text-primary);
+          color: var(--c-kin-bright); font-weight: 700; border-bottom-color: var(--c-kin);
         }
 
         @keyframes content-enter {
-          from { opacity: 0; transform: translateY(16px) scale(0.98); filter: blur(4px); }
-          to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+          from { opacity: 0.6; }
+          to { opacity: 1; }
         }
         .content { 
           flex: 1; min-height: 0; overflow-y: auto; padding: 24px 20px;
@@ -54,7 +57,7 @@
           scrollbar-gutter: stable;
           mask-image: linear-gradient(to bottom, transparent, #000 24px, #000 calc(100% - 24px), transparent);
           -webkit-mask-image: linear-gradient(to bottom, transparent, #000 24px, #000 calc(100% - 24px), transparent);
-          animation: content-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          animation: content-enter 0.18s ease-out forwards;
         }
         .content::-webkit-scrollbar { width: 5px; }
         .content::-webkit-scrollbar-track { background: transparent; }
@@ -63,12 +66,12 @@
 
         /* ── 章节容器 (Scroll Section) ──── */
         .sec {
-          margin-bottom: 40px; position: relative;
+          margin-bottom: 32px; position: relative;
         }
         
         .sec-title {
-          font-size: 10px; font-weight: 800; color: var(--text-tertiary); text-transform: uppercase;
-          letter-spacing: 4px; margin-bottom: 24px; font-family: var(--font-title);
+          font-size: 11px; font-weight: 600; color: var(--c-kin); text-transform: uppercase;
+          letter-spacing: 2px; margin-bottom: 16px; font-family: var(--font-title);
           display: flex; align-items: center; gap: 12px;
         }
         .sec-title::after {
@@ -91,59 +94,50 @@
         .chakra-badge { 
           display: inline-flex; align-items: center; justify-content: center;
           padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 800; letter-spacing: 2px;
-          border: 1px solid currentColor; background: rgba(0,0,0,0.2);
-          box-shadow: inset 0 0 8px currentColor;
+          border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+          background: color-mix(in srgb, currentColor 7%, transparent);
         }
 
         .attr-bento { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
         .attr-card {
-          background: var(--surface-bento); box-shadow: var(--shadow-inner);
+          background: rgba(var(--paper-rgb),0.025); box-shadow: inset 0 0 0 1px rgba(var(--paper-rgb),0.07);
           border-radius: var(--r-md); padding: 16px; position: relative; overflow: hidden;
           display: flex; flex-direction: column; justify-content: center;
         }
         .attr-card.full-span { grid-column: 1 / -1; }
         .attr-card:hover { background: var(--surface-bento-hover); }
-        .attr-label { font-size: 10px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 6px; }
-        .attr-value { font-family: var(--font-title); font-size: 16px; font-weight: 800; color: var(--text-primary); letter-spacing: 1px; }
+        .attr-label { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+        .attr-value { font-family: var(--font-title); font-size: 16px; font-weight: 700; color: var(--text-primary); letter-spacing: 1px; font-variant-numeric: tabular-nums; }
         
         .attr-id-badge {
           display: flex; justify-content: space-between; align-items: center; flex-direction: row;
-          padding: 24px; background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, transparent 100%);
-          border-left: 2px solid var(--c-kin-bright);
+          padding: 22px; background: linear-gradient(135deg, rgba(var(--paper-rgb),0.045), rgba(var(--paper-rgb),0.015));
+          border-left: 2px solid var(--c-kin);
         }
         .attr-id-name { 
-          font-family: var(--font-brush); font-size: 32px; color: var(--c-kin-bright); line-height: 1; margin-top: 4px; 
-          background: linear-gradient(90deg, var(--c-kin-bright) 0%, #fff 50%, var(--c-kin-bright) 100%);
-          background-size: 200% auto;
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          animation: shine-name 4s linear infinite;
+          font-family: var(--font-title); font-size: 28px; font-weight: 600; color: var(--text-primary); line-height: 1.3; margin-top: 4px;
+          letter-spacing: 2px; overflow-wrap: anywhere;
         }
-        @keyframes shine-name { to { background-position: 200% center; } }
         
-        .attr-id-rank { font-size: 12px; font-weight: 800; letter-spacing: 4px; color: var(--text-secondary); opacity: 0.8; }
+        .attr-id-rank { font-size: 12px; font-weight: 600; letter-spacing: 2px; color: var(--text-secondary); }
         
         .attr-threat { 
           position: absolute; inset: 0; background: radial-gradient(circle at right bottom, var(--threat-color, rgba(255,255,255,0.1)) 0%, transparent 70%); 
-          opacity: 0.1; pointer-events: none; 
-          animation: pulse-threat-bg 4s ease-in-out infinite alternate;
+          opacity: 0.06; pointer-events: none;
         }
-        @keyframes pulse-threat-bg { from { opacity: 0.1; } to { opacity: 0.25; } }
         
         .attr-threat-val { 
-          font-family: var(--font-mono); font-size: 24px; font-weight: 900; color: var(--threat-color, var(--text-primary)); 
-          text-shadow: 0 0 16px var(--threat-color, transparent); display: flex; align-items: baseline; gap: 4px; 
-          white-space: nowrap;
-          animation: pulse-threat 3s ease-in-out infinite alternate;
-        }
-        @keyframes pulse-threat {
-          from { text-shadow: 0 0 8px var(--threat-color, transparent); }
-          to { text-shadow: 0 0 24px var(--threat-color, transparent), 0 0 40px var(--threat-color, transparent); transform: scale(1.02) translateX(1%); }
+          font-family: var(--font-mono); font-size: 24px; font-weight: 700; color: var(--threat-color, var(--text-primary));
+          display: flex; align-items: baseline; gap: 4px;
+          white-space: nowrap; font-variant-numeric: tabular-nums;
         }
         .attr-bar-wrap { margin-bottom: 16px; }
-        .attr-bar-label { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 8px; color: var(--text-secondary); letter-spacing: 1px; }
-        .attr-bar-track { height: 2px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden; }
-        .attr-bar-fill { height: 100%; box-shadow: 0 0 8px currentColor; transition: width 1s var(--ease-out); }
+        .attr-bar-label { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12px; margin-bottom: 8px; color: var(--text-secondary); letter-spacing: 0.5px; font-variant-numeric: tabular-nums; }
+        .attr-bar-label > span { white-space: nowrap; }
+        .attr-bars-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 8px; }
+        .attr-bars-pair .attr-bar-label { flex-direction: column; align-items: flex-start; gap: 6px; }
+        .attr-bar-track { height: 3px; background: rgba(var(--paper-rgb),0.07); border-radius: 3px; overflow: hidden; }
+        .attr-bar-fill { height: 100%; border-radius: inherit; transition: width 0.4s var(--ease-out); }
 
         /* ── 查克拉条 (Liquid Chakra Bars - Old fallback) ──── */
         .bar-wrap { margin: 12px 0 20px; position: relative; }
@@ -160,7 +154,7 @@
         .grid-list { display: grid; grid-template-columns: 1fr; gap: 12px; }
         .item-card {
           padding: 16px; border-radius: var(--r-md);
-          box-shadow: var(--shadow-inner); background: var(--surface-bento);
+          box-shadow: inset 0 0 0 1px rgba(var(--paper-rgb),0.07); background: rgba(var(--paper-rgb),0.025);
           transition: all 0.3s var(--ease-out); position: relative; overflow: hidden;
         }
         .item-card:hover { 
@@ -177,7 +171,7 @@
         .item-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
         .item-name { font-family: var(--font-title); font-size: 16px; font-weight: 800; color: var(--text-primary); letter-spacing: 1px; }
         .item-tag { font-size: 9px; color: var(--text-secondary); padding: 2px 6px; border: 1px solid var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; }
-        .item-desc { font-size: 12px; color: var(--text-tertiary); line-height: 1.6; font-family: var(--font-body); max-width: 90%; }
+        .item-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.7; font-family: var(--font-body); }
 
         /* ── 任务勋章 (Mission Seals) ──── */
         .mission-seal {
@@ -352,11 +346,6 @@
         .skill-detail-mastery div { height: 100%; border-radius: 2px; background: var(--c-kin-bright); transition: width 0.4s; }
 
         .mission-seal { border-left: 4px solid var(--border-subtle); padding-left: 12px; }
-        .mission-seal.S .rank-badge { color: var(--c-quality-legendary); }
-        .mission-seal.A .rank-badge { color: var(--c-shuiro); }
-        .mission-seal.B .rank-badge { color: var(--c-quality-epic); }
-        .mission-seal.C .rank-badge { color: var(--c-quality-rare); }
-        .mission-seal.D .rank-badge { color: var(--c-quality-uncommon); }
 
         /* ── 关系印记 (Fate Link) ──── */
         .rel-card-wrap {
@@ -726,13 +715,6 @@
         @media (hover: none) { .eq-slot-unequip { opacity: 1; transform: none; } }
         .eq-slot-unequip:hover { border-color: rgba(239,83,80,0.45); color: #ef5350; background: rgba(239,83,80,0.12); }
 
-        /* 传说品质呼吸辉光(槽位与物品卡共用) */
-        @keyframes legendaryPulse { 0% { box-shadow: inset 0 0 0 1px rgba(239,83,80,0.3), 0 0 15px rgba(239,83,80,0.2); } 50% { box-shadow: inset 0 0 0 1px rgba(239,83,80,0.5), 0 0 25px rgba(239,83,80,0.4); } 100% { box-shadow: inset 0 0 0 1px rgba(239,83,80,0.3), 0 0 15px rgba(239,83,80,0.2); } }
-        .eq-slot.filled[data-quality="传说"], .eq-item[data-quality="传说"] { animation: legendaryPulse 3s infinite; }
-        @media (prefers-reduced-motion: reduce) {
-          .eq-slot.filled[data-quality="传说"], .eq-item[data-quality="传说"] { animation: none; }
-        }
-
         /* 分类标题:图标 + 名 + 计数 + 引线 */
         .eq-cat-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
         .eq-cat-head > .eq-svg { width: 13px; height: 13px; color: var(--text-tertiary); flex-shrink: 0; }
@@ -839,19 +821,13 @@
           pointer-events: none;
         }
 
-        /* ── 进度条流动光泽（查克拉微光；reduced-motion 与移动端自动关闭） ──── */
+        /* 数值变化时平滑过渡；常驻进度条不闪烁，便于读数。 */
         .attr-bar-fill, .dash-bar-fill, .skill-detail-mastery div { position: relative; overflow: hidden; }
-        .attr-bar-fill::after, .dash-bar-fill::after, .skill-detail-mastery div::after {
-          content: ''; position: absolute; inset: 0;
-          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
-          background-size: 200% 100%; background-repeat: no-repeat;
-          animation: bar-sheen 3.2s linear infinite;
-          pointer-events: none;
-        }
-        @keyframes bar-sheen { from { background-position: 150% 0; } to { background-position: -150% 0; } }
-        @media (prefers-reduced-motion: reduce), (max-width: 768px) {
-          .attr-bar-fill::after, .dash-bar-fill::after, .skill-detail-mastery div::after { animation: none; }
+        @media (prefers-reduced-motion: reduce) {
+          .content { animation: none; }
+          .attr-bar-fill, .dash-bar-fill, .skill-detail-mastery div { transition: none; }
         }
 
+        ${gradeEffectStyles}
 `;
 

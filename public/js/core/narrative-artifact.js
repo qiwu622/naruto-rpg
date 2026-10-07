@@ -311,11 +311,10 @@ function cleanWhitespace(text) {
 }
 
 /**
- * Return text safe for the chat UI, history and timeline.  Machine tags and
- * private/audit blocks are removed with their contents.  Unknown presentation
- * wrappers are unwrapped, never persisted as markup.
+ * Strip internal and machine content while retaining presentation boundaries.
+ * This intermediate source is data for projections, not HTML to render directly.
  */
-export function sanitizeNarrativeDisplayText(input, { streaming = false } = {}) {
+export function sanitizeNarrativeSourceText(input, { streaming = false } = {}) {
   let value = asText(input).replace(/\r\n?/g, '\n');
   if (!value) return '';
 
@@ -331,6 +330,12 @@ export function sanitizeNarrativeDisplayText(input, { streaming = false } = {}) 
   value = stripSensitiveGenericTags(value, { streaming });
   value = stripKnownTags(value, NARRATIVE_INSTRUCTION_TAGS, { streaming });
   value = stripKnownTags(value, EVIDENCE_TAGS, { streaming });
+  return cleanWhitespace(value);
+}
+
+/** Return plain display text with unknown presentation wrappers unwrapped. */
+export function sanitizeNarrativeDisplayText(input, { streaming = false } = {}) {
+  let value = sanitizeNarrativeSourceText(input, { streaming });
   value = unwrapDisplayTags(value);
 
   // Drop any remaining XML-like wrappers while retaining ordinary prose.
@@ -447,6 +452,9 @@ export function createNarrativeArtifact(input, { evidenceRefs = [] } = {}) {
     kind: NARRATIVE_ARTIFACT_KIND,
     version: NARRATIVE_ARTIFACT_VERSION,
     displayText: sanitizeNarrativeDisplayText(text),
+    // Kept only inside the artifact so review/accept can retain choice boundaries.
+    // Persistence still uses the narrow plain display projection below.
+    presentationText: sanitizeNarrativeSourceText(text),
     instructions: extractNarrativeInstructions(text),
     auditInternal: extractNarrativeAudit(text),
     evidenceRefs: extractNarrativeEvidenceRefs(text, evidenceRefs)

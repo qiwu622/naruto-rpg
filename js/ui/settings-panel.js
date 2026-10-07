@@ -25,11 +25,12 @@ import { icon } from '../utils/icons.js';
 import { musicService } from '../core/music-service.js';
 import { musicPlayback } from '../core/music-playback.js';
 import { usesProjectServerFeatures } from '../core/runtime-platform.js';
+import { fetchProjectServer } from '../core/project-server.js';
 
 const callPolicyImageSettingsStore = new ImageSettingsStore();
 const SUPPORT_AFDIAN_URL = 'https://www.ifdian.net/a/2608_1?utm_source=copylink&utm_medium=link';
 const SUPPORT_WECHAT_QR_URL = new URL('../../img/wechat-reward.png', import.meta.url).href;
-const SUPPORT_GITHUB_URL = 'https://github.com/2024053347-a11y/naruto-rpg';
+const SUPPORT_GITHUB_URL = 'https://github.com/qiwu622/naruto-rpg';
 const SUPPORT_ISSUES_URL = `${SUPPORT_GITHUB_URL}/issues`;
 
 const THEME_PRESETS = {
@@ -520,8 +521,8 @@ class SettingsPanel extends HTMLElement {
                     <label class="setting-card">
                       <span class="sc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 17.5L3 6V3h3l11.5 11.5"/><path d="M13 19l6-6"/><path d="M16 16l4 4"/><path d="M19 21l2-2"/></svg></span>
                       <span class="sc-main">
-                        <span class="sc-title">战术战斗面板</span>
-                        <span class="sc-desc">战斗触发时展开专属战术界面，显示敌我状态与行动选项</span>
+                        <span class="sc-title">打开战斗面板</span>
+                        <span class="sc-desc">也可用顶部「战斗」按钮开启。打开后启用招式、命中与战报规则；关闭后按普通正文推进，不加入面板专用规则。</span>
                       </span>
                       <input type="checkbox" name="tacticalCombat">
                     </label>
@@ -616,6 +617,7 @@ class SettingsPanel extends HTMLElement {
                   <div class="support-community">
                     <p>即使不进行赞助，你也可以通过体验游戏、提出建议、反馈问题或关注项目进展来帮助忍者手记发展。</p>
                     <div class="support-community-actions">
+                      <a class="btn ghost support-community-link" href="https://www.qiwu.asia/announcements.html" target="_blank" rel="noopener noreferrer">${icon('book-open', 15)}<span>更新公告与历史版本</span>${icon('external-link', 13)}</a>
                       <a class="btn ghost support-community-link" href="${escAttr(SUPPORT_GITHUB_URL)}" target="_blank" rel="noopener noreferrer">${icon('book-open', 15)}<span>查看开源项目</span>${icon('external-link', 13)}</a>
                       <a class="btn ghost support-community-link" href="${escAttr(SUPPORT_ISSUES_URL)}" target="_blank" rel="noopener noreferrer">${icon('developer', 15)}<span>提交建议或问题</span>${icon('external-link', 13)}</a>
                     </div>
@@ -1096,6 +1098,12 @@ class SettingsPanel extends HTMLElement {
       const allSettings = this._collect();
       const patch = {};
       for (const field of fields) patch[field] = allSettings[field];
+      if (Object.hasOwn(patch, 'tacticalCombat')
+        && patch.tacticalCombat !== Boolean(stateManager.getSub('_ui')?.settings?.tacticalCombat)
+        && document.querySelector('.app-shell.is-processing')) {
+        this._updateSaveState('请等本回合完成后再切换战斗面板');
+        return false;
+      }
       const imageSettings = saveKey === 'media' ? {
         enabled: this._get('imageEnabled', false),
         turnMode: this._get('imageTurnMode', 'manual')
@@ -1552,7 +1560,7 @@ class SettingsPanel extends HTMLElement {
   async _fetchWithAuth(url, options = {}) {
     if (!usesProjectServerFeatures()) return null;
     try {
-      const res = await fetch(url, { ...options, credentials: 'same-origin' });
+      const res = await fetchProjectServer(url, { ...options, credentials: 'same-origin' });
       if (res.status === 401) return null;
       if (res.ok) return res;
       return null;

@@ -2,9 +2,10 @@ import { AIClient } from './ai-client.js';
 import { stateManager } from './state-manager.js';
 import { eventBus } from './event-bus.js';
 import { AGENT_MANIFESTS } from './agent-manifests.js';
-import { AGENT_PROMPTS } from './agent-prompts.js';
+import { getAgentPrompt } from './agent-prompts.js';
 import { getAgentConfig } from '../data/agent-config.js';
 import { getMainPreset, resolvePresetMacros } from '../data/default-preset.js';
+import { markTurnContext, inheritAPIAdaptation } from './deepseek-mode.js';
 import { generateMainVarInstructions } from '../data/var-schema.js';
 import { formatOpeningContractPrompt, resolveOpeningContract } from '../systems/opening-contract.js';
 import { publishPromptTrace } from './prompt-trace.js';
@@ -23,8 +24,8 @@ export function evidenceAudienceForAgent(agentType) {
   return 'writer';
 }
 
-export function resolveAgentSystemPrompt(promptKey) {
-  const canonical = String(AGENT_PROMPTS[promptKey] || '').trim();
+export function resolveAgentSystemPrompt(promptKey, state = {}) {
+  const canonical = getAgentPrompt(promptKey, { tacticalCombat: state?._ui?.settings?.tacticalCombat === true }).trim();
   let custom = '';
   try { custom = String(localStorage.getItem(`naruto_preset_${promptKey}`) || '').trim(); } catch {}
   // 统一要求简体中文：正文、推理(<reasoning>/思维链)与思考一律中文，
@@ -141,16 +142,16 @@ class AgentRunner {
     };
 
     this._mainClient = new AIClient();
-    this._mainClient.configure({
+    this._mainClient.configure(inheritAPIAdaptation(baseConfig, {
       ...baseConfig,
       model: this._models.main
-    });
+    }));
 
     this._criticClient = new AIClient();
-    this._criticClient.configure({
+    this._criticClient.configure(inheritAPIAdaptation(baseConfig, {
       ...baseConfig,
       model: this._models.critic
-    });
+    }));
 
     this._aborted = false;
     this._abortReason = null;
@@ -302,7 +303,7 @@ class AgentRunner {
     if ((agentType === 'writer' || agentType === 'writer-polish' || agentType === 'final-writer') && extraContext._inheritFromMainPipeline && extraContext._mainMessages) {
       const baseMessages = extraContext._mainMessages;
       const constraint = this._buildWriterConstraint(extraContext, state);
-      const persona = resolveAgentSystemPrompt(manifest.systemPromptKey);
+      const persona = resolveAgentSystemPrompt(manifest.systemPromptKey, state);
       const importedProfile = extraContext.importedPresetProfile
         || extraContext._pipeline?._lastImportedPresetProfile
         || this._pipeline?._lastImportedPresetProfile;
@@ -336,7 +337,7 @@ class AgentRunner {
       return [
         ...inherited,
         ...(persona ? [{ role: 'system', content: persona }] : []),
-        { role: 'system', content: constraint },
+        markTurnContext({ role: 'system', content: constraint }),
         ...importedCompatibility,
         ...(importedPrefill ? [importedPrefill] : [])
       ];
@@ -346,7 +347,7 @@ class AgentRunner {
     const messages = [];
 
     // 1. Static System Prompt (Highly cacheable)
-    const systemPrompt = resolveAgentSystemPrompt(manifest.systemPromptKey);
+    const systemPrompt = resolveAgentSystemPrompt(manifest.systemPromptKey, state);
 
     if (systemPrompt) {
       messages.push({ role: 'system', content: systemPrompt });
@@ -387,7 +388,7 @@ class AgentRunner {
     // 证据视图/开局契约属于每回合易变内容：先计算、后插入(见历史之后的 push)。
     // 让 system + 预设 + 历史 构成稳定前缀，提升 DeepSeek 自动前缀缓存命中率。
     const evidenceMessage = evidenceView
-      ? [{ role: 'system', content: renderEvidenceView(evidenceView, { stage: `agent-${agentType}` }) }]
+      ? [markTurnContext({ role: 'system', content: renderEvidenceView(evidenceView, { stage: `agent-${agentType}` }) })]
       : (() => {
           const openingContract = formatOpeningContractPrompt(resolveOpeningContract(state), {
             compact: true,
@@ -428,6 +429,8 @@ class AgentRunner {
 
     // 4. Dynamic Task Content & State (Volatile, appended at the end to maximize cache hit rate)
     let userContent = '';
+    const corrections = buildMemoryCorrectionContext(state);
+    if (corrections) userContent += `${corrections}\n\n`;
 
     const stateSlice = evidenceView ? {} : this._extractStateSlice(state, manifest.stateFields);
     if (Object.keys(stateSlice).length > 0) {
@@ -602,7 +605,7 @@ class AgentRunner {
         .join('、');
       constraint += `【用户导入预设 · Agent Writer 职责】完整沿用导入预设自己的思考、正文、选项和展示 wrapper${wrappers ? `（已检测：${wrappers}）` : ''}，所有容器必须成对闭合；不要额外生成项目默认 <reasoning>。变量、记忆和忍界日报由后续连续性更新器负责，本阶段禁止输出 <var>、<variable>、<combat>、<mission>、<relationship>、<event>、<state_update>、<memory> 或 <shinobi_daily>。\n\n`;
     } else {
-      constraint += generateMainVarInstructions(true) + '\n\n';
+      constraint += generateMainVarInstructions(true, { tacticalCombat: state?._ui?.settings?.tacticalCombat === true }) + '\n\n';
     }
 
     // 7. 篇幅与文风：导入预设完全接管这两项；只有内置模式使用项目默认限制。
@@ -627,7 +630,9 @@ class AgentRunner {
         playerName: state['玩家·姓名'] || '玩家',
         charName: state['玩家·姓名'] || '',
         lastUserMessage: '',
-        lastChatMessage: ''
+        lastChatMessage: '',
+        variableUpdaterEnabled: true,
+        tacticalCombat: state?._ui?.settings?.tacticalCombat === true
       };
 
       const resolved = resolvePresetMacros(preset.entries, context);
@@ -644,6 +649,7 @@ class AgentRunner {
   }
 
   _extractStateSlice(state, fields) {
+    if (state?._memory?.corrections?.length) state = { ...state, _memory: projectCorrectedMemory(state._memory) };
     if (!fields?.length) return {};
     const slice = {};
     const deepClone = (v) => {
@@ -740,3 +746,4 @@ class AgentAbortError extends Error {
 }
 
 export { AgentRunner, AgentAbortError };
+import { projectCorrectedMemory, buildMemoryCorrectionContext } from './memory-corrections.js';

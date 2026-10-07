@@ -4,17 +4,25 @@ import { eventBus } from '../core/event-bus.js';
 import { memorySystem } from '../systems/memory-system.js';
 import { getMemoryConfig, saveMemoryConfig } from '../data/memory-config.js';
 import { icon } from '../utils/icons.js';
+import './memory-facts-editor.js';
+import { projectCorrectedMemory } from '../core/memory-corrections.js';
 
 class MemoryPanel extends HTMLElement {
   connectedCallback() {
+    this._subscriptions?.dispose();
+    this._subscriptions = eventBus.createDisposeBag();
+    for (const event of ['memory:corrected', 'state:restored']) this._subscriptions.on(event, () => this.refreshStats());
     this._render();
   }
+
+  disconnectedCallback() { this._subscriptions?.dispose(); }
 
   /* ────────── 渲染 ────────── */
 
   _render() {
     const cfg = getMemoryConfig();
     this.innerHTML = `
+      <memory-facts-editor></memory-facts-editor>
       <div class="pane-grid">
         <section>
           <h3>深度整理</h3>
@@ -182,7 +190,7 @@ class MemoryPanel extends HTMLElement {
         `<div>历史梳理: ${(c.chapters + c.volumes || 0).toLocaleString()}字 (chapters+volumes)</div>` +
         `</div>`
       );
-      const mem = stateManager.getSub('_memory');
+      const mem = projectCorrectedMemory(stateManager.getSub('_memory'));
       let chapters = [];
       try { chapters = JSON.parse(mem?.chapters || '[]'); } catch {}
 

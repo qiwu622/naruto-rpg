@@ -8,7 +8,10 @@ import {
   buildExactStateDiff
 } from '../js/core/lingxi/adapters/state-adapter.js';
 import { LingXiController } from '../js/core/lingxi/lingxi-controller.js';
+import { AgentToolRuntime } from '../js/core/agent-tool-runtime.js';
+import { LingXiContextBroker } from '../js/core/lingxi/lingxi-context-broker.js';
 import { stateManager } from '../js/core/state-manager.js';
+import { eventBus } from '../js/core/event-bus.js';
 import '../js/systems/attribute-system.js';
 
 function clone(value) {
@@ -769,6 +772,109 @@ await test('the adapter commits through the real StateManager atomic restore API
     stateManager.state = originalState;
     stateManager._stateVersion = originalVersion + 2;
   }
+});
+
+await test('a late tool call cannot edit a different save loaded during the request', async () => {
+  const { manager, controller, checkpointCalls, setTimelineImpact } = controllerHarness({ autoApplyLowRisk: true });
+  manager.getAPIConfig = () => ({ backend: 'custom', model: 'test', apiUrl: 'https://test.invalid/v1' });
+  controller.runtime = {
+    configure() {},
+    async runAgent({ tools }) {
+      manager.mutate(state => { state._meta.current_node_id = 'node_other_save'; });
+      setTimelineImpact({ parentNodeId: 'node_other_save' });
+      await tools.stage_variable_change.execute({ key: '属性·当前查克拉', value: 65, reason: '恢复少量查克拉' });
+      return { text: '完成', mode: 'native-tools' };
+    }
+  };
+  await assert.rejects(controller.send('把当前查克拉设为 65'), errorCode('LINGXI_CONTEXT_CHANGED'));
+  assert.equal(manager.get('属性·当前查克拉'), 40);
+  assert.equal(checkpointCalls.length, 0);
+  assert.equal(controller.approvalBroker.listPendingProposals().length, 0);
+  assert.equal(controller.isActive, false);
+});
+
+await test('switching saves while staging discards the stale proposal before auto apply', async () => {
+  const { manager, controller, setTimelineImpact } = controllerHarness({ autoApplyLowRisk: true });
+  manager.getAPIConfig = () => ({ backend: 'custom', model: 'test', apiUrl: 'https://test.invalid/v1' });
+  const originalStage = controller.approvalBroker.stageAction.bind(controller.approvalBroker);
+  controller.approvalBroker.stageAction = async (...args) => {
+    manager.mutate(state => { state._meta.current_node_id = 'node_other_save'; });
+    setTimelineImpact({ parentNodeId: 'node_other_save' });
+    return originalStage(...args);
+  };
+  controller.runtime = {
+    configure() {},
+    async runAgent({ tools }) {
+      await tools.stage_variable_change.execute({ key: '属性·当前查克拉', value: 65, reason: '恢复少量查克拉' });
+      return { text: '完成', mode: 'native-tools' };
+    }
+  };
+  await assert.rejects(controller.send('把当前查克拉设为 65'), errorCode('LINGXI_CONTEXT_CHANGED'));
+  assert.equal(manager.get('属性·当前查克拉'), 40);
+  assert.equal(controller.approvalBroker.listPendingProposals().length, 0);
+});
+
+await test('fallback after a real auto-applied write keeps its receipt and does not deny the write', async () => {
+  const { manager, controller, checkpointCalls } = controllerHarness({ autoApplyLowRisk: true });
+  manager.getAPIConfig = () => ({ backend: 'custom', model: 'test', apiUrl: 'https://test.invalid/v1' });
+  const calls = [];
+  const responses = ['invalid protocol', '查克拉已恢复到 65。'];
+  controller.runtime = new AgentToolRuntime({
+    contextBroker: new LingXiContextBroker(),
+    sdk: {
+      async runAgent({ tools }) {
+        await tools.stage_variable_change.execute({ key: '属性·当前查克拉', value: 65, reason: '恢复少量查克拉' });
+        throw new Error('connection lost after the tool finished');
+      }
+    },
+    clientFactory: () => ({
+      configure() {}, isConfigured: () => true,
+      async chat(messages) { calls.push(clone(messages)); return responses.shift(); }
+    })
+  });
+  const result = await controller.send('把当前查克拉设为 65');
+  assert.equal(manager.get('属性·当前查克拉'), 65);
+  assert.equal(checkpointCalls.length, 1);
+  assert.equal(result.mode, 'plain-chat');
+  assert.doesNotMatch(result.message.content, /没有修改设置或存档/);
+  assert.match(result.message.content, /执行回执/);
+  assert.match(JSON.stringify(calls.at(-1)), /applied-automatically/);
+});
+
+await test('valid sequential writes in one request do not invalidate each other', async () => {
+  const { manager, controller, checkpointCalls } = controllerHarness({ autoApplyLowRisk: true });
+  manager.getAPIConfig = () => ({ backend: 'custom', model: 'test', apiUrl: 'https://test.invalid/v1' });
+  controller.runtime = {
+    configure() {},
+    async runAgent({ tools }) {
+      for (const value of [60, 65]) {
+        await tools.stage_variable_change.execute({ key: '属性·当前查克拉', value, reason: '按用户要求调整' });
+      }
+      return { text: '完成两步调整', mode: 'native-tools' };
+    }
+  };
+  await controller.send('先将当前查克拉设为 60，再设为 65');
+  assert.equal(manager.get('属性·当前查克拉'), 65);
+  assert.equal(checkpointCalls.length, 2);
+});
+
+await test('importing a save with the same node ids still cancels the old request', async () => {
+  const { manager, controller } = controllerHarness({ autoApplyLowRisk: true });
+  manager.getAPIConfig = () => ({ backend: 'custom', model: 'test', apiUrl: 'https://test.invalid/v1' });
+  controller.runtime = {
+    configure() {},
+    async runAgent({ tools }) {
+      eventBus.emit('timeline:imported', { importedCount: 1 });
+      await tools.stage_variable_change.execute({ key: '属性·当前查克拉', value: 65, reason: '恢复少量查克拉' });
+      return { text: '完成', mode: 'native-tools' };
+    }
+  };
+  await assert.rejects(controller.send('把当前查克拉设为 65'), errorCode('LINGXI_CONTEXT_CHANGED'));
+  assert.equal(manager.get('属性·当前查克拉'), 40);
+  assert.equal(controller.isActive, false);
+  // A cancelled turn must leave no subscriptions that poison the next turn.
+  controller.runtime.runAgent = async () => ({ text: '新档已就绪', mode: 'native-tools' });
+  assert.equal((await controller.send('你好')).message.content, '新档已就绪');
 });
 
 if (failures.length) {

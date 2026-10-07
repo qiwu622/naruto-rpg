@@ -1,7 +1,11 @@
 import { eventBus } from './event-bus.js';
+import { FACTUAL_MEMORY_GUIDANCE, projectNarrativeForMemory } from './narrative-memory.js';
+import { tacticalCombatEnabled } from '../systems/tactical-combat-session.js';
+import { TACTICAL_ENCOUNTER_REGISTRATION_GUIDANCE } from '../systems/tactical-engagement.js';
 import { AgentRunner, AgentAbortError, resolveAgentSystemPrompt, mapWithConcurrency } from './agent-runner.js';
 import { getAgentConfig } from '../data/agent-config.js';
 import { stateManager } from './state-manager.js';
+import { markTurnContext, inheritAPIAdaptation } from './deepseek-mode.js';
 import { AgentContextBroker } from './agent-context-broker.js';
 import { AgentToolRuntime, createNarrativeAgentTools } from './agent-tool-runtime.js';
 import {
@@ -865,10 +869,10 @@ class AgentPipeline {
     const runtime = new AgentToolRuntime({ contextBroker: this.contextBroker });
     const baseConfig = stateManager.getAPIConfig?.() || {};
     const agentConfig = getAgentConfig();
-    runtime.configure({
+    runtime.configure(inheritAPIAdaptation(baseConfig, {
       ...baseConfig,
       model: agentConfig.agentModel || baseConfig.model || ''
-    });
+    }));
     this._activeToolRuntimes.add(runtime);
     return runtime;
   }
@@ -1350,7 +1354,7 @@ class AgentPipeline {
       const writerMessages = importedPreset
         ? [
             ...inheritedWithoutCompatibility,
-            { role: 'system', content: constraint },
+            markTurnContext({ role: 'system', content: constraint }),
             { role: 'system', content: characterGuidance },
             {
               role: 'user',
@@ -1362,7 +1366,7 @@ class AgentPipeline {
         : [
             ...inheritedWithoutCompatibility.filter(message => message.role === 'system'),
             ...inheritedWithoutCompatibility.filter(message => message.role !== 'system'),
-            { role: 'system', content: constraint },
+            markTurnContext({ role: 'system', content: constraint }),
             { role: 'system', content: characterGuidance },
             {
               role: 'user',
@@ -1670,7 +1674,7 @@ class AgentPipeline {
       // The updater is a public-fact consumer. Imported presets may wrap their
       // visible prose in private planning/driver blocks, so never let the raw
       // writer envelope become evidence or updater prompt material.
-      const safeNarrative = String(createNarrativeArtifact(finalText).displayText || '').trim();
+      const safeNarrative = projectNarrativeForMemory(finalText);
       const characterMemoryDelta = buildCharacterMemoryDelta(this._characterDecisions.map(decision => ({
         npcName: decision.npc,
         ...decision.observable
@@ -1749,10 +1753,10 @@ class AgentPipeline {
     const result = await this.runner.run('continuity-updater', {
       state,
       userInput,
-      taskPrompt: `根据最终正文与角色记忆增量，输出本回合完整的 <variable_thinking>、<update_manifest>、必要业务标签、唯一 <memory> 和唯一 <shinobi_daily>。人物只写有可靠依据的字段；在场已认识 NPC：${(involvedNPCs || []).join('、') || '(无)'}`,
+      taskPrompt: `${FACTUAL_MEMORY_GUIDANCE}\n${tacticalCombatEnabled(state) ? TACTICAL_ENCOUNTER_REGISTRATION_GUIDANCE + '\n' : ''}根据最终正文与角色记忆增量，输出本回合完整的 <variable_thinking>、<update_manifest>、必要业务标签、唯一 <memory> 和唯一 <shinobi_daily>。人物只写有可靠依据的字段；在场已认识 NPC：${(involvedNPCs || []).join('、') || '(无)'}`,
       extraContext: {
         sceneBrief,
-        draft: finalText,
+        draft: projectNarrativeForMemory(finalText),
         characterInputs,
         evidenceView,
         updateObligations,
@@ -2177,7 +2181,7 @@ class AgentPipeline {
 
   _buildCharacterTaskPrompt(npcName, state, userInput, sceneBrief, outline, storyPlan) {
     const rel = state._relationships?.[npcName];
-    const rawNpcNotes = state._memory?.npc_notes;
+    const rawNpcNotes = projectCorrectedMemory(state._memory).npc_notes;
     const npcNotes = typeof rawNpcNotes === 'string'
       ? rawNpcNotes.split('\n')
           .filter(line => line.startsWith(`${npcName}: `))
@@ -2188,6 +2192,8 @@ class AgentPipeline {
     const charMemory = state._agent_memories?.[npcName];
 
     let prompt = `你现在是「${npcName}」。\n`;
+    const corrections = buildMemoryCorrectionContext(state);
+    if (corrections) prompt += `${corrections}\n`;
     if (rel) {
       prompt += `与玩家(${state['玩家·姓名'] || '玩家'})的关系: 好感${rel.affection || 0} 信任${rel.trust || 0} 尊重${rel.respect || 0}`;
       if (rel.role) prompt += ` 角色:${rel.role}`;
@@ -2277,3 +2283,4 @@ class AgentPipeline {
 }
 
 export { AgentPipeline };
+import { projectCorrectedMemory, buildMemoryCorrectionContext } from './memory-corrections.js';

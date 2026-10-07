@@ -333,7 +333,7 @@ export class LingXiProjectStateAdapter {
   }
 
   inspectMemory({ limit = DEFAULT_LIMIT } = {}) {
-    const memory = this.stateManager.getSub?.('_memory') || this._state()._memory || {};
+    const memory = projectCorrectedMemory(this.stateManager.getSub?.('_memory') || this._state()._memory || {});
     return {
       section: 'memory',
       memory: publicMemory(memory, boundedLimit(limit)),
@@ -419,3 +419,4 @@ export function createLingXiProjectStateAdapter(options = {}) {
 }
 
 export default LingXiProjectStateAdapter;
+import { projectCorrectedMemory } from '../../memory-corrections.js';
