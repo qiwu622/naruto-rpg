@@ -78,8 +78,8 @@ class SWNotifier {
   _showUpdateNotification() {
     this._showToast({
       icon: '✨',
-      title: '更新完成',
-      message: '游戏已更新到最新版本',
+      title: '更新已就绪',
+      message: '保存当前进度后手动刷新，即可使用新版本',
       duration: 3000,
       type: 'success'
     });

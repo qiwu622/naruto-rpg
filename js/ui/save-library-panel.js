@@ -124,7 +124,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
           </div></section>
           <div id="current-sync" class="sync-section"><p class="sync-caption">当前个人档 <span>云同步</span></p><cloud-sync-status aria-label="当前个人档同步状态"></cloud-sync-status></div>
           <div class="toolbar"><label class="search">${glyph('search')}<input id="search" type="search" aria-label="搜索存档" placeholder="搜索名称、角色或地点…"></label><select id="sort" aria-label="排序"><option value="newest">最近更新</option><option value="oldest">最早创建</option><option value="turn">回合进度</option></select><button id="import" class="button quiet">${glyph('download')}导入到存档库</button><button id="cloud-manager" class="button quiet">${glyph('cloud')}<span>云端管理</span></button><button id="refresh" class="icon-button" aria-label="刷新" title="刷新">${glyph('refresh-cw')}</button><input id="file" type="file" accept="${TIMELINE_FILE_ACCEPT}" hidden></div>
-          <p id="hint" class="hint"></p><p id="status" class="status" role="status" aria-live="polite"></p><div id="manual-sync" class="sync-section" hidden><p class="sync-caption">所选存档 <span id="manual-sync-label"></span></p><cloud-sync-status aria-label="所选存档上传状态"></cloud-sync-status></div><div id="list" class="list"></div>
+          <p id="hint" class="hint"></p><a href="recovery.html" class="hint">大档卡顿或打不开？进入存档救援 →</a><p id="status" class="status" role="status" aria-live="polite"></p><div id="manual-sync" class="sync-section" hidden><p class="sync-caption">所选存档 <span id="manual-sync-label"></span></p><cloud-sync-status aria-label="所选存档上传状态"></cloud-sync-status></div><div id="list" class="list"></div>
           <section id="preview" class="preview" hidden><div class="preview-heading"><h3>本地快照 · 只读</h3><button id="close-preview" class="button quiet small">收起快照</button></div><pre id="snapshot-story"></pre><h4>当时的日报</h4><pre id="snapshot-daily"></pre><details><summary>查看存档中的变量</summary><pre id="snapshot-vars"></pre></details></section>
         </div>
         <footer class="footer"><span id="storage-place">${glyph('database', 13)}保存在当前浏览器与站点</span><span id="storage-note">清除网站数据会删除本机存档，请定期导出备份。</span></footer>
@@ -145,7 +145,8 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     this.$('#search').oninput = () => this.renderList();
     this.$('#sort').onchange = () => this.renderList();
     this.$('#capture').onclick = () => this.run(async () => {
-      const entry = await eventBus.request('app:save-personal');
+      this.status('正在保存完整时间线与 IF 线，大档需要一些时间，请保留当前页面…');
+      const entry = await eventBus.request('app:save-personal', { onProgress: text => this.status(text) });
       if (!entry) throw new Error('当前还没有可保存的个人进度');
       await this.refresh(); this.status('个人档已保存，包含全部 IF 线，可随时读取。');
     });
@@ -164,7 +165,9 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     this.$('#file').onchange = () => this.run(async () => {
       const file = this.$('#file').files?.[0]; this.$('#file').value = '';
       if (!file) return;
+      this.status('正在读取并解压存档，大档可能需要稍等…');
       const data = await decodeTimelineSaveFile(file);
+      this.status('正在校验并保存存档…');
       if (this.kind === ROOM_SAVE_KIND) await localRoomHistory.importPackage(data);
       else {
         const imported = await personalSaveLibrary.importData(data);
@@ -207,7 +210,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
   async refresh() {
     const requestId = this._cloudListRequestId = (this._cloudListRequestId || 0) + 1;
     const [personal, rooms, branches, nodes, current] = await Promise.all([
-      localSaveLibrary.list(PERSONAL_SAVE_KIND), localRoomHistory.list(), timelineSystem.getAllBranches(), timelineSystem.getAllNodes(), timelineSystem.getCurrentNode()
+      localSaveLibrary.list(PERSONAL_SAVE_KIND), localRoomHistory.list(), timelineSystem.getAllBranches(), timelineSystem.getNodeSummaries(), timelineSystem.getCurrentNode()
     ]);
     Object.assign(this, { personal, rooms, branches, nodes, current });
     this.meta = { ...(stateManager.getSub('_meta') || {}) };
@@ -350,9 +353,10 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
       else await eventBus.request('app:load-personal-save', { id });
       this.onLoaded?.();
     } else if (action === 'preview') {
-      const pack = await localSaveLibrary.readPackage(id, this.kind, this.owner);
       const room = this.kind === ROOM_SAVE_KIND;
-      const node = room ? null : pack.payload.nodes.find(item => item.id === pack.payload.meta.value.current_id);
+      const archive = entry.storage === 'timeline_archive';
+      const pack = archive ? null : await localSaveLibrary.readPackage(id, this.kind, this.owner);
+      const node = room ? null : archive ? await localSaveLibrary.archiveTask('preview', { id }) : pack.payload.nodes.find(item => item.id === pack.payload.meta.value.current_id);
       const publication = room ? pack.payload.publication : null;
       this.$('#snapshot-story').textContent = room ? publication?.narratives?.map(item => item.text).join('\n\n') || '保存时尚未发布正文。' : node?.clean_response || node?.ai_response_summary || node?.summary || '这个检查点未保存正文。';
       this.$('#snapshot-daily').textContent = dailyText(room ? publication?.daily : node?.shinobi_daily);
@@ -375,7 +379,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     const turn = source?.turn ?? this.current?.turn_number ?? 0;
     const fields = await this.form({ title: '生成轻量续玩副本', label: '保留原档并生成', content: `
       <label>副本名称<input id="continuation-name" required maxlength="100" value="${escAttr(`${from} · 轻量续玩`.slice(0, 100))}"></label>
-      <label>保留最近多少回合<input id="continuation-turns" type="number" required min="1" step="1" value="50"></label>
+      <label>保留最近多少回合<input id="continuation-turns" type="number" required min="1" step="1" value="100"></label>
       <p>以「${escHtml(from)}」保存的第 ${Number(turn)} 回合为终点，保留所选线路近期的正文、日报、变量与回退点。历史事实、角色关系、置顶记忆和线索继续保留。</p>
       <p>更早的正文与其他 IF 线保留在原档中，副本不包含这些回退点。${source ? '原档不会被覆盖。' : '先将当前进度与全部 IF 线保存到存档库，保存失败则停止。'}生成后当前游戏不切换，可在副本卡片上选择读取、导出或上传云端。</p>
       <p>原档与副本会同时占用本机空间。需要腾出空间时，请先导出原档备份，再自行管理原档。</p>`,

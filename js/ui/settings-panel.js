@@ -26,6 +26,7 @@ import { musicService } from '../core/music-service.js';
 import { musicPlayback } from '../core/music-playback.js';
 import { usesProjectServerFeatures } from '../core/runtime-platform.js';
 import { fetchProjectServer } from '../core/project-server.js';
+import { normalizeHistoryViewTurns } from '../core/timeline-preferences.js';
 
 const callPolicyImageSettingsStore = new ImageSettingsStore();
 const SUPPORT_AFDIAN_URL = 'https://www.ifdian.net/a/2608_1?utm_source=copylink&utm_medium=link';
@@ -68,7 +69,7 @@ const localAudio = musicPlayback;
 const PLAYER_SECTION_ORDER = Object.freeze(['appearance', 'gameplay', 'connection', 'media']);
 const PLAYER_SECTION_FIELDS = Object.freeze({
   appearance: Object.freeze(['themePreset', 'fontPreset', 'fontFamily', 'fontSize', 'lineHeight', 'chatMaxWidth', 'paragraphIndent', 'aiCardStyle', 'textColor', 'accentColor', 'goldColor', 'backgroundColor', 'backgroundImage', 'backgroundOpacity']),
-  gameplay: Object.freeze(['showVariableSummary', 'reasoningOpen', 'tacticalCombat', 'autoArchive']),
+  gameplay: Object.freeze(['showVariableSummary', 'reasoningOpen', 'tacticalCombat', 'autoArchive', 'historyViewTurns']),
   media: Object.freeze(['musicEnabled', 'musicVolume', 'musicLoop', 'musicShuffle'])
 });
 
@@ -87,6 +88,7 @@ function normalizeAudioList(list) {
 
 function mergeSettings(settings = {}) {
   const next = { ...DEFAULT_SETTINGS, ...settings };
+  next.historyViewTurns = normalizeHistoryViewTurns(next.historyViewTurns);
   if (!THEME_PRESETS[next.themePreset]) next.themePreset = DEFAULT_SETTINGS.themePreset;
   if (!FONT_PRESETS[next.fontPreset]) next.fontPreset = DEFAULT_SETTINGS.fontPreset || 'system';
   next.fontSize = clamp(next.fontSize, 12, 24, DEFAULT_SETTINGS.fontSize);
@@ -513,8 +515,8 @@ class SettingsPanel extends HTMLElement {
                     <label class="setting-card">
                       <span class="sc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 3"/><path d="M17 3l4 4-4 4"/></svg></span>
                       <span class="sc-main">
-                        <span class="sc-title">思维链展开</span>
-                        <span class="sc-desc">默认展开 AI 的推理过程折叠块，关闭后需手动点开查看</span>
+                        <span class="sc-title">自动展开思维链</span>
+                        <span class="sc-desc">默认关闭，正文思维链与代理详情按需点开。开启后自动展开；不影响正文生成。</span>
                       </span>
                       <input type="checkbox" name="reasoningOpen">
                     </label>
@@ -533,8 +535,13 @@ class SettingsPanel extends HTMLElement {
                     <div><span class="eyebrow">LOCAL TIMELINE</span><h3>存档与空间</h3></div>
                     <span class="owner-badge">本地时间线</span>
                   </div>
-                  <p class="setting-note">超过 20 回后，最近 20 层保持可即时点开；更早的回合会 gzip 压缩存进浏览器。点进这些回合时会自动解压，跳转、检查点、导出导入和 IF 线都会保留。</p>
+                  <p class="setting-note">旧回合始终保留，可按页查看。正文和状态在点开时读取；浏览数量不会改变模型上下文或删除存档。</p>
                   <div class="storage-tool">
+                    <label class="archive-toggle-row history-count-row">
+                      <span class="storage-tool-icon">${icon('book-open', 18)}</span>
+                      <span class="storage-toggle-copy"><strong>每页历史回合数</strong><span>默认 100，可自行填写。主线与 IF 线分别分页，更早的回合也可以翻页查看。</span></span>
+                      <input type="number" name="historyViewTurns" aria-label="每页历史回合数" min="1" step="1" required>
+                    </label>
                     <label class="archive-toggle-row">
                       <span class="storage-tool-icon">${icon('database', 18)}</span>
                       <span class="storage-toggle-copy">
@@ -1043,6 +1050,7 @@ class SettingsPanel extends HTMLElement {
 
   _collect() {
     return mergeSettings({
+      historyViewTurns: this._get('historyViewTurns'),
       themePreset: this._get('themePreset'), fontPreset: this._get('fontPreset'), fontFamily: this._resolveFontFamily(), fontSize: this._get('fontSize'), lineHeight: this._get('lineHeight'), chatMaxWidth: this._get('chatMaxWidth'),
       paragraphIndent: this._get('paragraphIndent'), aiCardStyle: this._get('aiCardStyle'), textColor: this._get('textColor'), accentColor: this._get('accentColor'), goldColor: this._get('goldColor'),
       backgroundColor: this._get('backgroundColor'), backgroundImage: this._get('backgroundImage'), backgroundOpacity: this._get('backgroundOpacity'), showVariableSummary: this._get('showVariableSummary'), reasoningOpen: this._get('reasoningOpen'), tacticalCombat: this._get('tacticalCombat'), autoArchive: this._get('autoArchive'),
@@ -1095,6 +1103,10 @@ class SettingsPanel extends HTMLElement {
 
       const fields = PLAYER_SECTION_FIELDS[saveKey];
       if (!fields) return false;
+      if (saveKey === 'gameplay') {
+        const value = Number(this._get('historyViewTurns'));
+        if (!Number.isSafeInteger(value) || value < 1) { this._updateSaveState('历史回合数请填写大于 0 的整数'); return false; }
+      }
       const allSettings = this._collect();
       const patch = {};
       for (const field of fields) patch[field] = allSettings[field];

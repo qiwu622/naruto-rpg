@@ -6,12 +6,14 @@ import { getMemoryConfig, saveMemoryConfig } from '../data/memory-config.js';
 import { icon } from '../utils/icons.js';
 import './memory-facts-editor.js';
 import { projectCorrectedMemory } from '../core/memory-corrections.js';
+import { vectorMemory, getVectorCredentials, saveVectorCredentials } from '../core/vector-memory.js';
 
 class MemoryPanel extends HTMLElement {
   connectedCallback() {
     this._subscriptions?.dispose();
     this._subscriptions = eventBus.createDisposeBag();
     for (const event of ['memory:corrected', 'state:restored']) this._subscriptions.on(event, () => this.refreshStats());
+    this._subscriptions.on('memory:vector-status', ({ text }) => { const el = this.querySelector('[data-vector-status]'); if (el) el.textContent = text; });
     this._render();
   }
 
@@ -24,6 +26,19 @@ class MemoryPanel extends HTMLElement {
     this.innerHTML = `
       <memory-facts-editor></memory-facts-editor>
       <div class="pane-grid">
+        <section>
+          <h3>向量记忆 <small>可选</small></h3>
+          <label><input type="checkbox" name="memVectorEnabled" ${cfg.vectorEnabled ? 'checked' : ''}>启用语义召回</label>
+          <p class="hint">默认关闭，关闭后沿用原有记忆。开启后会将少量历史片段与本轮输入发送到下面的嵌入接口；每轮最多索引 12 条新片段，可能产生费用。超时或失败会自动使用本地记忆。</p>
+          <div class="grid">
+            <label>嵌入 API 地址</label><input name="memVectorEndpoint" type="url" placeholder="https://…/v1" value="${this._esc(cfg.vectorEndpoint)}">
+            <label>嵌入模型</label><input name="memVectorModel" placeholder="填写支持 embeddings 的模型名" value="${this._esc(cfg.vectorModel)}">
+            <label>API 密钥</label><input name="memVectorKey" type="password" autocomplete="off" placeholder="只保存在本机，不写入存档" value="${this._esc(getVectorCredentials().apiKey || '')}">
+          </div>
+          <p class="hint" data-vector-status>${this._esc(vectorMemory.status)}</p>
+          <button type="button" class="btn ghost btn-xs" data-vector-clear>清除向量缓存</button>
+          <p class="hint">缓存独立存储，不随每个回合复制。清除缓存不会删除记忆；开启后随游玩逐步重建。单次调用模式不会请求嵌入接口。</p>
+        </section>
         <section>
           <h3>深度整理</h3>
           <div class="grid">
@@ -126,7 +141,8 @@ class MemoryPanel extends HTMLElement {
     // 字段变更即时保存
     const memFields = ['memAiCompressionEnabled','memDeepEnabled','memDeepCycle','memDeepModel','memChapterWindow',
       'memMaxTurnSummaries','memPromptBudget','memFactsLimit','memArchivedLimit',
-      'memRecallEnabled','memRecallLifetime','memNpcSummaryEnabled','memNpcSummaryFrequency'];
+      'memRecallEnabled','memRecallLifetime','memNpcSummaryEnabled','memNpcSummaryFrequency',
+      'memVectorEnabled','memVectorEndpoint','memVectorModel','memVectorKey'];
     for (const f of memFields) {
       const el = this.querySelector(`[name="${f}"]`);
       if (el) el.addEventListener('change', () => this._onFieldChange());
@@ -135,6 +151,11 @@ class MemoryPanel extends HTMLElement {
     // 立即整理按钮
     const deepBtn = this.querySelector('[data-action="mem-deep-now"]');
     if (deepBtn) deepBtn.addEventListener('click', () => this._runDeepConsolidateNow());
+    this.querySelector('[data-vector-clear]')?.addEventListener('click', async () => {
+      const status = this.querySelector('[data-vector-status]');
+      try { await vectorMemory.cache.clear(); status.textContent = '向量缓存已清除，原有记忆保留。'; }
+      catch { status.textContent = '缓存清理失败，原有记忆不受影响。'; }
+    });
 
     this.refreshStats();
   }
@@ -148,7 +169,11 @@ class MemoryPanel extends HTMLElement {
   }
 
   _onFieldChange() {
+    saveVectorCredentials(this._getVal('memVectorKey'));
     const config = saveMemoryConfig({
+      vectorEnabled: this._getVal('memVectorEnabled'),
+      vectorEndpoint: this._getVal('memVectorEndpoint'),
+      vectorModel: this._getVal('memVectorModel'),
       aiCompressionEnabled: this._getVal('memAiCompressionEnabled'),
       deepEnabled: this._getVal('memDeepEnabled'),
       deepCycle: Number(this._getVal('memDeepCycle')) || 36,
@@ -273,7 +298,7 @@ class MemoryPanel extends HTMLElement {
   }
 
   _esc(str) {
-    return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 }
 

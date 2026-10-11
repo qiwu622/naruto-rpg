@@ -115,7 +115,7 @@ export async function generateAnnouncements(projectRoot = root) {
       <p class="eyebrow">RELEASE NOTES · ${escape(current[2])}</p>
       <h1 id="title">v${escape(version)} · 更新公告</h1>
       <p>每一次更新，都记录在这里。查看本次变化、升级说明与历史版本。</p>
-      <div class="links"><a class="pill primary" href="https://www.qiwu.asia/app/android/naruto-rpg.apk">下载安卓最新版</a><a class="pill" href="https://github.com/qiwu622/naruto-rpg/releases/tag/v${escape(version)}">GitHub 版本</a><a class="pill" href="#history">历史公告 ↓</a></div>
+      <div class="links"><a class="pill primary" href="https://www.qiwu.asia/app/android/naruto-rpg.apk">安卓安装包</a><a class="pill" href="https://github.com/qiwu622/naruto-rpg/releases">GitHub 下载</a><a class="pill" href="#history">历史公告 ↓</a></div>
     </section>
     <div class="layout">
       <nav aria-label="本次更新目录"><p>本次更新</p>${sections.map((section,index) => `<a href="#section-${index+1}">${escape(section[1])}</a>`).join('\n')}</nav>

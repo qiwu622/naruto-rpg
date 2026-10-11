@@ -301,6 +301,7 @@ class MessagePipeline {
 
   cancel() {
     this._cancelled = true;
+    this._vectorAbort?.abort();
     aiClient.cancel();
     if (this._secondaryClient) {
       this._secondaryClient.cancel();
@@ -492,6 +493,29 @@ class MessagePipeline {
       // the main prompt so the writer and commit path cannot disagree.
       const agentWillRun = callPolicy.features.agents && Boolean(state['玩家·姓名']);
       const updaterOwnedTurn = callPolicy.features.variableUpdater || agentWillRun;
+
+      this._semanticRecall = [];
+      if (getMemoryConfig().vectorEnabled && !callPolicy.strictSingleCall) {
+        try {
+          const { vectorMemory } = await import('./vector-memory.js');
+          this._vectorAbort = new AbortController();
+          const [directory, meta] = await Promise.all([
+            this.timelineSystem.getNodeSummaries(), stateManager.dbGet('timeline_meta', 'root')
+          ]);
+          const byId = new Map(directory.map(node => [node.id, node]));
+          const ancestors = new Set();
+          let nodeId = state._meta?.current_node_id;
+          while (nodeId && !ancestors.has(nodeId)) { ancestors.add(nodeId); nodeId = byId.get(nodeId)?.parent_id; }
+          this._semanticRecall = await vectorMemory.recall({ state, query: userInput,
+            scope: `${meta?.value?.root_id || 'new'}:${state._meta?.active_branch || 'branch_main'}`,
+            inheritedBeforeTurn: meta?.value?.continuation?.schema === 'naruto.continuation-copy/v1' ? Number(meta.value.continuation.from_turn) || 0 : 0,
+            ancestors, signal: this._vectorAbort.signal });
+          eventBus.emit('memory:vector-status', { text: vectorMemory.status });
+        } catch { this._semanticRecall = []; }
+        finally { this._vectorAbort = null; }
+        assertTurnCurrent();
+        if (this._cancelled) throw new Error('已取消生成');
+      }
 
       const messages = this._buildPrompt(enrichedInput, state, userInput, {
         updaterEnabled: updaterOwnedTurn,
@@ -3064,7 +3088,9 @@ ${previousGrandSummary ? `此前的关系编年史: ${previousGrandSummary}\n请
 
   _buildMemoryContext(memory, userInput = '') {
     if (this.memorySystem) {
-      const ctx = projectNarrativeForMemory(this.memorySystem.buildPromptContext(memory, { userInput }));
+      const ctx = projectNarrativeForMemory(this.memorySystem.buildPromptContext(memory, {
+        userInput, ...(getMemoryConfig().vectorEnabled ? { semanticRecall: this._semanticRecall || [] } : {})
+      }));
       if (!ctx) return '';
       if (!getMemoryConfig().recallEnabled) return ctx;
       return ctx + '\n\n[记忆协议] 当你需要剧情中已提及但你当前不掌握的信息时，在回复末尾输出 <recall entities="实体名1,实体名2"/>。系统中永久保留的历史记录将以检索词触达。';

@@ -1,3 +1,4 @@
+import { listingTimelineNode } from '../js/core/timeline-node-codec.js';
 import assert from 'node:assert/strict';
 
 import { stateManager } from '../js/core/state-manager.js';
@@ -82,7 +83,7 @@ async function withTimelineDb(seed, fn) {
     timeline_meta: new Map([['root', clone(seed.meta)]])
   };
   const methods = [
-    'initDB', 'dbGet', 'dbGetAll', 'dbPut', 'dbDelete', 'dbClear',
+    'initDB', 'dbGet', 'dbGetAll', 'dbTimelineSummaries', 'dbPut', 'dbDelete', 'dbClear',
     'dbReplaceTimeline', 'dbCommitTimeline', 'dbMutateTimeline'
   ];
   const originals = Object.fromEntries(methods.map(name => [name, stateManager[name]]));
@@ -93,6 +94,7 @@ async function withTimelineDb(seed, fn) {
   stateManager.initDB = async () => ({});
   stateManager.dbGet = async (name, key) => clone(stores[name].get(key));
   stateManager.dbGetAll = async name => [...stores[name].values()].map(clone);
+  stateManager.dbTimelineSummaries = async () => [...stores.timeline_nodes.values()].map(listingTimelineNode);
   stateManager.dbPut = async (name, value) => {
     stores[name].set(value.id ?? value.key, clone(value));
   };

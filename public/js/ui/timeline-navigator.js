@@ -1,9 +1,11 @@
 import { stateManager } from '../core/state-manager.js';
+import { timelineSystem } from '../systems/timeline-system.js';
 import { eventBus } from '../core/event-bus.js';
 import { isCompressedTimelineNode } from '../core/timeline-node-codec.js';
 import { formatGameTime, truncate, escHtml, escAttr } from '../utils/format.js';
 import { icon } from '../utils/icons.js';
 import { timelineStyles } from '../../css/components/timeline-navigator.css.js';
+import { normalizeHistoryViewTurns } from '../core/timeline-preferences.js';
 
 const DEFAULT_BRANCH_COLOR = '#eb613f';
 const SAFE_BRANCH_COLOR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
@@ -17,10 +19,11 @@ class TimelineNavigator extends HTMLElement {
     this._selectedId = null;
     this._unsubs = [];
     this._tlStyle = '';
+    this._branchPages = new Map();
   }
 
   connectedCallback() {
-    this._load();
+    this._load(true);
     this._unsubs = [
       eventBus.on('timeline:node-created', () => this._load(true)),
       eventBus.on('timeline:node-updated', () => this._load()),
@@ -33,7 +36,8 @@ class TimelineNavigator extends HTMLElement {
       eventBus.on('timeline:branch-deleted', () => this._load()),
       eventBus.on('timeline:branch-renamed', () => this._load()),
       eventBus.on('timeline:imported', () => this._load(true)),
-      eventBus.on('state:restored', () => this._load())
+      eventBus.on('state:restored', () => this._load()),
+      eventBus.on('settings:changed', () => { this._branchPages.clear(); this._selectedId = null; this._render(); })
     ];
   }
 
@@ -43,21 +47,27 @@ class TimelineNavigator extends HTMLElement {
   }
 
   async _load(scrollToEnd = false) {
-    try {
-      this._nodes = await stateManager.dbGetAll('timeline_nodes') || [];
-      this._branches = await stateManager.dbGetAll('timeline_branches') || [];
-    } catch { this._nodes = []; this._branches = []; }
-    if (scrollToEnd) {
-      const curId = stateManager.get('系统·当前节点');
-      this._selectedId = this._storyNodeId(curId);
-    }
-    this._render();
-    if (scrollToEnd) {
-      requestAnimationFrame(() => {
-        const list = this.shadowRoot?.querySelector('.tl');
-        if (list) list.scrollTop = list.scrollHeight;
-      });
-    }
+    this._reloadRequested = true;
+    this._scrollOnLoad ||= scrollToEnd;
+    if (this._loading) return this._loading;
+    this._loading = (async () => {
+      do {
+        this._reloadRequested = false;
+        try {
+          const [nodes, branches] = await Promise.all([timelineSystem.getNodeSummaries(), stateManager.dbGetAll('timeline_branches')]);
+          if (this._reloadRequested) continue;
+          this._nodes = nodes || []; this._branches = branches || [];
+        } catch { this._nodes = []; this._branches = []; }
+        if (this._scrollOnLoad) { this._selectedId = this._storyNodeId(stateManager.get('系统·当前节点')); this._branchPages.clear(); }
+        this._render();
+        if (this._scrollOnLoad) requestAnimationFrame(() => {
+          const list = this.shadowRoot?.querySelector('.tl');
+          if (list) list.scrollTop = list.scrollHeight;
+        });
+        this._scrollOnLoad = false;
+      } while (this._reloadRequested);
+    })().finally(() => { this._loading = null; });
+    return this._loading;
   }
 
   _render() {
@@ -81,13 +91,13 @@ class TimelineNavigator extends HTMLElement {
         <div class="tl-title">时之卷</div>
         ${branchMain.length>0?`
           <div class="branch">主线编年</div>
-          <div class="list">${branchMain.slice(-80).map(node => this._renderNode(node, { currentId: curId })).join('')}</div>
+          ${this._renderBranchPage(branchMain, 'branch_main', { currentId: curId })}
         `:'<div class="empty"><div class="empty-icon">結</div><div class="empty-title">卷轴虚位以待</div><div class="empty-desc">尚未落笔<br><em>结印写下决断</em>，开启你的忍道</div></div>'}
         ${visibleAltBranches.map(b=>{
           const bn = altNodes.filter(n=>n.branch_id===b.id);
           return `
             <div class="branch" style="color:${this._safeColor(b.color)}; border-left-color:${this._safeColor(b.color)}">异世分支·${this._esc(b.name)}</div>
-            <div class="list">${bn.slice(-30).map(node => this._renderNode(node, { currentId: curId, color: b.color })).join('')}</div>
+            ${this._renderBranchPage(bn, b.id, { currentId: curId, color: b.color })}
           `;
         }).join('')}
         <div class="control-bento">
@@ -97,6 +107,12 @@ class TimelineNavigator extends HTMLElement {
       </div>
     `;
 
+    this.shadowRoot.querySelectorAll('[data-history-page]').forEach(button => button.addEventListener('click', () => {
+      this._branchPages.set(button.dataset.branch, Number(button.dataset.historyPage));
+      this._selectedId = null;
+      this._render();
+      this.shadowRoot.querySelector(`.history-pager[data-branch="${CSS.escape(button.dataset.branch)}"]`)?.scrollIntoView({ block: 'nearest' });
+    }));
     this.shadowRoot.querySelectorAll('.node-toggle').forEach(button => {
       button.addEventListener('click', () => {
         this._selectedId = this._selectedId === button.dataset.id ? null : button.dataset.id;
@@ -137,6 +153,22 @@ class TimelineNavigator extends HTMLElement {
     }
   }
 
+  _renderBranchPage(nodes, branchId, options) {
+    const size = normalizeHistoryViewTurns(stateManager.getSub('_ui')?.settings?.historyViewTurns);
+    const lastPage = Math.max(0, Math.ceil(nodes.length / size) - 1);
+    const focus = this._selectedId || options.currentId;
+    const focusedIndex = nodes.findIndex(node => node.id === focus);
+    const defaultPage = focusedIndex >= 0 ? Math.floor((nodes.length - 1 - focusedIndex) / size) : 0;
+    const page = Math.max(0, Math.min(lastPage, this._branchPages.get(branchId) ?? defaultPage));
+    const end = Math.max(0, nodes.length - page * size), start = Math.max(0, end - size);
+    const visible = nodes.slice(start, end);
+    return `<nav class="history-pager" data-branch="${escAttr(branchId)}" aria-label="历史回合分页">
+      <span>${nodes.length ? `${start + 1}–${end} / ${nodes.length} 回合` : '暂无回合'}</span>
+      <div><button type="button" data-branch="${escAttr(branchId)}" data-history-page="${page + 1}" ${page >= lastPage ? 'disabled' : ''}>更早</button>
+      <button type="button" data-branch="${escAttr(branchId)}" data-history-page="${page - 1}" ${page <= 0 ? 'disabled' : ''}>较新</button></div>
+    </nav><div class="list">${visible.map(node => this._renderNode(node, options)).join('')}</div>`;
+  }
+
   _renderNode(node, { currentId = null, color = null } = {}) {
     const selected = node.id === this._selectedId;
     const current = node.id === currentId;
@@ -155,7 +187,7 @@ class TimelineNavigator extends HTMLElement {
             <span class="node-chapter">${node.branch_anchor ? `IF 起点 · 第 ${this._esc(turn)} 回` : `第 ${this._esc(turn)} 回`}</span>
             <span class="node-statuses">
               ${current ? '<span class="node-status current-status">当前</span>' : ''}
-              ${isCompressedTimelineNode(node) ? '<span class="node-status compressed-status">已压缩</span>' : ''}
+              ${node.payload_encoding ? '<span class="node-status compressed-status">已压缩</span>' : ''}
               ${records.length ? `<span class="node-status maintenance-status">${icon('database', 11)}有维护记录${records.length > 1 ? ` · ${records.length}` : ''}</span>` : ''}
             </span>
           </span>

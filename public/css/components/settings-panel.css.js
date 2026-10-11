@@ -226,6 +226,7 @@
           border-bottom: 1px solid var(--border-hairline);
         }
         .archive-toggle-row:hover { background: rgba(var(--paper-rgb), .025); }
+        .history-count-row input { width:88px; min-width:64px; }
         .storage-tool-icon {
           width: 38px; height: 38px; display: grid; place-items: center; border-radius: 8px;
           color: var(--c-shuiro); background: color-mix(in srgb, var(--c-shuiro) 9%, transparent);
@@ -684,6 +685,7 @@
           .music-controls { gap: 12px; }
           .actions .save-state { font-size: 9px; }
           .archive-toggle-row { grid-template-columns: 38px minmax(0, 1fr) auto; padding: 14px 12px; gap: 10px; }
+          .history-count-row input { grid-column:2 / -1; width:100%; }
           .storage-status { padding: 8px 12px; line-height: 1.5; }
           .support-community-actions { grid-template-columns: minmax(0, 1fr); }
         }

@@ -4,7 +4,7 @@ import { AndroidAppUpdateService, ANDROID_APP_DOWNLOAD_URL, formatAndroidUpdateM
 
 const pause = () => new Promise(resolve => setTimeout(resolve, 15));
 const makeStorage = () => { const values = new Map(); return { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }; };
-const release = { version: '9.0.0', versionCode: 90000, apkUrl: ANDROID_APP_DOWNLOAD_URL, releaseNotes: ['设置滑动修复', '角色按需调用'], announcement: '覆盖安装，无需开新档', publishedAt: '2026-10-01' };
+const release = { version: '9.0.0', versionCode: 90000, apkUrl: ANDROID_APP_DOWNLOAD_URL, sha256: 'a'.repeat(64), sizeBytes: 30000000, releaseNotes: ['设置滑动修复', '角色按需调用'], announcement: '覆盖安装，无需开新档', publishedAt: '2026-10-01' };
 const response = () => ({ ok: true, json: async () => release });
 
 test('concurrent checks share a request and preserve announcement data across restart', async () => {
@@ -70,4 +70,33 @@ test('web and already current clients do not get upgrade notifications', async (
   const current = new AndroidAppUpdateService({ nativeCheck: () => true, currentVersionCode: 90000, fetchImpl: async () => response() });
   assert.equal((await current.check()).updateAvailable, false);
   assert.equal(current.shouldPromptAutomatically(), false);
+});
+
+test('in-app update rechecks metadata, uses the native downloader and retains its identity after restart', async () => {
+  const storage = makeStorage(), downloads = [];
+  let permission = true;
+  const native = { download: async value => { downloads.push(value); return { status: 'downloading' }; },
+    getStatus: async () => ({ status: 'ready', versionCode: 90000 }),
+    install: async () => ({ requiresPermission: permission }), cancel: async () => ({ status: 'idle' }) };
+  const service = new AndroidAppUpdateService({ storage, nativeCheck: () => true, nativeUpdater: () => native, fetchImpl: async () => response() });
+  assert.equal((await service.downloadUpdate()).status, 'downloading');
+  assert.deepEqual(downloads, [{ versionCode: 90000, sha256: release.sha256, sizeBytes: release.sizeBytes }]);
+  const restored = new AndroidAppUpdateService({ storage, nativeCheck: () => true, nativeUpdater: () => native });
+  assert.equal(restored.getLastResult().sha256, release.sha256);
+  assert.equal((await restored.getDownloadStatus()).status, 'ready');
+  assert.equal((await restored.installUpdate()).requiresPermission, true);
+  permission = false;
+  assert.equal((await restored.installUpdate()).requiresPermission, false);
+  assert.equal((await restored.cancelDownload()).status, 'idle');
+});
+
+test('missing integrity metadata, offline checks and missing native bridge never start an installer', async () => {
+  const native = { download: () => { throw new Error('must not download'); } };
+  const service = new AndroidAppUpdateService({ nativeCheck: () => true, nativeUpdater: () => native,
+    fetchImpl: async () => ({ ok: true, json: async () => ({ ...release, sha256: undefined }) }) });
+  await assert.rejects(service.downloadUpdate(), /校验信息/);
+  service.fetchImpl = async () => { throw new Error('offline'); };
+  await assert.rejects(service.downloadUpdate(), /offline/);
+  service.nativeUpdater = () => null;
+  await assert.rejects(service.downloadUpdate(), /不支持应用内更新/);
 });

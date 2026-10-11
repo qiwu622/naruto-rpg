@@ -1,5 +1,7 @@
 import { decodeTimelineSaveFile, encodeTimelineSave } from './timeline-file-codec.js';
 import { exportFile } from './file-export.js';
+import { checksumSaveJson } from './save-json-stream.js';
+import { timelineStorageTask } from './timeline-storage-client.js';
 
 export const SAVE_PACKAGE_SCHEMA = 'naruto.save-package/v1';
 export const PERSONAL_SAVE_KIND = 'personal_timeline';
@@ -10,17 +12,38 @@ const SECRET_KEYS = /^(?:_api|api_config|apiConfig|apiKey|api_key|access_token|r
 
 // Files contain game data only. Connection settings and login credentials are
 // owned by their existing stores and must never become portable save data.
+function visitSaveData(value, key, visiting, validateOnly = false) {
+  if (UNSAFE_KEYS.has(key)) throw new Error('存档包含不安全字段');
+  if (SECRET_KEYS.test(key)) {
+    if (validateOnly && value !== undefined && !['function', 'symbol'].includes(typeof value)) throw new Error('存档混入连接凭证，请重新导出');
+    return undefined;
+  }
+  if (value && typeof value.toJSON === 'function') value = value.toJSON(key);
+  if (value instanceof Number || value instanceof String || value instanceof Boolean) value = value.valueOf();
+  if (typeof value === 'bigint') throw new TypeError('存档不能包含 BigInt');
+  if (typeof value === 'function' || typeof value === 'symbol') return undefined;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (!value || typeof value !== 'object') return value;
+  if (visiting.has(value)) throw new Error('存档包含循环引用，无法保存');
+  visiting.add(value);
+  const array = Array.isArray(value);
+  const result = validateOnly ? undefined : array ? [] : {};
+  const keys = array ? Array.from({ length: value.length }, (_, i) => String(i)) : Object.keys(value);
+  for (const childKey of keys) {
+    const item = visitSaveData(value[childKey], childKey, visiting, validateOnly);
+    if (!validateOnly && (item !== undefined || array)) result[childKey] = item === undefined ? null : item;
+  }
+  visiting.delete(value);
+  return result;
+}
+
 export function cleanSaveData(value) {
-  return JSON.parse(JSON.stringify(value, (key, item) => {
-    if (UNSAFE_KEYS.has(key)) throw new Error('存档包含不安全字段');
-    return SECRET_KEYS.test(key) ? undefined : item;
-  }));
+  return visitSaveData(value, '', new WeakSet());
 }
 
 export async function saveChecksum(payload) {
   if (!globalThis.crypto?.subtle) throw new Error('当前环境不支持存档完整性校验，请使用 HTTPS 或 localhost');
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(payload)));
-  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  return checksumSaveJson(payload);
 }
 
 export async function createSavePackage(kind, payload, label = '') {
@@ -46,9 +69,7 @@ export async function validateSavePackage(value) {
     throw new Error('存档完整性校验失败，文件可能损坏或被修改');
   }
   // Reject, rather than quietly alter, a signed package with unsafe/config data.
-  if (JSON.stringify(cleanSaveData(value.payload)) !== JSON.stringify(value.payload)) {
-    throw new Error('存档混入连接凭证，请重新导出');
-  }
+  visitSaveData(value.payload, '', new WeakSet(), true);
   return value;
 }
 
@@ -60,12 +81,14 @@ function storageError(error) {
     : `本地存档操作失败：${error?.message || '浏览器存储不可用'}`, { cause: error });
 }
 
-/** Separate database: resetting the working timeline never clears the library. */
+/** Legacy files use a separate database; raw archives use dedicated timeline
+ * stores for atomic backup + switch. Resetting a timeline preserves both. */
 export class LocalSaveLibrary {
-  constructor({ indexedDB = globalThis.indexedDB, name = 'naruto_rpg_save_library' } = {}) {
+  constructor({ indexedDB = globalThis.indexedDB, name = 'naruto_rpg_save_library', archiveTask = name === 'naruto_rpg_save_library' && typeof Worker === 'function' ? timelineStorageTask : null } = {}) {
     this.indexedDB = indexedDB;
     this.name = name;
     this._opening = null;
+    this.archiveTask = archiveTask;
   }
 
   async open() {
@@ -102,18 +125,23 @@ export class LocalSaveLibrary {
   }
 
   async list(kind, owner = 'device') {
-    return (await this._read('entries')).filter(entry => entry.kind === kind && entry.owner === owner)
+    const archives = kind === PERSONAL_SAVE_KIND && owner === 'device' && this.archiveTask ? await this.archiveTask('list') : [];
+    return [...await this._read('entries'), ...archives].filter(entry => entry.kind === kind && entry.owner === owner)
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   async get(id, kind, owner = 'device') {
-    const entry = await this._read('entries', id);
+    const entry = String(id).startsWith('archive:') && this.archiveTask ? await this.archiveTask('get', { id }) : await this._read('entries', id);
     if (!entry || entry.kind !== kind || entry.owner !== owner) throw new Error('找不到当前账号的这份存档');
     return entry;
   }
 
   async readPackage(id, kind, owner = 'device') {
-    await this.get(id, kind, owner);
+    const entry = await this.get(id, kind, owner);
+    if (entry.storage === 'timeline_archive') {
+      const encoded = await this.archiveTask('export', { id });
+      return validateSavePackage(await decodeTimelineSaveFile(encoded.blob));
+    }
     const stored = await this._read('files', id);
     if (!stored?.blob) throw new Error('此房间只有历史记录，尚未保存本地快照');
     const pack = await validateSavePackage(await decodeTimelineSaveFile(stored.blob));
@@ -159,11 +187,13 @@ export class LocalSaveLibrary {
     const entry = await this.get(id, kind, owner);
     const name = String(label ?? '').trim().slice(0, 100);
     if (!name) throw new Error('请输入存档名称');
+    if (entry.storage === 'timeline_archive') return this.archiveTask('rename', { id, label: name });
     return this.put({ ...entry, label: name });
   }
 
   async remove(id, kind, owner = 'device') {
-    await this.get(id, kind, owner);
+    const entry = await this.get(id, kind, owner);
+    if (entry.storage === 'timeline_archive') return this.archiveTask('remove', { id });
     const db = await this.open();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(['entries', 'files'], 'readwrite');
@@ -177,10 +207,16 @@ export class LocalSaveLibrary {
 
   async export(id, kind, owner = 'device') {
     const entry = await this.get(id, kind, owner);
+    if (entry.storage === 'timeline_archive') {
+      const encoded = await this.archiveTask('export', { id });
+      const name = `个人存档-${entry.label}`.replace(/[\\/:*?"<>|]/g, '_');
+      const download = await downloadSaveFile(encoded.blob, `${name}${encoded.extension}`);
+      return { ...encoded, cancelled: download.cancelled === true };
+    }
     const stored = await this._read('files', id);
     if (!(stored?.blob instanceof Blob) || !stored.blob.size) throw new Error('此存档尚未保存本地快照文件');
     // A library snapshot was validated when stored. Backup copies its exact
-    // bytes; decoding here reapplied the external-import 200 MiB limit and
+    // bytes; decoding here needlessly inflated the entire archive and
     // doubled the memory cost for large saves. The captured label/checksum stay
     // intact; later library renames are reflected in the download filename.
     const header = new Uint8Array(await stored.blob.slice(0, 2).arrayBuffer());

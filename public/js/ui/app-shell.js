@@ -239,6 +239,7 @@ class AppShell {
   _bindEvents() {
     this._turnUpdates = [];
     this._captureUpdates = false;
+    this._reasoningOpenPreference = stateManager.getSub('_ui')?.settings?.reasoningOpen === true;
     this._reviewDecisionOff?.();
     this._reviewDecisionOff = eventBus.on('pipeline:review-decision', request => {
       const Modal = customElements.get('game-modal');
@@ -518,7 +519,6 @@ class AppShell {
           ? failedContent : this._currentReceiptHost?.isConnected ? this._currentReceiptHost : errDiv;
         this._mountTurnReceipt(turnReceipt, receiptHost);
       }
-      this._scroll();
     });
 
     eventBus.on('pipeline:retrying', ({ attempt, maxRetries }) => {
@@ -593,8 +593,11 @@ class AppShell {
     });
     eventBus.on('state:changed', ({ key } = {}) => {
       if (key === '_combat' || key === '_ui' || key?.startsWith('_ui.')) this._syncCombatArena();
+      if (key === '_ui' || key?.startsWith('_ui.') || key?.startsWith('/_ui/')) this._syncReasoningPreference();
     });
     eventBus.on('state:restored', () => this._syncCombatArena());
+    eventBus.on('state:restored', () => this._syncReasoningPreference());
+    eventBus.on('settings:changed', () => this._syncReasoningPreference());
     eventBus.on('state:reset', () => this._syncCombatArena());
     eventBus.on('combat:panel-close', () => this._setCombatPanel(false));
 
@@ -778,7 +781,6 @@ class AppShell {
     const el = document.createElement('agent-progress');
     el.id = 'agent-progress-live';
     msgs.appendChild(el);
-    el.scrollIntoView?.({ behavior: 'smooth', block: 'end' });
   }
 
   _removeAgentProgress() {
@@ -874,7 +876,6 @@ class AppShell {
     if (msgs) {
       msgs.innerHTML = `<div class="chat-message chat-message--system"><div class="chat-bubble">正在结印，请稍候...</div></div>`;
     }
-    this._scroll();
   }
 
   _addSystemMessage(text, type = 'info') {
@@ -888,7 +889,6 @@ class AppShell {
       .replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.1);padding:2px 4px;border-radius:2px;font-family:var(--font-title);letter-spacing:1px;">' + '$' + '1</code>');
     div.innerHTML = `<div class="chat-bubble">${escaped}</div>`;
     msgs.appendChild(div);
-    this._scroll();
   }
 
   addSystemMessage(text, type = 'info') {
@@ -945,7 +945,6 @@ class AppShell {
       void this._mountTurnIllustration(timelineNodeId, text);
       void this._mountStoredShinobiDaily(timelineNodeId);
     }
-    this._scroll();
   }
 
   restoreChatHistory(history = [], fallbackMessage = '', { timelineNodeId = null } = {}) {
@@ -1027,7 +1026,6 @@ class AppShell {
       content.classList.add('streaming-placeholder');
       content.textContent = placeholder;
     }
-    this._scroll();
   }
 
   async _mountTurnIllustration(nodeId, fallbackPrompt = '') {
@@ -1218,6 +1216,16 @@ class AppShell {
     }
   }
 
+  _syncReasoningPreference() {
+    const isOpen = stateManager.getSub('_ui')?.settings?.reasoningOpen === true;
+    if (isOpen === this._reasoningOpenPreference) return;
+    this._reasoningOpenPreference = isOpen;
+    for (const block of this.element?.querySelectorAll('.think-block') || []) {
+      block.classList.toggle('think-collapsed', !isOpen);
+      block.querySelector('.think-toggle')?.setAttribute('aria-expanded', String(isOpen));
+    }
+  }
+
   _finalizeMessage(text, rawText, thinkContent, isPartial = false, hasHUD = false, dice = null, shinobiDaily = null, turnReceipt = null) {
     if (!this._streamingEl) {
       this._updateStreaming(text);
@@ -1233,7 +1241,7 @@ class AppShell {
 
       // Build the collapsible think block (reasoning + dice only, no variable HUD)
       if (thinkContent || hasDice) {
-        const isOpen = stateManager.getSub('_ui').settings.reasoningOpen !== false;
+        const isOpen = stateManager.getSub('_ui')?.settings?.reasoningOpen === true;
 
         let toggleLabel = '思维链';
         if (hasDice) toggleLabel += ' · 卦象';
@@ -1242,9 +1250,9 @@ class AppShell {
         const thinkBlock = document.createElement('div');
         thinkBlock.className = `think-block${isOpen ? '' : ' think-collapsed'}`;
         thinkBlock.innerHTML = `
-          <div class="think-toggle">
+          <button type="button" class="think-toggle" aria-expanded="${isOpen}">
             <span class="think-arrow">▼</span> ${toggleLabel}
-          </div>
+          </button>
           <div class="think-body">${
             hasDice ? `<div class="think-dice">${this._renderDiceCards(dice)}</div>` : ''
           }${
@@ -1253,7 +1261,8 @@ class AppShell {
               : (hasDice ? '' : '<div class="think-reasoning" style="color:var(--text-tertiary);font-style:italic;">本回合无推理内容。</div>')
           }</div>`;
         thinkBlock.querySelector('.think-toggle').addEventListener('click', () => {
-          thinkBlock.classList.toggle('think-collapsed');
+          const collapsed = thinkBlock.classList.toggle('think-collapsed');
+          thinkBlock.querySelector('.think-toggle').setAttribute('aria-expanded', String(!collapsed));
         });
         contentEl.parentElement.insertBefore(thinkBlock, contentEl);
       }
@@ -1295,7 +1304,6 @@ class AppShell {
       this._streamingEl = null;
     }
     this._syncCombatArena();
-    this._scroll();
   }
 
   _buildVarUpdatePanel(updates) {
@@ -1870,11 +1878,6 @@ class AppShell {
     return escAttr(value);
   }
 
-  _scroll() {
-    const scroller = this.element.querySelector('.chat-container');
-    if (scroller) requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
-  }
-
   /* 网页全屏：用 CSS 把 #app 撑满视口，隐藏顶栏/状态栏/侧栏（不依赖浏览器 Fullscreen API） */
   _toggleZenMode() {
     const app = this.element.closest('#app') || this.element;
@@ -2312,7 +2315,6 @@ class AppShell {
       eventBus.emit('app:reset');
     });
     msgs.appendChild(div);
-    this._scroll();
   }
 }
 export const appShell = new AppShell();

@@ -15,14 +15,14 @@ assertTimelineSave(source);
 const before = JSON.stringify(source);
 const copy = buildContinuationCopy(source, { sourceId: 'solo:original', sourceLabel: '完整故事' });
 
-await test('default copy retains 50 turns of the selected route; original/future/IF archives remain unchanged', () => {
-  assert.equal(copy.nodes.length, 50);
-  assert.equal(copy.nodes[0].turn_number, 71);
+await test('default copy retains 100 turns of the selected route; original/future/IF archives remain unchanged', () => {
+  assert.equal(copy.nodes.length, 100);
+  assert.equal(copy.nodes[0].turn_number, 21);
   assert.equal(copy.nodes.at(-1).turn_number, 120);
   assert.equal(copy.branches.length, 1);
   assert.equal(copy.branches[0].id, 'branch_main');
   assert.equal(JSON.stringify(source), before);
-  assert.ok(copy.nodes.every(node => node.id.startsWith('if_')));
+  assert.ok(copy.nodes.every(node => node.turn_number <= 60 ? node.id.startsWith('main_') : node.id.startsWith('if_')));
   assert.equal(copy.meta.value.continuation.source_save_id, 'solo:original');
   assertTimelineSave(copy);
 });
@@ -39,7 +39,7 @@ await test('each rollback point preserves its own memories, relationships and pl
     assert.deepEqual(node.media, original.media);
   }
   const memory = copy.nodes[0].state_snapshot._continuity.events;
-  assert.equal(memory.length, 71);
+  assert.equal(memory.length, 21);
   assert.ok(!memory.some(event => event.value === '主线61' || event.value === 'IF120'));
   assert.equal(copy.nodes.at(-1).state_snapshot._continuity.events.length, 120);
 });
@@ -110,7 +110,7 @@ await test('save packages stream their nested payload and round-trip JSON/gzip, 
     for (const compression of ['json', 'gzip']) {
       const decoded = await decodeTimelineSaveFile((await encodeTimelineSave(pack, { compression })).blob);
       assert.deepEqual(decoded, pack);
-      assert.equal(continuationSaveScope(decoded.payload).from_turn, 71);
+      assert.equal(continuationSaveScope(decoded.payload).from_turn, 21);
       await validateSavePackage(decoded);
     }
   } finally { JSON.stringify = stringify; }
@@ -120,7 +120,7 @@ await test('save packages stream their nested payload and round-trip JSON/gzip, 
 
 await test('scope survives normalization and grows after continuation play', () => {
   const normalized = new PersonalSaveLibrary().normalize(copy);
-  assert.equal(normalized.meta.value.continuation.from_turn, 71);
+  assert.equal(normalized.meta.value.continuation.from_turn, 21);
   const next = structuredClone(normalized.nodes.at(-1));
   next.id = 'continued'; next.turn_number = 121;
   normalized.nodes.push(next); normalized.meta.value.current_id = next.id;

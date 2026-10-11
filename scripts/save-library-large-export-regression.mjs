@@ -41,8 +41,8 @@ try {
   } });
   const largeBlob = await new Response(source.pipeThrough(new CompressionStream('gzip'))).blob();
   stored = { id: entry.id, blob: largeBlob };
-  // Establish the old failure at the exact 200 MiB boundary before export.
-  await assert.rejects(decodeTimelineSaveFile(largeBlob), /超过 200 MiB.*停止导入/);
+  // Export must still avoid inflating the archive, even with an explicit cap.
+  await assert.rejects(decodeTimelineSaveFile(largeBlob, { maxDecompressedBytes: 200 * 1024 * 1024 }), /超过 200 MiB.*停止导入/);
   const result = await library.export(entry.id, PERSONAL_SAVE_KIND);
   assert.equal(result.format, 'gzip');
   assert.equal(result.cancelled, false);
@@ -71,8 +71,8 @@ try {
   stored = null;
   await assert.rejects(library.export(entry.id, PERSONAL_SAVE_KIND), /快照|文件|存档/);
   assert.equal(cancelCount, 4);
-  assert.equal(DEFAULT_MAX_DECOMPRESSED_BYTES, 200 * 1024 * 1024, 'external import limit is unchanged');
-  ok('cancel, wrong partition/account and missing snapshot remain safe; external import policy is unchanged');
+  assert.equal(DEFAULT_MAX_DECOMPRESSED_BYTES, Infinity, 'local import accepts large exported archives');
+  ok('cancel, wrong partition/account and missing snapshot remain safe');
 } finally {
   if (priorBridge === undefined) delete globalThis.Capacitor;
   else globalThis.Capacitor = priorBridge;

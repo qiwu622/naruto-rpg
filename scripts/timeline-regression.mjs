@@ -1,3 +1,4 @@
+import { listingTimelineNode } from '../js/core/timeline-node-codec.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
@@ -33,7 +34,7 @@ async function withTimelineDb(seed, fn, { failReplace = false, failCreate = fals
   };
   const stats = { mutationCount: 0 };
   const methods = [
-    'initDB', 'dbGet', 'dbGetAll', 'dbPut', 'dbDelete', 'dbClear',
+    'initDB', 'dbGet', 'dbGetAll', 'dbTimelineSummaries', 'dbPut', 'dbDelete', 'dbClear',
     'dbReplaceTimeline', 'dbCommitTimeline', 'dbMutateTimeline'
   ];
   const originals = Object.fromEntries(methods.map(name => [name, stateManager[name]]));
@@ -41,6 +42,7 @@ async function withTimelineDb(seed, fn, { failReplace = false, failCreate = fals
   stateManager.initDB = async () => ({});
   stateManager.dbGet = async (name, key) => clone(stores[name].get(key));
   stateManager.dbGetAll = async name => [...stores[name].values()].map(clone);
+  stateManager.dbTimelineSummaries = async () => [...stores.timeline_nodes.values()].map(listingTimelineNode);
   stateManager.dbPut = async (name, value) => {
     putCount++;
     if (failCreate && putCount === 2) throw new Error('synthetic create transaction failure');
@@ -419,7 +421,7 @@ await test('snapshotless archived nodes reject jump, branch switch, and prune be
   });
 });
 
-await test('timeline replacement uses one IndexedDB transaction for all three stores', async () => {
+await test('timeline replacement uses one IndexedDB transaction for graph and summary stores', async () => {
   const previousDb = stateManager._db;
   const operations = [];
   let transactionStores = null;
@@ -443,10 +445,11 @@ await test('timeline replacement uses one IndexedDB transaction for all three st
   };
   try {
     await stateManager.dbReplaceTimeline({ nodes: [rootNode], branches: [mainBranch], meta: rootMeta });
-    assert.deepEqual(transactionStores, ['timeline_nodes', 'timeline_branches', 'timeline_meta']);
+    assert.deepEqual(transactionStores, ['timeline_nodes', 'timeline_branches', 'timeline_meta', 'timeline_summaries']);
     assert.deepEqual(operations, [
-      'timeline_nodes:clear', 'timeline_branches:clear', 'timeline_meta:clear',
-      'timeline_nodes:put:node_root', 'timeline_branches:put:branch_main', 'timeline_meta:put:root'
+      'timeline_nodes:clear', 'timeline_summaries:clear', 'timeline_branches:clear', 'timeline_meta:clear',
+      'timeline_nodes:put:node_root', 'timeline_summaries:put:node_root', 'timeline_branches:put:branch_main', 'timeline_meta:put:root', 'timeline_meta:put:archive-revision',
+      'timeline_meta:put:summary-index-v1'
     ]);
   } finally {
     stateManager._db = previousDb;
@@ -2247,13 +2250,13 @@ await test('in-flight archive cannot resurrect turns deleted by pruneForward', a
     stateManager.restore(snapshot('grandchild'));
     stateManager.setSub('_meta', { current_node_id: 'node_grandchild', active_branch: 'branch_main' });
 
-    const originalGetAll = stateManager.dbGetAll;
+    const originalGetAll = stateManager.dbTimelineSummaries;
     let release;
     const gate = new Promise(resolve => { release = resolve; });
     let held = false;
-    stateManager.dbGetAll = async name => {
-      const result = await originalGetAll(name);
-      if (name === 'timeline_nodes' && !held) {
+    stateManager.dbTimelineSummaries = async () => {
+      const result = await originalGetAll();
+      if (!held) {
         held = true;
         await gate;
       }
@@ -2282,7 +2285,7 @@ await test('in-flight archive cannot resurrect turns deleted by pruneForward', a
       assert.equal(stores.timeline_nodes.get('node_root').children_ids.length, 1);
       await timelineSystem._archiveQueue;
     } finally {
-      stateManager.dbGetAll = originalGetAll;
+      stateManager.dbTimelineSummaries = originalGetAll;
     }
   }, { archive: true });
 });
@@ -2304,6 +2307,26 @@ await test('pipeline clears a stale timeline error after node creation succeeds'
   const clearAt = source.indexOf('this._lastTimelineError = null', createAt);
   assert.ok(createAt >= 0 && catchAt > createAt);
   assert.ok(clearAt > createAt && clearAt < catchAt);
+});
+
+await test('runtime node cache stays bounded even without automatic cold compression', async () => {
+  timelineSystem._nodeCache.clear();
+  for (let i = 0; i < 100; i++) timelineSystem._cacheNode(`bounded_${i}`, { id: `bounded_${i}`, state_snapshot: snapshot('cached') });
+  assert.equal(timelineSystem._nodeCache.size, 20);
+  assert.equal(timelineSystem._nodeCache.has('bounded_0'), false);
+  assert.equal(timelineSystem._nodeCache.has('bounded_99'), true);
+  timelineSystem._nodeCache.clear();
+});
+
+await test('an asynchronous cold-node write cannot overwrite a newer snapshot', async () => {
+  await withTimelineDb({ nodes: [rootNode], branches: [mainBranch], meta: [rootMeta] }, async stores => {
+    const result = await timelineSystem._writeNodeIfPresent(rootNode.id, async node => {
+      await stateManager.dbPut('timeline_nodes', { ...node, state_snapshot: { ...node.state_snapshot, changedDuringCompression: true } });
+      return { ...node, archived: true };
+    });
+    assert.equal(result, null);
+    assert.equal(stores.timeline_nodes.get(rootNode.id).state_snapshot.changedDuringCompression, true);
+  });
 });
 
 console.log(`\n${passed} timeline regression tests passed.`);

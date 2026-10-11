@@ -1,5 +1,10 @@
 ﻿export const timelineStyles = `
         :host { display: block; min-width: 0; height: 100%; overflow: hidden; position: relative; }
+        .history-pager { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin:0 0 12px; color:var(--text-secondary,#aaa); font:11px/1.5 var(--font-body,sans-serif); }
+        .history-pager > div { display:flex; gap:6px; }
+        .history-pager button { min-height:32px; padding:4px 10px; border:1px solid rgba(198,156,109,.22); border-radius:6px; color:var(--text-primary,#eee); background:rgba(198,156,109,.07); cursor:pointer; }
+        .history-pager button:hover:not(:disabled) { border-color:var(--c-kin,#c69c6d); background:rgba(198,156,109,.15); }
+        .history-pager button:disabled { opacity:.35; cursor:default; }
         .tl {
           display: flex; flex-direction: column; min-width: 0; height: 100%;
           overflow-x: hidden; overflow-y: auto; padding: 24px 16px;

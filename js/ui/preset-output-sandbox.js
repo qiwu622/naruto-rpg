@@ -286,14 +286,7 @@ export function mountPresetOutputSandbox(container, source, {
       return;
     }
     if (event.data.type === 'naruto:preset-resize' || event.data.type === 'resizeIframe') {
-      const scrollHost = iframe.closest?.('.chat-container');
-      const keepPinned = scrollHost
-        ? scrollHost.scrollHeight - scrollHost.scrollTop - scrollHost.clientHeight <= 180
-        : false;
       iframe.style.height = `${clampHeight(event.data.height)}px`;
-      if (keepPinned) requestAnimationFrame(() => {
-        if (scrollHost?.isConnected) scrollHost.scrollTop = scrollHost.scrollHeight;
-      });
       scheduleSandboxInteractionReady(iframe);
       return;
     }

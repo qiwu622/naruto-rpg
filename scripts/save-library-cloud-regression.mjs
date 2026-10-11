@@ -110,6 +110,9 @@ try {
   });
   assert.deepEqual(cloud.data, await page.evaluate(() => original)); assert.equal(cloud.entry.preview_data.branch_count, 1);
   await library.getByRole('button', { name: '云端管理', exact: true }).click(); await ready();
+  // Cloud listing intentionally does not keep the local panel busy. Wait for
+  // its HTTP result, rather than treating local readiness as network completion.
+  await library.locator('[data-cloud-id]').nth(1).waitFor();
   assert.equal(await library.locator('[data-cloud-id]').count(), 2);
   assert.match(await library.locator('#current-info').innerText(), /2 \/ 3 个槽位/);
   assert.equal(await library.getByRole('button', { name: '返回本机', exact: true }).count(), 1);
@@ -247,8 +250,11 @@ try {
       const node = await timelineSystem.getCurrentNode();
       eventBus.emit('pipeline:complete', { timelineNodeId: node.id, timelineError: '本地保存失败' }); await settle();
       const afterFailure = calls.length;
-      eventBus.emit('pipeline:complete', { timelineNodeId: node.id }); await settle();
-      return { afterCancel, afterPartial, afterMissing, afterFailure, count: calls.length, root: calls[0]?.scope.saveKey, payloadRoot: calls[0]?.data.saveData.meta.value.root_id };
+      eventBus.emit('pipeline:complete', { timelineNodeId: node.id });
+      for (let i = 0; i < 100 && !calls.length; i++) await settle();
+      const captured = calls[0]?.data.saveData;
+      const payload = captured?.timelineGzip ? await (await import('/js/core/timeline-file-codec.js')).decodeTimelineSaveFile(captured.timelineGzip) : captured;
+      return { afterCancel, afterPartial, afterMissing, afterFailure, count: calls.length, root: calls[0]?.scope.saveKey, payloadRoot: payload?.meta.value.root_id };
     } finally {
       localStorage.removeItem('naruto_auto_cloud_sync'); aiClient.isConfigured = isConfigured; cloudSave.scheduleQuickSave = schedule; app.pipeline.process = beforeProcess;
     }
@@ -272,6 +278,9 @@ try {
 
   await context.addCookies([cookie('cloud-test-b')]);
   await library.getByRole('button', { name: '刷新', exact: true }).click(); await ready();
+  // Cloud listing deliberately continues after the panel releases its busy
+  // flag. Wait for the new account's response, not the local refresh alone.
+  await library.locator('#current-info').filter({ hasText: '云端测试 B' }).waitFor();
   assert.equal(await library.locator('[data-cloud-id]').count(), 0); assert.match(await library.locator('#current-info').innerText(), /云端测试 B/);
   assert.match(await library.locator('#current-info').innerText(), /0 KB/);
   assert.equal(await page.evaluate(() => cloudSave.syncState.active.userId), 'cloud-test-b');

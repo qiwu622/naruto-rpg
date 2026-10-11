@@ -1,3 +1,13 @@
+## v3.6.4 客户端内更新
+
+安卓继续复用共用项目代码。启动、返回前台和恢复网络时检测更新；个人中心可手动检查。更新公告窗口显示下载进度，可关闭后继续游玩，下载由系统 DownloadManager 保持。下载完成后核对大小、SHA-256、包名、版本与当前安装签名，再唤起安卓安装界面；首次安装权限由用户在系统页授权，返回后继续安装。正文生成或切档期间不能启动安装。
+
+更新只操作专用下载目录，不读取或清理游戏数据库。取消、断网和下载失败不会影响本地游玩。旧版需通过既有入口覆盖安装本版一次，此后在客户端内完成更新；安装仍需要系统确认，不支持静默安装。
+
+实现：`js/core/app-update.js`、`js/ui/android-update-panel.js`、`AppUpdateSession.java`、`NarutoUpdaterPlugin.java`。协议参考 [Android DownloadManager](https://developer.android.com/reference/android/app/DownloadManager)、[安装权限](https://developer.android.com/reference/android/content/pm/PackageManager#canRequestPackageInstalls())。
+
+以下为历史开发及发布记录。
+
 ## v3.6.0 发布说明
 
 安卓继续打包共用项目代码，新增可选网站云端账号连接；联机入口已恢复。现有安装应覆盖升级，勿卸载旧版。APK、更新清单及公告通过现有网站下载接口发布；验证记录见 `docs/testing/release-v3.6.0.md`。以下带日期的记录保留当时状态，当前发布以本节及对应版本验收为准。

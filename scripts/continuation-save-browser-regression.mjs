@@ -38,7 +38,7 @@ try {
     app._bindEvents();
     await timelineSystem.importTimeline(data);
     window.originalEntry = await personalSaveLibrary.capture({ label: '完整主线与 IF 原档' });
-    window.originalChecksum = originalEntry.checksum;
+    window.originalChecksum = (await localSaveLibrary.readPackage(originalEntry.id, PERSONAL_SAVE_KIND)).checksum.value;
     window.originalPosition = stateManager.getSub('_meta').current_node_id;
     await eventBus.request('app:open-saves');
   }, makeContinuationFixture());
@@ -174,20 +174,25 @@ try {
   const failure = await page.evaluate(async () => {
     const count = (await localSaveLibrary.list(PERSONAL_SAVE_KIND)).length;
     const position = stateManager.getSub('_meta').current_node_id;
-    const put = IDBObjectStore.prototype.put;
-    IDBObjectStore.prototype.put = function(value, ...args) {
-      if (this.name === 'files') throw new DOMException('full', 'QuotaExceededError');
-      return put.call(this, value, ...args);
+    const { personalSaveLibrary } = await import('/js/core/personal-save-library.js');
+    const { runArchiveTask } = await import('/js/core/timeline-archive.js');
+    const originalTask = personalSaveLibrary.archiveTask;
+    personalSaveLibrary.archiveTask = (action, options, context) => runArchiveTask(stateManager._db, action, options, context);
+    const add = IDBObjectStore.prototype.add;
+    let added = 0;
+    IDBObjectStore.prototype.add = function(value, ...args) {
+      if (this.name === 'timeline_archive_nodes' && ++added === 5) throw new DOMException('full', 'QuotaExceededError');
+      return add.call(this, value, ...args);
     };
     let error;
     try { await eventBus.request('app:create-continuation-save', { sourceId: originalEntry.id, keepTurns: 10 }); }
     catch (failure) { error = failure.message; }
-    finally { IDBObjectStore.prototype.put = put; }
+    finally { IDBObjectStore.prototype.add = add; personalSaveLibrary.archiveTask = originalTask; }
     return { error, same: stateManager.getSub('_meta').current_node_id === position, count: (await localSaveLibrary.list(PERSONAL_SAVE_KIND)).length === count, original: (await localSaveLibrary.readPackage(originalEntry.id, PERSONAL_SAVE_KIND)).checksum.value === originalChecksum };
   });
   assert.match(failure.error, /空间不足/);
   assert.ok(failure.same && failure.count && failure.original);
   assert.deepEqual(errors, []);
-  ok('IndexedDB quota failure rolls back both directory/blob writes and preserves original/current progress');
+  ok('IndexedDB quota failure removes the incomplete archive and preserves original/current progress');
   console.log(`\n${passed} continuation browser regression groups passed; disposable data, no model calls.`);
 } finally { await browser?.close(); await server.close(); }

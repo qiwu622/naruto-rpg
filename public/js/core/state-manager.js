@@ -13,8 +13,9 @@ import {
 import { normalizeStateCommands } from './state-command-normalizer.js';
 import { createContinuityLedger, migrateLegacyMemory } from './continuity-ledger.js';
 
-const DB_NAME = 'naruto_rpg';
-const DB_VERSION = 1;
+import { openTimelineDB, SUMMARY_STORE, buildTimelineIndex, timelineRevision } from './timeline-db.js';
+import { listingTimelineNode } from './timeline-node-codec.js';
+import { normalizeHistoryViewTurns, DEFAULT_HISTORY_VIEW_TURNS } from './timeline-preferences.js';
 const STORE_NODES = 'timeline_nodes';
 const STORE_BRANCHES = 'timeline_branches';
 const STORE_META = 'timeline_meta';
@@ -72,11 +73,11 @@ class StateManager {
           textColor: '#e8e4d9', accentColor: '#eb613f', goldColor: '#c69c6d',
           backgroundColor: '#070a0e', backgroundImage: '', backgroundOpacity: 0.72,
           aiCardStyle: 'line', paragraphIndent: false, showVariableSummary: true,
-          reasoningOpen: true, musicEnabled: true, musicVolume: 45, musicLoop: true,
+          reasoningOpen: false, musicEnabled: true, musicVolume: 45, musicLoop: true,
           musicShuffle: false, bgmList: '', favorites: '', ambientList: '',
           presetCore: true, presetNumbers: true, presetOutput: true,
           presetStyle: true, presetWorld: true, presetAdapt: true,
-          tacticalCombat: false, autoArchive: true
+          tacticalCombat: false, autoArchive: true, historyViewTurns: DEFAULT_HISTORY_VIEW_TURNS
         }
       }
     };
@@ -810,6 +811,12 @@ class StateManager {
     if (liveBackgroundImage && normalized._ui?.settings) {
       normalized._ui.settings.backgroundImage = liveBackgroundImage;
     }
+    // Reading preferences belong to this device, not the historical turn.
+    // Old snapshots must not reopen reasoning after the player has closed it.
+    if (normalized._ui?.settings && typeof normalized._ui.settings === 'object') {
+      normalized._ui.settings.reasoningOpen = this.state?._ui?.settings?.reasoningOpen === true;
+      normalized._ui.settings.historyViewTurns = normalizeHistoryViewTurns(this.state?._ui?.settings?.historyViewTurns);
+    }
     const levelUpEvents = [];
     this._enforceBounds(normalized, { levelUpEvents, updateGuard: false });
     return { state: normalized, levelUpEvents };
@@ -1098,38 +1105,43 @@ class StateManager {
   }
 
   async initDB() {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onupgradeneeded = (e) => {
-        const db = e.target.result;
-        if (!db.objectStoreNames.contains(STORE_NODES)) {
-          const nodesStore = db.createObjectStore(STORE_NODES, { keyPath: 'id' });
-          nodesStore.createIndex('parent_id', 'parent_id', { unique: false });
-          nodesStore.createIndex('branch_id', 'branch_id', { unique: false });
-          nodesStore.createIndex('turn_number', 'turn_number', { unique: false });
-          nodesStore.createIndex('real_timestamp', 'real_timestamp', { unique: false });
-        }
-        if (!db.objectStoreNames.contains(STORE_BRANCHES)) {
-          const branchesStore = db.createObjectStore(STORE_BRANCHES, { keyPath: 'id' });
-          branchesStore.createIndex('is_active', 'is_active', { unique: false });
-        }
-        if (!db.objectStoreNames.contains(STORE_META)) {
-          db.createObjectStore(STORE_META, { keyPath: 'key' });
-        }
-      };
-      request.onsuccess = (e) => { this._db = e.target.result; resolve(this._db); };
-      request.onerror = (e) => reject(e.target.error);
-    });
+    if (this._db) return this._db;
+    if (!this._dbOpening) this._dbOpening = openTimelineDB().then(db => {
+      this._db = db;
+      db.onversionchange = () => { db.close(); this._db = null; this._dbOpening = null; };
+      return db;
+    }).catch(error => { this._dbOpening = null; throw error; });
+    return this._dbOpening;
+  }
+
+  async dbTimelineSummaries() {
+    if (!this._db) await this.initDB();
+    if (!this._indexOpening) this._indexOpening = (async () => {
+      if (typeof Worker === 'function') {
+        const { timelineStorageTask } = await import('./timeline-storage-client.js');
+        await timelineStorageTask('index');
+      } else await buildTimelineIndex(this._db);
+    })().catch(error => { this._indexOpening = null; throw error; });
+    await this._indexOpening;
+    return this.dbGetAll(SUMMARY_STORE);
   }
 
   async dbPut(storeName, data) {
     if (!this._db) await this.initDB();
     return new Promise((resolve, reject) => {
-      const tx = this._db.transaction(storeName, 'readwrite');
-      const store = tx.objectStore(storeName);
-      const request = store.put(data);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      const tx = this._db.transaction([...new Set([storeName, STORE_META, ...(storeName === STORE_NODES ? [SUMMARY_STORE] : [])])], 'readwrite');
+      let request, failure;
+      tx.oncomplete = () => resolve(request.result);
+      tx.onabort = () => reject(failure || tx.error);
+      tx.onerror = () => {};
+      try {
+        request = tx.objectStore(storeName).put(data);
+        if (storeName === STORE_NODES || storeName === STORE_BRANCHES || (storeName === STORE_META && data.key === 'root')) tx.objectStore(STORE_META).put(timelineRevision());
+        if (storeName === STORE_NODES) tx.objectStore(SUMMARY_STORE).put(listingTimelineNode(data));
+      } catch (error) {
+        failure = error;
+        try { tx.abort(); } catch { reject(error); }
+      }
     });
   }
 
@@ -1139,8 +1151,9 @@ class StateManager {
       const tx = this._db.transaction(storeName, 'readonly');
       const store = tx.objectStore(storeName);
       const request = store.get(key);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      tx.oncomplete = () => resolve(request.result);
+      tx.onabort = () => reject(tx.error);
+      tx.onerror = () => {};
     });
   }
 
@@ -1150,37 +1163,63 @@ class StateManager {
       const tx = this._db.transaction(storeName, 'readonly');
       const store = tx.objectStore(storeName);
       const request = query ? store.getAll(query) : store.getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      tx.oncomplete = () => resolve(request.result);
+      tx.onabort = () => reject(tx.error);
+      tx.onerror = () => {};
     });
   }
 
   async dbDelete(storeName, key) {
     if (!this._db) await this.initDB();
     return new Promise((resolve, reject) => {
-      const tx = this._db.transaction(storeName, 'readwrite');
+      const tx = this._db.transaction([...new Set([storeName, STORE_META, ...(storeName === STORE_NODES ? [SUMMARY_STORE] : [])])], 'readwrite');
       const store = tx.objectStore(storeName);
       const request = store.delete(key);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+      if (storeName === STORE_NODES || storeName === STORE_BRANCHES || (storeName === STORE_META && key === 'root')) tx.objectStore(STORE_META).put(timelineRevision());
+      if (storeName === STORE_NODES) tx.objectStore(SUMMARY_STORE).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+      tx.onerror = () => {};
+    });
+  }
+
+  async dbProjectAll(storeName, project) {
+    if (!this._db) await this.initDB();
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction(storeName, 'readonly');
+      const result = [];
+      const request = tx.objectStore(storeName).openCursor();
+      let projectionError;
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        try { result.push(project(cursor.value)); cursor.continue(); }
+        catch (error) { projectionError = error; tx.abort(); }
+      };
+      tx.oncomplete = () => resolve(result);
+      tx.onabort = () => reject(projectionError || tx.error);
+      tx.onerror = () => {};
     });
   }
 
   async dbClear(storeName) {
     if (!this._db) await this.initDB();
     return new Promise((resolve, reject) => {
-      const tx = this._db.transaction(storeName, 'readwrite');
+      const tx = this._db.transaction([...new Set([storeName, STORE_META, ...(storeName === STORE_NODES ? [SUMMARY_STORE] : [])])], 'readwrite');
       const store = tx.objectStore(storeName);
       const request = store.clear();
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+      tx.objectStore(STORE_META).put(timelineRevision());
+      if (storeName === STORE_NODES) tx.objectStore(SUMMARY_STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+      tx.onerror = () => {};
     });
   }
 
   async dbReplaceTimeline({ nodes, branches, meta }) {
     if (!this._db) await this.initDB();
     return new Promise((resolve, reject) => {
-      const tx = this._db.transaction([STORE_NODES, STORE_BRANCHES, STORE_META], 'readwrite');
+      const tx = this._db.transaction([STORE_NODES, STORE_BRANCHES, STORE_META, SUMMARY_STORE], 'readwrite');
       let settled = false;
       const fail = () => {
         if (settled) return;
@@ -1200,11 +1239,14 @@ class StateManager {
         const branchStore = tx.objectStore(STORE_BRANCHES);
         const metaStore = tx.objectStore(STORE_META);
         nodeStore.clear();
+        tx.objectStore(SUMMARY_STORE).clear();
         branchStore.clear();
         metaStore.clear();
-        for (const node of nodes) nodeStore.put(node);
+        for (const node of nodes) { nodeStore.put(node); tx.objectStore(SUMMARY_STORE).put(listingTimelineNode(node)); }
         for (const branch of branches) branchStore.put(branch);
         if (meta) metaStore.put(meta);
+        metaStore.put(timelineRevision());
+        metaStore.put({ key: 'summary-index-v1', value: true });
       } catch (error) {
         try { tx.abort(); } catch { /* transaction may already be inactive */ }
         if (!settled) {
@@ -1218,7 +1260,7 @@ class StateManager {
   async dbCommitTimeline({ nodes = [], branches = [], meta = null }) {
     if (!this._db) await this.initDB();
     return new Promise((resolve, reject) => {
-      const tx = this._db.transaction([STORE_NODES, STORE_BRANCHES, STORE_META], 'readwrite');
+      const tx = this._db.transaction([STORE_NODES, STORE_BRANCHES, STORE_META, SUMMARY_STORE], 'readwrite');
       let settled = false;
       const fail = () => {
         if (settled) return;
@@ -1237,9 +1279,10 @@ class StateManager {
         const nodeStore = tx.objectStore(STORE_NODES);
         const branchStore = tx.objectStore(STORE_BRANCHES);
         const metaStore = tx.objectStore(STORE_META);
-        for (const node of nodes) nodeStore.put(node);
+        for (const node of nodes) { nodeStore.put(node); tx.objectStore(SUMMARY_STORE).put(listingTimelineNode(node)); }
         for (const branch of branches) branchStore.put(branch);
         if (meta) metaStore.put(meta);
+        metaStore.put(timelineRevision());
       } catch (error) {
         try { tx.abort(); } catch { /* transaction may already be inactive */ }
         if (!settled) {
@@ -1254,7 +1297,7 @@ class StateManager {
     if (typeof mutator !== 'function') throw new TypeError('时间线事务需要同步变更函数');
     if (!this._db) await this.initDB();
     return new Promise((resolve, reject) => {
-      const tx = this._db.transaction([STORE_NODES, STORE_BRANCHES, STORE_META], 'readwrite');
+      const tx = this._db.transaction([STORE_NODES, STORE_BRANCHES, STORE_META, SUMMARY_STORE], 'readwrite');
       const nodeStore = tx.objectStore(STORE_NODES);
       const branchStore = tx.objectStore(STORE_BRANCHES);
       const metaStore = tx.objectStore(STORE_META);
@@ -1316,15 +1359,19 @@ class StateManager {
 
           if (mutation.replace === true) {
             nodeStore.clear();
+            tx.objectStore(SUMMARY_STORE).clear();
             branchStore.clear();
             metaStore.clear();
           }
-          for (const id of mutation.deleteNodeIds || []) nodeStore.delete(id);
+          for (const id of mutation.deleteNodeIds || []) { nodeStore.delete(id); tx.objectStore(SUMMARY_STORE).delete(id); }
           for (const id of mutation.deleteBranchIds || []) branchStore.delete(id);
           for (const key of mutation.deleteMetaKeys || []) metaStore.delete(key);
-          for (const node of mutation.nodes || []) nodeStore.put(node);
+          for (const node of mutation.nodes || []) { nodeStore.put(node); tx.objectStore(SUMMARY_STORE).put(listingTimelineNode(node)); }
           for (const branch of mutation.branches || []) branchStore.put(branch);
           if (mutation.meta) metaStore.put(mutation.meta);
+          if (mutation.replace === true) metaStore.put({ key: 'summary-index-v1', value: true });
+          if (mutation.replace || mutation.nodes?.length || mutation.branches?.length || mutation.meta
+            || mutation.deleteNodeIds?.length || mutation.deleteBranchIds?.length || mutation.deleteMetaKeys?.length) metaStore.put(timelineRevision());
           mutationResult = mutation.result;
         } catch (error) {
           abortWith(error);

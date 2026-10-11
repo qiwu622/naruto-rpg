@@ -1,4 +1,5 @@
 import { eventBus } from '../core/event-bus.js';
+import { stateManager } from '../core/state-manager.js';
 import { readTokenUsage } from '../core/deepseek-mode.js';
 import { ImageContractStreamFilter } from '../core/image-studio/contracts.js';
 
@@ -30,7 +31,8 @@ class AgentProgress extends HTMLElement {
     this._runtimeLines = [];
     this._cacheStats = null;
     this._agents = new Map();
-    this._detailOpen = true;
+    this._reasoningOpenPreference = stateManager.getSub('_ui')?.settings?.reasoningOpen === true;
+    this._detailOpen = this._reasoningOpenPreference;
     this._agentsRenderScheduled = false;
     this._lastAgentsRenderAt = 0;
     this._openAgentIds = new Set();
@@ -52,13 +54,35 @@ class AgentProgress extends HTMLElement {
       eventBus.on('agent:subagent-end', event => this._onSubagent(event, false)),
       eventBus.on('agent:character-fallback', event => this._onCharacterFallback(event)),
       eventBus.on('agent:audit', event => this._onAudit(event)),
-      eventBus.on('ai:usage', usage => this._onUsage(usage))
+      eventBus.on('ai:usage', usage => this._onUsage(usage)),
+      eventBus.on('settings:changed', () => this._syncReasoningPreference()),
+      eventBus.on('state:restored', () => this._syncReasoningPreference()),
+      eventBus.on('state:changed', ({ key } = {}) => {
+        if (key === '_ui' || key?.startsWith('_ui.') || key?.startsWith('/_ui/')) this._syncReasoningPreference();
+      })
     );
   }
 
   disconnectedCallback() {
     this._unsubs.forEach(fn => fn?.());
     this._unsubs = [];
+  }
+
+  _syncReasoningPreference() {
+    const isOpen = stateManager.getSub('_ui')?.settings?.reasoningOpen === true;
+    if (isOpen === this._reasoningOpenPreference) return;
+    this._reasoningOpenPreference = isOpen;
+    this._setDetailsOpen(isOpen);
+  }
+
+  _setDetailsOpen(isOpen) {
+    this._detailOpen = isOpen;
+    this._detailPanelEl?.classList.toggle('collapsed', !isOpen);
+    this._detailToggleEl?.setAttribute('aria-expanded', String(isOpen));
+    const arrow = this._detailToggleEl?.querySelector('.dt-arrow');
+    if (arrow) arrow.textContent = isOpen ? '▾' : '▸';
+    if (this._streamPortalEl) this._streamPortalEl.hidden = !isOpen;
+    if (isOpen) this._renderAgents();
   }
 
   _onProgress(stage, detail) {
@@ -106,11 +130,9 @@ class AgentProgress extends HTMLElement {
 
     this._streamText += this._streamFilter.push(chunk);
     if (this._streamEl) {
-      const displayLength = 1000;
-      this._streamEl.textContent = this._streamText.length > displayLength
-        ? `...${this._streamText.slice(-displayLength)}`
-        : this._streamText;
-      this._streamEl.scrollTop = this._streamEl.scrollHeight;
+      // Keep the current stage readable while it grows, including the earlier
+      // text the player scrolled back to. Appending never pins to the bottom.
+      this._streamEl.textContent = this._streamText;
     }
   }
 
@@ -311,6 +333,16 @@ class AgentProgress extends HTMLElement {
       listEl.innerHTML = '<div class="ad-empty">暂无子模型调用</div>';
       return;
     }
+    const panelTop = this._detailPanelEl?.scrollTop || 0;
+    const positions = new Map();
+    for (const detail of listEl.querySelectorAll('.agent-detail')) {
+      const id = detail.dataset.agentId;
+      if (detail.open) this._openAgentIds.add(id);
+      else this._openAgentIds.delete(id);
+      positions.set(id, new Map([...detail.querySelectorAll('pre[data-agent-section]')].map(pre => [
+        pre.dataset.agentSection, { top: pre.scrollTop, left: pre.scrollLeft }
+      ])));
+    }
     const sorted = [...this._agents.values()].sort((a, b) => a.startedAt - b.startedAt);
     listEl.innerHTML = sorted.map(entry => {
       const open = this._openAgentIds.has(entry.id) ? ' open' : '';
@@ -319,13 +351,13 @@ class AgentProgress extends HTMLElement {
       const mode = entry.mode ? ` · ${entry.mode === 'native-tools' ? '原生工具' : '文本协议'}` : '';
       const statusCls = entry.status === '完成' ? 'ad-ok' : (entry.status === '失败' || entry.status === '降级' ? 'ad-bad' : 'ad-run');
       const status = entry.status || (entry.reasoning || entry.output ? '运行中' : '');
-      const fallback = entry.fallbackReason ? `<div class="ad-section"><div class="ad-section-title ad-warn">降级原因</div><pre>${this._esc(entry.fallbackReason)}</pre></div>` : '';
+      const fallback = entry.fallbackReason ? `<div class="ad-section"><div class="ad-section-title ad-warn">降级原因</div><pre data-agent-section="fallback">${this._esc(entry.fallbackReason)}</pre></div>` : '';
       const reasoning = entry.reasoning
-        ? `<div class="ad-section"><div class="ad-section-title">思维链</div><pre>${this._esc(entry.reasoning)}</pre></div>` : '';
+        ? `<div class="ad-section"><div class="ad-section-title">思维链</div><pre data-agent-section="reasoning">${this._esc(entry.reasoning)}</pre></div>` : '';
       const output = entry.output
-        ? `<div class="ad-section"><div class="ad-section-title">输出</div><pre>${this._esc(entry.output)}</pre></div>` : '';
+        ? `<div class="ad-section"><div class="ad-section-title">输出</div><pre data-agent-section="output">${this._esc(entry.output)}</pre></div>` : '';
       const tools = entry.tools.length
-        ? `<div class="ad-section"><div class="ad-section-title">工具步骤</div><pre>${this._esc(entry.tools.join('\n'))}</pre></div>` : '';
+        ? `<div class="ad-section"><div class="ad-section-title">工具步骤</div><pre data-agent-section="tools">${this._esc(entry.tools.join('\n'))}</pre></div>` : '';
       return `
         <details class="agent-detail"${open} data-agent-id="${this._escAttr(entry.id)}">
           <summary>
@@ -342,12 +374,18 @@ class AgentProgress extends HTMLElement {
         </details>`;
     }).join('');
     listEl.querySelectorAll('.agent-detail').forEach(details => {
+      for (const pre of details.querySelectorAll('pre[data-agent-section]')) {
+        const position = positions.get(details.dataset.agentId)?.get(pre.dataset.agentSection);
+        if (position) { pre.scrollTop = position.top; pre.scrollLeft = position.left; }
+      }
       details.addEventListener('toggle', () => {
+        if (!details.isConnected) return;
         const id = details.dataset.agentId;
         if (details.open) this._openAgentIds.add(id);
         else this._openAgentIds.delete(id);
       });
     });
+    if (this._detailPanelEl) this._detailPanelEl.scrollTop = panelTop;
   }
 
   _esc(value) { return String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -621,6 +659,7 @@ class AgentProgress extends HTMLElement {
         .stream-content {
           height: 100%;
           overflow-y: auto;
+          overflow-anchor: none;
           font-family: var(--font-title, 'Noto Serif SC', serif);
           font-size: 14px;
           line-height: 2.2;
@@ -690,6 +729,7 @@ class AgentProgress extends HTMLElement {
           padding: 10px;
           max-height: 320px;
           overflow-y: auto;
+          overflow-anchor: none;
         }
         .detail-panel.collapsed { display: none; }
         .ad-empty { color: rgba(232,228,217,0.45); font-size: 11px; padding: 6px 4px; letter-spacing: 1px; }
@@ -787,20 +827,21 @@ class AgentProgress extends HTMLElement {
         <div class="cache-status" id="cache-status">缓存 0/0 · 0%</div>
       </div>
 
-      <div class="stream-portal">
+      <div class="stream-portal" ${this._detailOpen ? '' : 'hidden'}>
         <div class="stream-content" id="stream"></div>
       </div>
 
-      <button type="button" class="detail-toggle" id="detail-toggle" aria-expanded="true">
-        <span class="dt-arrow">▾</span> 子模型推演 · 点击子项查看思考与输出
+      <button type="button" class="detail-toggle" id="detail-toggle" aria-expanded="${this._detailOpen}">
+        <span class="dt-arrow">${this._detailOpen ? '▾' : '▸'}</span> 子模型推演 · 点击子项查看思考与输出
       </button>
-      <div class="detail-panel" id="detail-panel">
+      <div class="detail-panel${this._detailOpen ? '' : ' collapsed'}" id="detail-panel">
         <div id="detail-list"><div class="ad-empty">暂无子模型调用</div></div>
       </div>
     `;
 
     this._stagesEl = this.shadowRoot.getElementById('stages');
     this._streamEl = this.shadowRoot.getElementById('stream');
+    this._streamPortalEl = this.shadowRoot.querySelector('.stream-portal');
     this._fillEl = this.shadowRoot.getElementById('meridian-fill');
     this._statusTextEl = this.shadowRoot.getElementById('status-text');
     this._statusGlowEl = this.shadowRoot.getElementById('status-glow');
@@ -811,11 +852,7 @@ class AgentProgress extends HTMLElement {
     this._detailListEl = this.shadowRoot.getElementById('detail-list');
     this._detailPanelEl = this.shadowRoot.getElementById('detail-panel');
     this._detailToggleEl.addEventListener('click', () => {
-      this._detailOpen = !this._detailOpen;
-      this._detailPanelEl.classList.toggle('collapsed', !this._detailOpen);
-      this._detailToggleEl.querySelector('.dt-arrow').textContent = this._detailOpen ? '▾' : '▸';
-      this._detailToggleEl.setAttribute('aria-expanded', String(this._detailOpen));
-      if (this._detailOpen) this._renderAgents();
+      this._setDetailsOpen(!this._detailOpen);
     });
     this._renderAgents();
     this._update();

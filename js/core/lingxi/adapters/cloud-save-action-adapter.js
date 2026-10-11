@@ -93,7 +93,9 @@ function publicSaveMeta(save) {
 }
 
 async function defaultBuildSaveSnapshot(timelineSystem, stateManager) {
-  const data = await timelineSystem.getExportData({ includeArchive: false });
+  const data = timelineSystem.supportsArchiveStorage?.()
+    ? { timelineGzip: (await timelineSystem.exportCurrentStream({ compression: 'gzip' })).blob }
+    : await timelineSystem.getExportData({ includeArchive: false });
   const state = stateManager?.get?.() || {};
   return {
     saveData: data,

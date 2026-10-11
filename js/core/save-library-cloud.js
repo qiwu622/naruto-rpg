@@ -67,10 +67,14 @@ export class SaveLibraryCloud {
     if (!name || name.length > 50) throw new Error('云存档名称需要 1 至 50 个字');
     const user = await this.requireUser();
     const entry = await this.library.get(localId, PERSONAL_SAVE_KIND);
-    const pack = await this.library.readPackage(localId, PERSONAL_SAVE_KIND);
-    const data = this.personal.normalize(pack.payload);
-    const preview = { name: entry.character || '', location: entry.location || '', time: Date.now(), turn: entry.turn, branch_count: data.branches.filter(branch => branch.id !== 'branch_main').length, branch_name: entry.branchName || '', source_save_id: localId };
-    const scope = continuationSaveScope(data);
+    let data;
+    if (entry.storage === 'timeline_archive') {
+      const encoded = await this.library.archiveTask('export', { id: localId, payloadOnly: true });
+      if (encoded.format !== 'gzip') throw new Error('当前环境缺少 gzip 支持，请先导出本地备份');
+      data = { timelineGzip: encoded.blob };
+    } else data = this.personal.normalize((await this.library.readPackage(localId, PERSONAL_SAVE_KIND)).payload);
+    const preview = { name: entry.character || '', location: entry.location || '', time: Date.now(), turn: entry.turn, branch_count: entry.branchCount ?? data.branches?.filter(branch => branch.id !== 'branch_main').length ?? 0, branch_name: entry.branchName || '', source_save_id: localId };
+    const scope = entry.continuation || continuationSaveScope(data);
     if (scope) preview.continuation = { from_turn: scope.from_turn, through_turn: scope.through_turn };
     if (saveId) {
       const remote = await this.owned(saveId);

@@ -1,4 +1,4 @@
-import { TIMELINE_NODE_PAYLOAD_ENCODING } from './timeline-save-schema.js';
+import { TIMELINE_NODE_PAYLOAD_ENCODING, findForbiddenTimelineMedia } from './timeline-save-schema.js';
 
 export { TIMELINE_NODE_PAYLOAD_ENCODING };
 export const TIMELINE_HOT_WINDOW = 20;
@@ -27,26 +27,24 @@ export function isCompressedTimelineNode(node) {
     && node.payload != null;
 }
 
-const LISTING_OMIT = new Set([
-  'payload',
-  'state_snapshot',
-  'clean_response',
-  'shinobi_daily',
-  'media',
-  'maintenance',
-  'maintenance_history',
-  'continuity_delta',
-  'chat_history',
-  'chat_history_delta'
-]);
-
 export function listingTimelineNode(node) {
   if (!isRecord(node)) return node;
   const rest = {};
-  for (const [key, value] of Object.entries(node)) {
-    if (LISTING_OMIT.has(key)) continue;
-    rest[key] = value;
+  // An allow-list prevents future snapshot/memory fields from silently making
+  // the directory as large as the archive it is meant to index.
+  for (const key of ['id', 'parent_id', 'children_ids', 'branch_id', 'turn_number', 'depth',
+    'created_at', 'real_timestamp', 'archived', 'archived_at', 'is_checkpoint', 'branch_anchor', 'tags', 'payload_encoding']) {
+    if (node[key] !== undefined) rest[key] = node[key];
   }
+  rest.summary = String(node.summary || node.ai_response_summary || node.player_input || '').slice(0, 1000);
+  rest.game_time = node.game_time || node.state_snapshot?.['世界·时间'] || '';
+  rest.location = String(node.location || snapshotLocation(node.state_snapshot)).slice(0, 120);
+  const smallRecord = record => record && Object.fromEntries(['type', 'label', 'title', 'reason', 'created_at', 'createdAt', 'proposal_id', 'proposalId', 'previous_node_id']
+    .filter(key => record[key] != null).map(key => [key, typeof record[key] === 'string' ? record[key].slice(0, 500) : record[key]]));
+  if (node.maintenance) rest.maintenance = smallRecord(node.maintenance);
+  if (node.maintenance_history?.length) rest.maintenance_history = node.maintenance_history.map(smallRecord);
+  rest.needs_media_cleanup = !isCompressedTimelineNode(node) && Boolean(findForbiddenTimelineMedia(node));
+  rest.estimated_bytes = estimateTimelineNodeBytes(node);
   if (isCompressedTimelineNode(node)) rest.payload_bytes = payloadByteLength(node.payload);
   return rest;
 }

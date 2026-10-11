@@ -364,7 +364,8 @@ export class CloudSaveClient {
   }
 
   async _buildMultipart(slotName, saveData, previewData, capabilities, expectedRevision) {
-    const encoded = await encodeTimelineSave(saveData, { compression: 'gzip' });
+    const encoded = saveData?.timelineGzip instanceof Blob
+      ? { blob: saveData.timelineGzip } : await encodeTimelineSave(saveData, { compression: 'gzip' });
     if (encoded.blob.size > capabilities.max_compressed_bytes) {
       throw new CloudSaveError(
         `压缩后的存档超过 ${formatBytes(capabilities.max_compressed_bytes)} 上限`,
@@ -382,6 +383,7 @@ export class CloudSaveClient {
   }
 
   async _buildLegacyJsonBody(slotName, saveData, previewData, capabilities, expectedRevision) {
+    if (saveData?.timelineGzip instanceof Blob) throw new CloudSaveError('服务器需要支持 gzip 存档上传。本地备份已保留。', { code: 'GZIP_UPLOAD_REQUIRED' });
     const encoded = await encodeTimelineSave(saveData, { compression: 'json' });
     if (encoded.blob.size > capabilities.legacy_json_max_bytes) {
       throw new CloudSaveError(

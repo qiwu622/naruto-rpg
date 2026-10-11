@@ -47,7 +47,7 @@ async function walk(directory) {
   }
 }
 await walk(payload);
-for (const relative of ['index.html', 'manifest.json', 'sw.js', 'announcements.html']) {
+for (const relative of ['index.html', 'manifest.json', 'sw.js', 'announcements.html', 'recovery.html']) {
   const bytes = await fs.readFile(path.join(root, relative));
   const expected = relative.endsWith('.html') ? Buffer.from(bytes.toString().replace(/\?v=\d+/g, '?v=' + build)) : bytes;
   if (hash(expected) !== files['static/' + relative]?.sha256) throw new Error('Stale static entry: ' + relative);

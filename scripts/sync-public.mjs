@@ -6,7 +6,7 @@ import { generateAnnouncements } from './generate-announcements.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const publicDir = path.join(root, 'public');
-const sharedFiles = ['index.html', 'manifest.json', 'sw.js', 'announcements.html'];
+const sharedFiles = ['index.html', 'manifest.json', 'sw.js', 'announcements.html', 'recovery.html'];
 const sharedDirectories = [
   { name: 'js', publicOnly: [] },
   { name: 'css', publicOnly: [] },

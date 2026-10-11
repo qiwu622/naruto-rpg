@@ -1,16 +1,18 @@
 import { timelineSystem } from '../systems/timeline-system.js';
 import { assertTimelineSave } from './timeline-save-schema.js';
-import { buildContinuationCopy, continuationSaveScope } from './continuation-save.js';
+import { buildContinuationCopy, continuationSaveScope, DEFAULT_CONTINUATION_TURNS } from './continuation-save.js';
+import { timelineStorageTask } from './timeline-storage-client.js';
 import {
   localSaveLibrary, PERSONAL_SAVE_KIND, SAVE_PACKAGE_SCHEMA,
   cleanSaveData, createSavePackage, validateSavePackage
 } from './save-library.js';
 
 export class PersonalSaveLibrary {
-  constructor({ library = localSaveLibrary, timeline = timelineSystem } = {}) {
+  constructor({ library = localSaveLibrary, timeline = timelineSystem, archiveTask = timelineStorageTask } = {}) {
     this.library = library;
     this.timeline = timeline;
     this._operation = null;
+    this.archiveTask = archiveTask;
   }
 
   // A single tab cannot clear/switch while a second library operation is taking
@@ -54,15 +56,23 @@ export class PersonalSaveLibrary {
     }, pack);
   }
 
-  async capture({ label = '', reason = 'manual' } = {}) {
+  async capture({ label = '', reason = 'manual', onProgress = () => {} } = {}) {
+    if (this.timeline.supportsArchiveStorage?.()) return this.timeline.captureArchive({ label, reason }, { onProgress });
     const data = await this.timeline.getExportData({ includeArchive: true });
     if (!data.nodes?.length) return null;
     return this.store(data, { label, reason });
   }
 
-  async createContinuation({ sourceId = '', keepTurns = 50, label = '', onProgress = () => {} } = {}) {
+  async createContinuation({ sourceId = '', keepTurns = DEFAULT_CONTINUATION_TURNS, label = '', onProgress = () => {} } = {}) {
     return this.exclusive(async () => {
       let data, source;
+      if (this.timeline.supportsArchiveStorage?.() && (!sourceId || String(sourceId).startsWith('archive:'))) {
+        source = sourceId ? await this.library.get(sourceId, PERSONAL_SAVE_KIND)
+          : await this.timeline.captureArchive({ reason: 'before-continuation' }, { onProgress });
+        if (!source) throw new Error('当前还没有可续玩的个人进度');
+        const entry = await this.archiveTask('create-continuation', { id: source.id, keepTurns, label: label || `${source.label} · 轻量续玩` }, { onProgress });
+        return { entry, source };
+      }
       if (sourceId) {
         onProgress('正在读取并校验原存档…');
         source = await this.library.get(sourceId, PERSONAL_SAVE_KIND);
@@ -95,6 +105,7 @@ export class PersonalSaveLibrary {
 
   async load(id) {
     return this.exclusive(async () => {
+      if (String(id).startsWith('archive:') && this.timeline.supportsArchiveStorage?.()) return this.timeline.restoreArchive(id);
       const pack = await this.library.readPackage(id, PERSONAL_SAVE_KIND);
       const data = this.normalize(pack.payload);
       await this.capture({ reason: 'before-load' });
@@ -104,6 +115,7 @@ export class PersonalSaveLibrary {
 
   async startNew() {
     return this.exclusive(async () => {
+      if (this.timeline.supportsArchiveStorage?.()) return this.timeline.archiveAndReset();
       await this.capture({ reason: 'before-new-game' });
       await this.timeline.emergencyReset();
     });

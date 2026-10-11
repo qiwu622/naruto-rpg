@@ -109,19 +109,24 @@ try {
   ok('gzip and legacy JSON imports coexist; corruption, future schema and cyclic tree reject without overwrite or credentials');
 
   const quota = await page.evaluate(async () => {
-    // Force a failure inside the actual entries/files transaction, after the
+    // Force a failure inside the actual archive transaction, after the
     // metadata read, not a mock of the high-level save operation.
     await seed('配额测试丙');
     const before = await stateManager.dbGetAll('timeline_nodes');
     const count = (await localSaveLibrary.list(PERSONAL_SAVE_KIND)).length;
     const original = IDBObjectStore.prototype.put;
     IDBObjectStore.prototype.put = function (value, ...args) {
-      if (this.name === 'files') throw new DOMException('full', 'QuotaExceededError');
+      if (this.name === 'timeline_archives') throw new DOMException('full', 'QuotaExceededError');
       return original.call(this, value, ...args);
     };
+    const originalCapture = timelineSystem.captureArchive;
+    const { captureTimelineArchive } = await import('/js/core/timeline-archive.js');
+    // Execute the worker's same transaction implementation in this realm so
+    // the IndexedDB quota injection reaches the actual write, not a mock.
+    timelineSystem.captureArchive = options => captureTimelineArchive(stateManager._db, options);
     let error = '';
     try { await personalSaveLibrary.startNew(); } catch (e) { error = e.message; }
-    finally { IDBObjectStore.prototype.put = original; }
+    finally { IDBObjectStore.prototype.put = original; timelineSystem.captureArchive = originalCapture; }
     return { error, unchanged: JSON.stringify(before) === JSON.stringify(await stateManager.dbGetAll('timeline_nodes')), noPartialEntry: count === (await localSaveLibrary.list(PERSONAL_SAVE_KIND)).length };
   });
   assert.match(quota.error, /空间不足/); assert.ok(quota.unchanged); assert.ok(quota.noPartialEntry);
@@ -165,6 +170,7 @@ try {
   await page.evaluate(() => eventBus.request('app:open-saves', { kind: ROOM_SAVE_KIND }));
   const library = page.locator('naruto-save-library').last();
   assert.equal(await page.locator('#btn-multiplayer').count(), 1);
+  await library.getByRole('button', { name: '重新进入', exact: true }).first().waitFor();
   assert.equal(await library.getByRole('button', { name: '重新进入', exact: true }).count(), 2);
   await library.getByRole('button', { name: '查看快照', exact: true }).first().click();
   await library.locator('#preview').waitFor({ state: 'visible' });

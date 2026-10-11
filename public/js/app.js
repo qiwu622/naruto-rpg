@@ -1,3 +1,4 @@
+import { escHtml } from './utils/format.js';
 import { stateManager } from './core/state-manager.js';
 import { listPersonaProfiles, deletePersonaProfile } from './core/persona-profiles.js';
 import { aiClient, isTavernEnv } from './core/ai-client.js';
@@ -40,9 +41,9 @@ import { isNativeAndroidApp, usesProjectServerFeatures, isMultiplayerEntryVisibl
 import {
   ANDROID_APP_DOWNLOAD_URL,
   ANDROID_APP_VERSION,
-  formatAndroidUpdateMessage,
   appUpdateService
 } from './core/app-update.js';
+import { openAndroidUpdatePanel } from './ui/android-update-panel.js';
 
 import { appShell } from './ui/app-shell.js';
 import { atmosphereManager } from './ui/atmosphere-manager.js';
@@ -292,14 +293,9 @@ class NarutoRPGApp {
 
     this._appUpdatePromptOpen = true;
     try {
-      const accepted = await customElements.get('game-modal').confirm({
-        title: `Android ${result.latestVersion} 更新公告`,
-        message: formatAndroidUpdateMessage(result),
-        okLabel: '下载更新',
-        cancelLabel: '稍后提醒'
+      await openAndroidUpdatePanel(result, {
+        canInstall: () => !this.pipeline?.isProcessing && !this._saveTransition
       });
-      if (accepted) await appUpdateService.openDownload();
-      else appUpdateService.snoozeAutomaticPrompt(result);
     } finally { this._appUpdatePromptOpen = false; }
     return result;
   }
@@ -379,17 +375,13 @@ class NarutoRPGApp {
     });
     eventBus.on('app:open-saves', async (options = {}) => {
       await this._refreshCloudSyncContext();
-      // Capture the legacy working timeline on first use, without replacing it.
-      let migrationError = null;
-      if (!this.pipeline?.isProcessing && !this._saveTransition && !this._multiplayerOverlay?.panel?.controller?.state?.roomId) {
-        try { await this._personalSaveOperation(() => personalSaveLibrary.capture({ reason: 'library-open' })); }
-        catch (error) { migrationError = error; }
-      }
-      const modal = await openSaveLibrary(options);
-      if (migrationError) eventBus.emit('app:toast', `当前个人档未备份：${migrationError.message}`);
-      return modal;
+      // Browsing must not hold the save lock behind an unopened panel. A large
+      // hidden backup let a second entry click expose an apparently idle panel
+      // whose very first Save was rejected. Explicit save/load/new-game actions
+      // already capture the working timeline before any replacement.
+      return openSaveLibrary(options);
     });
-    eventBus.on('app:save-personal', () => this._personalSaveOperation(() => personalSaveLibrary.capture()));
+    eventBus.on('app:save-personal', (options = {}) => this._personalSaveOperation(() => personalSaveLibrary.capture(options)));
     eventBus.on('app:create-continuation-save', (options = {}) => this._personalSaveOperation(() => personalSaveLibrary.createContinuation(options)));
     eventBus.on('app:load-personal-save', ({ id }) => this._personalSaveOperation(async () => {
       this._clearCloudSyncContext();
@@ -917,13 +909,15 @@ class NarutoRPGApp {
     scope ||= await this._refreshCloudSyncContext();
     if (!scope?.userId || !scope.saveKey) throw new Error('请先登录并保存当前个人进度');
     return cloudSave.scheduleQuickSave('默认云存档', async () => {
-      const data = await timelineSystem.getExportData({ includeArchive: true });
+      const streamed = timelineSystem.supportsArchiveStorage() ? await timelineSystem.exportCurrentStream({ compression: 'gzip' }) : null;
+      const data = streamed ? { meta: streamed.meta, branches: streamed.branches, nodes: [streamed.current] }
+        : await timelineSystem.getExportData({ includeArchive: true });
       if (data.meta?.value?.root_id !== scope.saveKey) throw new Error('当前个人存档已切换，已取消旧存档的云端同步');
       const current = data.nodes.find(node => node.id === data.meta?.value?.current_id);
       const state = current?.state_snapshot || {};
       const continuation = continuationSaveScope(data);
       return {
-        saveData: data,
+        saveData: streamed ? { timelineGzip: streamed.blob } : data,
         previewData: {
           name: state.player?.name || state['玩家·姓名'] || '未知',
           location: state.world_state?.current_location || state['世界·地点'] || '未知',
@@ -976,7 +970,7 @@ class NarutoRPGApp {
       } else {
         console.warn('[NarutoRPG] Save game node not found in timeline_nodes.');
         // 元数据存在但节点丢失：尝试查找任意可用的节点
-        const allNodes = await stateManager.dbGetAll('timeline_nodes');
+        const allNodes = await timelineSystem.getNodeSummaries();
         if (allNodes && allNodes.length > 0) {
           console.log('[NarutoRPG] Attempting recovery using fallback node...');
           const fallbackRaw = allNodes.sort((a, b) => (b.turn_number || 0) - (a.turn_number || 0))[0];
@@ -1032,8 +1026,7 @@ class NarutoRPGApp {
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (!hadController || reloadStarted) return;
       reloadStarted = true;
-      console.log('[SW] New version activated, reloading...');
-      window.location.reload();
+      this._sendSystemMessage('更新已就绪。请保存当前进度后手动刷新，游戏不会自动重载。');
     }, { once: true });
 
     navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then((registration) => {
@@ -1583,7 +1576,8 @@ class NarutoRPGApp {
 
   async _personalSaveOperation(operation) {
     if (this._multiplayerOverlay?.panel?.controller?.state?.roomId) throw new Error('请先退出联机房间，再保存或切换个人档');
-    if (this.pipeline?.isProcessing || this._saveTransition) throw new Error('正文正在生成或存档正在切换，请等待完成后再操作');
+    if (this.pipeline?.isProcessing) throw new Error('本回合正在生成正文或更新变量，请等待完成后再操作');
+    if (this._saveTransition) throw new Error('存档操作正在进行，请等待本次保存或切换完成后再操作');
     this._saveTransition = true;
     try { return await operation(); } finally { this._saveTransition = false; }
   }
@@ -1795,14 +1789,14 @@ class NarutoRPGApp {
 
 document.addEventListener('DOMContentLoaded', () => {
   const app = new NarutoRPGApp();
-  app.init().catch(err => {
+  app.init().then(() => document.getElementById('boot-recovery')?.remove()).catch(err => {
     console.error('[NarutoRPG] Fatal error:', err);
     const container = document.getElementById('app');
     if (container) {
       container.innerHTML = `<div style="padding:40px;color:#e8e4d9;font-family:serif;text-align:center;">
         <h2 style="letter-spacing:4px;">忍者手记</h2>
-        <p style="color:#eb613f;margin-top:16px;">初始化失败: ${err.message}</p>
-        <p style="color:#a39f98;font-size:12px;margin-top:8px;">请检查浏览器控制台获取详细信息</p>
+        <p style="color:#eb613f;margin-top:16px;">初始化失败: ${escHtml(err.message)}</p>
+        <p style="color:#a39f98;font-size:12px;margin-top:8px;">原档仍在本地。请打开 <a href="recovery.html" style="color:#d4b18a">存档救援</a> 先备份，再生成续玩副本。</p>
       </div>`;
     }
   });

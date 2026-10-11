@@ -1,14 +1,20 @@
 import { isNativeAndroidApp } from './runtime-platform.js';
-import { openAndroidDownload } from './file-export.js';
 
-export const ANDROID_APP_VERSION = '3.6.0';
-export const ANDROID_APP_VERSION_CODE = 30600;
+export const ANDROID_APP_VERSION = '3.6.4';
+export const ANDROID_APP_VERSION_CODE = 30604;
 export const ANDROID_UPDATE_MANIFEST_URL = 'https://www.qiwu.asia/app/android/update.json';
 export const ANDROID_APP_DOWNLOAD_URL = 'https://www.qiwu.asia/app/android/naruto-rpg.apk';
 
 const SNOOZED_UPDATE_KEY = 'naruto_android_update_snoozed';
 const KNOWN_UPDATE_KEY = 'naruto_android_known_update';
 const REMIND_AFTER_MS = 24 * 60 * 60 * 1000;
+
+export function getNativeUpdater() {
+  if (!isNativeAndroidApp()) return null;
+  const bridge = globalThis.Capacitor;
+  if (typeof bridge?.isPluginAvailable === 'function' && !bridge.isPluginAvailable('NarutoUpdater')) return null;
+  return typeof bridge?.registerPlugin === 'function' ? bridge.registerPlugin('NarutoUpdater') : bridge?.Plugins?.NarutoUpdater || null;
+}
 
 function readStorage(storage, key) {
   try { return storage?.getItem?.(key) ?? null; }
@@ -43,6 +49,8 @@ export function normalizeAndroidUpdateManifest(value) {
     throw new Error('更新信息中的 Android 下载链接无效');
   }
   return Object.freeze({ platform: 'android', version, versionCode, apkUrl,
+    sha256: /^[a-f0-9]{64}$/i.test(String(value.sha256 || '')) ? String(value.sha256).toLowerCase() : '',
+    sizeBytes: Number.isSafeInteger(value.sizeBytes) && value.sizeBytes > 0 ? value.sizeBytes : 0,
     releaseNotes: Array.isArray(value.releaseNotes) ? value.releaseNotes.filter(item => typeof item === 'string' && item.trim()) : [],
     announcement: typeof value.announcement === 'string' ? value.announcement.trim() : '',
     publishedAt: typeof value.publishedAt === 'string' ? value.publishedAt.trim() : ''
@@ -54,7 +62,7 @@ export function formatAndroidUpdateMessage(result) {
   if (result.publishedAt) parts.push(`发布时间：${result.publishedAt}`);
   if (result.releaseNotes?.length) parts.push('更新内容\n' + result.releaseNotes.map(item => `• ${item}`).join('\n'));
   if (result.announcement) parts.push('公告\n' + result.announcement);
-  parts.push('下载后安装即可更新，现有本地存档会保留。');
+  parts.push('在 App 内下载并安装更新，现有本地存档保留。安装前请等待当前回合保存完成。');
   return parts.join('\n\n');
 }
 
@@ -66,6 +74,7 @@ export class AndroidAppUpdateService {
     currentVersion = ANDROID_APP_VERSION,
     currentVersionCode = ANDROID_APP_VERSION_CODE,
     nativeCheck = isNativeAndroidApp,
+    nativeUpdater = getNativeUpdater,
     now = Date.now,
     timeoutMs = 10000
   } = {}) {
@@ -75,6 +84,7 @@ export class AndroidAppUpdateService {
     this.currentVersion = currentVersion;
     this.currentVersionCode = currentVersionCode;
     this.nativeCheck = nativeCheck;
+    this.nativeUpdater = nativeUpdater;
     this.now = now;
     this.timeoutMs = timeoutMs;
     this._lastResult = this._readKnownUpdate();
@@ -182,6 +192,8 @@ export class AndroidAppUpdateService {
       latestVersion: manifest.version,
       latestVersionCode: manifest.versionCode,
       downloadUrl: ANDROID_APP_DOWNLOAD_URL,
+      sha256: manifest.sha256,
+      sizeBytes: manifest.sizeBytes,
       releaseNotes: manifest.releaseNotes,
       announcement: manifest.announcement,
       publishedAt: manifest.publishedAt
@@ -193,9 +205,28 @@ export class AndroidAppUpdateService {
   }
 
   async openDownload() {
-    if (!this.isSupported()) return false;
-    return openAndroidDownload(ANDROID_APP_DOWNLOAD_URL);
+    return this.downloadUpdate();
   }
+
+  _updater() {
+    const updater = this.isSupported() && this.nativeUpdater();
+    if (!updater) throw new Error('当前安装包不支持应用内更新，请先覆盖安装新版 App');
+    return updater;
+  }
+
+  async downloadUpdate() {
+    const updater = this._updater();
+    // Recheck at download time so an old reminder cannot install a superseded
+    // APK using yesterday's hash. The native layer verifies again before install.
+    const result = await this.check();
+    if (!result.updateAvailable) throw new Error('当前已是最新版本');
+    if (!result.sha256 || !result.sizeBytes) throw new Error('更新校验信息尚未就绪，请稍后重新检测更新');
+    return updater.download({ versionCode: result.latestVersionCode, sha256: result.sha256, sizeBytes: result.sizeBytes });
+  }
+
+  getDownloadStatus() { return this._updater().getStatus(); }
+  cancelDownload() { return this._updater().cancel(); }
+  installUpdate() { return this._updater().install(); }
 
   _readKnownUpdate() {
     try {
@@ -214,6 +245,8 @@ export class AndroidAppUpdateService {
         latestVersion: String(value.latestVersion || ''),
         latestVersionCode: Number(value.latestVersionCode),
         downloadUrl: ANDROID_APP_DOWNLOAD_URL,
+        sha256: /^[a-f0-9]{64}$/i.test(String(value.sha256 || '')) ? String(value.sha256).toLowerCase() : '',
+        sizeBytes: Number.isSafeInteger(value.sizeBytes) && value.sizeBytes > 0 ? value.sizeBytes : 0,
         releaseNotes: Array.isArray(value.releaseNotes) ? value.releaseNotes.filter(item => typeof item === 'string') : [],
         announcement: typeof value.announcement === 'string' ? value.announcement : '',
         publishedAt: typeof value.publishedAt === 'string' ? value.publishedAt : ''

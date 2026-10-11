@@ -1295,7 +1295,7 @@ await test('hidden reasoning keeps a visible safe streaming status', async () =>
   assert.doesNotMatch(source, /content\.textContent\s*=\s*(?:text|response)/);
 });
 
-await test('streaming UI can render a token without unrelated timeline state', () => withCustomElementGlobals(async () => {
+await test('streaming UI can render a token without unrelated timeline state or forced scrolling', () => withCustomElementGlobals(async () => {
   const originalDocument = globalThis.document;
   const { appShell } = await import('../js/ui/app-shell.js');
   const originals = {
@@ -1329,7 +1329,7 @@ await test('streaming UI can render a token without unrelated timeline state', (
 
     appShell._updateStreaming('甲');
     assert.equal(content.innerHTML, '甲');
-    assert.equal(scrollCount, 1);
+    assert.equal(scrollCount, 0, 'streaming must preserve the player reading position');
   } finally {
     if (originalDocument === undefined) delete globalThis.document;
     else globalThis.document = originalDocument;

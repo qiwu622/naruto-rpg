@@ -19,6 +19,9 @@ export const MEMORY_CONFIG_DEFAULTS = {
   // 检索
   recallEnabled: true,        // <recall> 协议
   recallLifetime: 3,          // 召回单有效回合数
+  vectorEnabled: false,
+  vectorEndpoint: '',
+  vectorModel: '',
   // 置顶角色自动总结
   npcSummaryEnabled: false,
   npcSummaryFrequency: 10,      // 每 N 次互动总结一次 (5-30)
@@ -44,6 +47,9 @@ function clampConfig(cfg) {
   out.aiCompressionEnabled = out.aiCompressionEnabled === true;
   out.deepEnabled = out.deepEnabled === true;
   out.recallEnabled = out.recallEnabled !== false;
+  out.vectorEnabled = out.vectorEnabled === true;
+  out.vectorEndpoint = String(out.vectorEndpoint || '').trim().slice(0, 1000);
+  out.vectorModel = String(out.vectorModel || '').trim().slice(0, 200);
   out.npcSummaryEnabled = out.npcSummaryEnabled === true;
   out.deepModel = out.deepModel === 'updater' ? 'updater' : 'main';
   return out;

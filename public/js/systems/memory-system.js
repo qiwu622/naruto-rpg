@@ -281,6 +281,11 @@ class MemorySystem {
     const pinsLines = memory.pins ? memory.pins.split('\n').filter(Boolean) : [];
     if (pinsLines.length) trimPush('## 置顶提醒', pinsLines.slice(-5).map(item => `- ${item}`), 5);
 
+    if (Array.isArray(opts.semanticRecall) && opts.semanticRecall.length) {
+      const recalled = opts.semanticRecall.slice(0, 4).map(item => `- [历史记录 · 第 ${item.turn} 回] ${String(item.text).slice(0, 420)}`);
+      trimPush('## 与本轮有关的历史记忆', recalled, 4);
+    }
+
     // L3: 卷摘要(压缩版)
     const volumes = this._parseChapterData(memory.volumes);
     if (volumes.length) {
@@ -397,7 +402,9 @@ class MemorySystem {
     memory.compressed_summary = `${previous}[阶段摘要${(memory.compression_count || 0) + 1}]\n${block}`.slice(-COMPRESSED_SUMMARY_LIMIT);
     memory.turn_summaries = keep.join('\n');
     memory.compression_count = (memory.compression_count || 0) + 1;
-    memory._pendingCompressionText = (memory._pendingCompressionText || '') + block + '\n';
+    // The chapter/volume archive already owns history. This is only the bounded
+    // queue for the next optional compression request, not a second full log.
+    memory._pendingCompressionText = ((memory._pendingCompressionText || '') + block + '\n').slice(-24_000);
     memory.chapter_buffer = (memory.chapter_buffer || '') + block + '\n';
 
     const turnsInBuffer = (memory.chapter_buffer.match(/#(\d+)/g) || []).length;
@@ -1203,7 +1210,7 @@ class MemorySystem {
         if (entArr.some(e => item.includes(e))) matched.push(item);
         else rest.push(item);
       }
-      memory.archived = [...matched, ...rest].slice(-cfg.archivedLimit).join('\n');
+      memory.archived = [...rest, ...matched].slice(-cfg.archivedLimit).join('\n');
     };
     archiveOlder('facts', cfg.factsLimit);
     archiveOlder('long_term', 60);

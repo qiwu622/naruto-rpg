@@ -197,7 +197,7 @@ body[data-bg-mode="image"] .app-shell:not(.app-shell--setup) .app-center {
     rgba(var(--ink-deep-rgb), 0.4));
 }
 .chat-container {
-  flex: 1; overflow-y: auto; overflow-x: hidden; scroll-behavior: smooth;
+  flex: 1; overflow-y: auto; overflow-x: hidden; overflow-anchor: none;
   mask-image: linear-gradient(to bottom, transparent, #000 40px, #000 calc(100% - 100px), transparent);
   -webkit-mask-image: linear-gradient(to bottom, transparent, #000 40px, #000 calc(100% - 100px), transparent);
 }
@@ -292,6 +292,7 @@ body[data-paragraph-indent="true"] .chat-content p { text-indent: 2em; }
 .think-block:hover { opacity: 1; }
 .think-toggle {
   display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  border: 0; background: transparent; padding: 0; text-align: left;
   font-family: var(--font-title); font-size: var(--text-xs); color: var(--text-tertiary);
   letter-spacing: 2px; transition: color 0.2s;
 }

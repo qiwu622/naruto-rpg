@@ -116,7 +116,16 @@ await test('decompressed data is rejected as soon as it exceeds the configured l
     () => decodeTimelineSaveFile(encoded.blob, { maxDecompressedBytes: 32 }),
     /32 B|上限|过大/
   );
-  assert.equal(DEFAULT_MAX_DECOMPRESSED_BYTES, 200 * 1024 * 1024);
+  assert.equal(DEFAULT_MAX_DECOMPRESSED_BYTES, Infinity);
+});
+
+await test('default local import has no fixed byte cap; explicit caps remain validated', async () => {
+  const encoded = await encodeTimelineSave(save, { compression: 'json' });
+  assert.deepEqual(await decodeTimelineSaveFile(encoded.blob, { maxDecompressedBytes: Infinity }), save);
+  await assert.rejects(() => decodeTimelineSaveFile(encoded.blob, { maxDecompressedBytes: 32 }), /32 B|上限/);
+  for (const maxDecompressedBytes of [0, -1, -Infinity, NaN, 1.5, null]) {
+    await assert.rejects(() => decodeTimelineSaveFile(encoded.blob, { maxDecompressedBytes }), /上限必须/);
+  }
 });
 
 await test('timeline download defaults to gzip and keeps plain JSON as an explicit option', async () => {
