@@ -35,3 +35,34 @@ Android 新增更新服务回归 7 组，以及真实 App 入口的浏览器 UI 
 运行新增原生回归（只允许专用模拟器）：先安装同一次构建的 `native-tests.apk`，执行 `NativeUpdaterTest`；随后运行 `scripts/android-in-app-update-regression.mjs <构建输出目录>`。`NARUTO_ANDROID_ADB` 和 `ANDROID_SERIAL` 指定测试设备。覆盖升级测试为 `scripts/android-upgrade-preservation-regression.mjs <构建输出目录>`，应在旧版本仍安装时运行。
 
 原始证据位于 `reports/android/release-v3.6.4-final/`。性能样本是合成档；未取得玩家实际损坏原档，完整状态增量去重与物理手机极端内存压力仍未验收。
+
+横竖屏、挖孔横竖屏共 4 种系统安全区域通过；软键盘使 WebView 高度从 544 缩至 281，收起后恢复 544。手机布局与系统栏未重叠。
+
+## 线上发布验收
+
+| 目标 | 版本 / 构建 | 验证 |
+| --- | --- | --- |
+| 测试站 | 3.6.4 / 2610111652 | 261 个安装文件一致；仅更新前端，共享后端未重启 |
+| 正式站 | 3.6.4 / 2610111657 | 624 个安装文件一致；服务 active，健康检查 ready |
+| 两站安卓下载 | 3.6.4 / 30604 | 完整下载 29,791,009 字节，SHA-256 与最终测试 APK 相同 |
+| 网站公告 | 3.6.4 / 2026-10-11 | 两站公告字节与本地一致，登录页公告和安卓下载入口保留 |
+
+发布按测试站、线上核验、正式站顺序进行。正式站先准备依赖与备份，切换后的启动探针短暂连接拒绝，随后恢复 ready。两站各 21 个公开 HTTP 资源通过实际域名、正常 TLS 验证读取，与本地哈希一致，包含独立救援页、存档 Worker、向量记忆、更新面板及公告。两站 APK 完整下载校验通过，更新清单含版本、6 条更新内容、公告、大小与 SHA-256。
+
+本机直连站点的 TLS 握手在此网络环境失败，因此 HTTP 验收在服务器侧通过公开域名执行，未禁用 TLS 验证。此证据不代表所有玩家网络均可连通。
+
+永久备份：
+
+- `/var/backups/naruto-rpg/frontend-staging-v3.6.4-2610111652-227260`
+- `/var/backups/naruto-rpg/full-production-v3.6.4-2610111657-228387`
+- `/var/backups/naruto-rpg/android-20261011-170135-688878`
+
+发布保留玩家运行数据原位。网站安装器已清理远端临时 payload，保留回执、清单和永久备份。原始日志、完整 APK 校验与设备回归证据汇总于 `reports/release-v3.6.4/publication-verification.json`。
+
+## 2026-10-13 发布收尾
+
+复核两站仍为上述 3.6.4 构建，21 个公开资源再次逐一匹配，服务 active、健康检查 ready。源码提交 `c0d52716f80c3ce47a9633a0fbe41c2d0436ac9a` 已同步 GitHub master。
+
+此前 GitHub 安装包附件因本机网络连接重置停在 `starter`，没有作为发布成功证据。改用临时 SSH SOCKS 通道传输，同一 APK 已上传完成：附件 ID `635595629`，状态 `uploaded`，大小 29,791,009 字节，GitHub 返回 SHA-256 与测试/两站下载完全一致。传输仍验证 GitHub TLS，凭据仅通过本机进程标准输入传给 HTTPS 客户端，未写入服务器或文件。
+
+GitHub Release：[v3.6.4](https://github.com/qiwu622/naruto-rpg/releases/tag/v3.6.4)。旧模拟器和临时上传目录已清理；本地证据及服务器永久备份保留。
