@@ -1,7 +1,7 @@
 import { isNativeAndroidApp } from './runtime-platform.js';
 
-export const ANDROID_APP_VERSION = '3.6.4';
-export const ANDROID_APP_VERSION_CODE = 30604;
+export const ANDROID_APP_VERSION = '3.7.0';
+export const ANDROID_APP_VERSION_CODE = 30700;
 export const ANDROID_UPDATE_MANIFEST_URL = 'https://www.qiwu.asia/app/android/update.json';
 export const ANDROID_APP_DOWNLOAD_URL = 'https://www.qiwu.asia/app/android/naruto-rpg.apk';
 

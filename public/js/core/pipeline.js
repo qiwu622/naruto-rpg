@@ -1,3 +1,4 @@
+import { clearMemoryRecallTrace } from './memory-recall-trace.js';
 import { stateManager } from './state-manager.js';
 import { AIClient, aiClient } from './ai-client.js';
 import { markTurnContext } from './deepseek-mode.js';
@@ -495,6 +496,7 @@ class MessagePipeline {
       const updaterOwnedTurn = callPolicy.features.variableUpdater || agentWillRun;
 
       this._semanticRecall = [];
+      clearMemoryRecallTrace();
       if (getMemoryConfig().vectorEnabled && !callPolicy.strictSingleCall) {
         try {
           const { vectorMemory } = await import('./vector-memory.js');
@@ -3089,7 +3091,7 @@ ${previousGrandSummary ? `此前的关系编年史: ${previousGrandSummary}\n请
   _buildMemoryContext(memory, userInput = '') {
     if (this.memorySystem) {
       const ctx = projectNarrativeForMemory(this.memorySystem.buildPromptContext(memory, {
-        userInput, ...(getMemoryConfig().vectorEnabled ? { semanticRecall: this._semanticRecall || [] } : {})
+        userInput, captureTrace: true, ...(getMemoryConfig().vectorEnabled ? { semanticRecall: this._semanticRecall || [] } : {})
       }));
       if (!ctx) return '';
       if (!getMemoryConfig().recallEnabled) return ctx;

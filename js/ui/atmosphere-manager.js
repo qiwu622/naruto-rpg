@@ -1,6 +1,7 @@
 import { eventBus } from '../core/event-bus.js';
 import { stateManager } from '../core/state-manager.js';
 import { worldStateSystem } from '../systems/world-state-system.js';
+import { GAME_TIME_PERIODS, gameTimePosition } from '../utils/game-calendar.js';
 
 /**
  * AtmosphereManager
@@ -123,7 +124,7 @@ class AtmosphereManager {
   updateAtmosphere() {
     const combat = stateManager.getSub('_combat')?.is_active;
     const cal = worldStateSystem.getCalendar();
-    const timeOfDay = cal?.time_of_day || '午后';
+    const timeOfDay = GAME_TIME_PERIODS[gameTimePosition(cal?.time_of_day || '午后').index];
     const weather = stateManager.get('世界·天气') || '晴';
 
     // 1. 确定粒子颜色

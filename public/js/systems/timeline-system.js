@@ -18,10 +18,12 @@ import {
 import { encodeTimelineSave } from '../core/timeline-file-codec.js';
 import { saveJsonContainsText } from '../core/save-json-stream.js';
 import { exportFile } from '../core/file-export.js';
+import { SHARED_PAYLOAD_ENCODING } from '../core/timeline-payload-chunks.js';
 import {
   TIMELINE_HOT_WINDOW,
   collectHotNodeIds,
   compressTimelineNode,
+  prepareSharedTimelineNode,
   decompressTimelineNode,
   estimateTimelineNodeBytes,
   isCompressedTimelineNode,
@@ -41,6 +43,7 @@ function sameTimelineNodeRead(left, right) {
   const { payload: rightPayload, ...rightFields } = right;
   if (JSON.stringify(leftFields) !== JSON.stringify(rightFields)) return false;
   if (leftPayload == null || rightPayload == null) return leftPayload == null && rightPayload == null;
+  if (left.payload_encoding === SHARED_PAYLOAD_ENCODING) return JSON.stringify(leftPayload) === JSON.stringify(rightPayload);
   const bytes = value => value instanceof ArrayBuffer ? new Uint8Array(value)
     : ArrayBuffer.isView(value) ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
     : Array.isArray(value) ? Uint8Array.from(value) : null;
@@ -1795,7 +1798,9 @@ class TimelineSystem {
     let cursor = targetNode;
     let safety = 0;
     while (cursor && safety < 200) {
-      // Chat deltas are outside compressed state payloads; do not inflate old state just to read dialogue.
+      // Per-turn deltas stay outside the compressed payload. Only legacy/full
+      // history anchors need hydration to recover their captured dialogue.
+      if (cursor.payload_has_chat_history) cursor = await this._hydrateNode(cursor);
       if (Array.isArray(cursor.chat_history) && cursor.chat_history.length > 0) {
         return [...deepClone(cursor.chat_history), ...chain].slice(-80);
       }
@@ -1852,7 +1857,9 @@ class TimelineSystem {
     if (!nodeId) return null;
     const current = await stateManager.dbGet('timeline_nodes', nodeId);
     if (!current) return null;
-    const proposed = await updater(current);
+    const prepared = await updater(current);
+    const proposed = prepared?.node || prepared;
+    const payloadChunks = prepared?.records || [];
     if (!proposed || typeof proposed !== 'object' || Array.isArray(proposed)) return null;
     return await stateManager.dbMutateTimeline(({ nodes }) => {
       const live = nodes[0];
@@ -1864,7 +1871,7 @@ class TimelineSystem {
         branch_id: live.branch_id ?? proposed.branch_id
       };
       const sanitized = sanitizeTimelineNode(next, `timeline_node.${nodeId}`);
-      return { nodes: [sanitized], result: sanitized };
+      return { nodes: [sanitized], payloadChunks, result: sanitized };
     }, { nodeKeys: [nodeId], branchKeys: [] });
   }
 
@@ -1890,10 +1897,11 @@ class TimelineSystem {
       let didCompress = false;
       let didArchive = false;
       let didExpand = false;
+      let payloadRecords = [];
       const written = await this._writeNodeIfPresent(listed.id, async latest => {
         if (shouldBeHot) {
           if (isCompressedTimelineNode(latest)) {
-            const logical = await decompressTimelineNode(latest);
+            const logical = await decompressTimelineNode(latest, { db: stateManager.getDB() });
             logical.archived = false;
             logical.archived_at = null;
             didExpand = true;
@@ -1904,14 +1912,17 @@ class TimelineSystem {
         }
         let next = latest;
         if (!isCompressedTimelineNode(latest)) {
-          next = await compressTimelineNode(latest);
+          if (stateManager.getDB()?.objectStoreNames?.contains('timeline_payload_chunks')) {
+            const prepared = await prepareSharedTimelineNode(latest);
+            next = prepared.node; payloadRecords = prepared.records;
+          } else next = await compressTimelineNode(latest);
           if (isCompressedTimelineNode(next)) didCompress = true;
         }
         if (!next.archived) {
           next = { ...next, archived: true, archived_at: next.archived_at || Date.now() };
           didArchive = true;
         }
-        return next === latest ? null : next;
+        return next === latest ? null : { node: next, records: payloadRecords };
       });
       if (!written) continue;
       if (shouldBeHot) {
@@ -1948,7 +1959,7 @@ class TimelineSystem {
 
   async _replayStateFromAncestor(targetNode) {
     const node = isCompressedTimelineNode(targetNode)
-      ? await decompressTimelineNode(targetNode)
+      ? await decompressTimelineNode(targetNode, { db: stateManager.getDB() })
       : targetNode;
     stateManager.commitPreparedRestore(this._prepareNodeRestore(node));
     return 0;
@@ -1956,7 +1967,7 @@ class TimelineSystem {
 
   async _hydrateNode(node) {
     if (!isCompressedTimelineNode(node)) return node;
-    return decompressTimelineNode(node);
+    return decompressTimelineNode(node, { db: stateManager.getDB() });
   }
 
   async _hydratePersistedNode(nodeId, { validateCurrent = null } = {}) {
@@ -1965,7 +1976,7 @@ class TimelineSystem {
     validateCurrent?.();
     if (!node) return null;
     if (!isCompressedTimelineNode(node)) return node;
-    const logical = await decompressTimelineNode(node);
+    const logical = await decompressTimelineNode(node, { db: stateManager.getDB() });
     validateCurrent?.();
     logical.archived = false;
     logical.archived_at = null;
@@ -1997,7 +2008,7 @@ class TimelineSystem {
     const nodes = await stateManager.dbGetAll('timeline_nodes');
     for (const node of nodes) {
       if (!isCompressedTimelineNode(node)) continue;
-      const logical = await decompressTimelineNode(node);
+      const logical = await decompressTimelineNode(node, { db: stateManager.getDB() });
       await stateManager.dbPut('timeline_nodes', logical);
       this._cacheNode(logical.id, logical);
     }

@@ -111,4 +111,46 @@ await test('storage estimate uses payload byteLength instead of expanding typed 
   assert.ok(estimated > compressed.payload.byteLength);
 });
 
+await test('large legacy nodes remain readable without rewriting the compressed original', async () => {
+  // 36 MiB of UTF-8 memory is a valid old node, even though its compressed
+  // representation is tiny. The writer has never imposed a 32 MiB limit.
+  const memory = '记忆'.repeat(3 * 1024 * 1024);
+  const node = {
+    id: 'large-legacy-node',
+    state_snapshot: { ...snapshot, _memory: { facts: memory, archived: memory } },
+    maintenance: { before_state_snapshot: { ...snapshot, marker: 'before-large-node' } },
+    maintenance_history: [{ before_state_snapshot: { ...snapshot, marker: 'old-maintenance' } }]
+  };
+  const compressed = await compressTimelineNode(node);
+  const original = compressed.payload.slice();
+  const restored = await decompressTimelineNode(compressed);
+  assert.equal(restored.state_snapshot._memory.facts, memory);
+  assert.equal(restored.state_snapshot._memory.archived, memory);
+  assert.equal(restored.maintenance.before_state_snapshot.marker, 'before-large-node');
+  assert.equal(restored.maintenance_history[0].before_state_snapshot.marker, 'old-maintenance');
+  assert.deepEqual(compressed.payload, original);
+  assert.equal(compressed.state_snapshot, undefined);
+});
+
+await test('explicit node read limits count UTF-8 bytes and preserve the source on failure', async () => {
+  const state_snapshot = { marker: '忍者记忆' };
+  const compressed = await compressTimelineNode({ id: 'bounded-node', state_snapshot });
+  const original = compressed.payload.slice();
+  const byteLength = new TextEncoder().encode(JSON.stringify({ state_snapshot })).byteLength;
+  assert.deepEqual((await decompressTimelineNode(compressed, { maxDecompressedBytes: byteLength })).state_snapshot, state_snapshot);
+  await assert.rejects(decompressTimelineNode(compressed, { maxDecompressedBytes: byteLength - 1 }), /时间线节点解压后超过.*上限/);
+  assert.deepEqual(compressed.payload, original);
+  for (const maxDecompressedBytes of [0, -1, NaN, null, 1.5, -Infinity]) {
+    await assert.rejects(decompressTimelineNode(compressed, { maxDecompressedBytes }), /上限必须/);
+  }
+});
+
+await test('corrupted gzip nodes still fail without changing their original payload', async () => {
+  const node = await compressTimelineNode({ id: 'damaged-node', state_snapshot: snapshot });
+  node.payload = node.payload.slice(0, -8);
+  const original = node.payload.slice();
+  await assert.rejects(decompressTimelineNode(node));
+  assert.deepEqual(node.payload, original);
+});
+
 console.log(`\n${passed} timeline node codec regression tests passed.`);

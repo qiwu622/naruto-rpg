@@ -107,13 +107,21 @@ function tagAlternation(tags) {
   return tags.map(escapeRegExp).sort((a, b) => b.length - a.length).join('|');
 }
 
-function collectKnownBlocks(text, tags, { selfClosing = true } = {}) {
+function collectKnownBlocks(text, tags, { selfClosing = true, excludeOpeningsIn = [] } = {}) {
   if (!text || !tags.length) return [];
   const names = tagAlternation(tags);
   const blocks = [];
   const paired = new RegExp(`<(${names})(?=[\\s>])([^>]*)>([\\s\\S]*?)<\\/\\1\\s*>`, 'gi');
   let match;
   while ((match = paired.exec(text)) !== null) {
+    const excluded = excludeOpeningsIn.find(range => match.index >= range.start && match.index < range.end);
+    if (excluded) {
+      // An audit can mention a literal opening tag without closing it. Skip
+      // that opening before pairing, otherwise it consumes the first real
+      // instruction after the audit and the overlap filter discards both.
+      paired.lastIndex = excluded.end;
+      continue;
+    }
     blocks.push({
       tag: match[1].toLowerCase(),
       attributes: String(match[2] || '').trim(),
@@ -127,6 +135,7 @@ function collectKnownBlocks(text, tags, { selfClosing = true } = {}) {
   if (selfClosing) {
     const singleton = new RegExp(`<(${names})(?=[\\s/>])([^>]*?)\\/\\s*>`, 'gi');
     while ((match = singleton.exec(text)) !== null) {
+      if (excludeOpeningsIn.some(range => match.index >= range.start && match.index < range.end)) continue;
       blocks.push({
         tag: match[1].toLowerCase(),
         attributes: String(match[2] || '').trim(),
@@ -395,7 +404,7 @@ export function extractNarrativeEvidenceRefs(input, suppliedRefs = []) {
 export function extractNarrativeInstructions(input) {
   const text = asText(input);
   const privateRanges = collectSensitiveBlocks(text);
-  const blocks = collectKnownBlocks(text, NARRATIVE_INSTRUCTION_TAGS)
+  const blocks = collectKnownBlocks(text, NARRATIVE_INSTRUCTION_TAGS, { excludeOpeningsIn: privateRanges })
     .filter(block => !isInsideAnyRange(block, privateRanges))
     // A legal machine tag containing a private/audit child is tainted as a
     // whole. Keeping the outer JSON would otherwise smuggle hidden text into

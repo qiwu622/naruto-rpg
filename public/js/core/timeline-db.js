@@ -1,7 +1,7 @@
 import { listingTimelineNode } from './timeline-node-codec.js';
 
 export const TIMELINE_DB_NAME = 'naruto_rpg';
-export const TIMELINE_DB_VERSION = 2;
+export const TIMELINE_DB_VERSION = 3;
 export const SUMMARY_STORE = 'timeline_summaries';
 export const ARCHIVE_STORES = ['timeline_archives', 'timeline_archive_nodes'];
 export const timelineRevision = () => ({ key: 'archive-revision', value: crypto.randomUUID() });
@@ -25,6 +25,7 @@ export function openTimelineDB() {
       if (!db.objectStoreNames.contains('timeline_archive_nodes')) {
         db.createObjectStore('timeline_archive_nodes', { keyPath: ['archiveId', 'id'] }).createIndex('archiveId', 'archiveId');
       }
+      if (!db.objectStoreNames.contains('timeline_payload_chunks')) db.createObjectStore('timeline_payload_chunks', { keyPath: 'id' });
     };
     request.onblocked = () => { blocked = true; reject(new Error('请关闭其他旧版游戏标签页，再打开存档救援。原存档未修改。')); };
     request.onerror = () => reject(request.error);

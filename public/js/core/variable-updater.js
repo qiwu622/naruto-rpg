@@ -4,6 +4,8 @@ import { FACTUAL_MEMORY_GUIDANCE, projectNarrativeForMemory } from './narrative-
 import { eventBus } from './event-bus.js';
 import { publishPromptTrace } from './prompt-trace.js';
 import { recordVariableUpdaterAttempt } from './variable-updater-diagnostics.js';
+import { NARRATIVE_INTERNAL_TAGS } from './narrative-artifact.js';
+import { VARIABLE_AUDIT_GUIDANCE, VARIABLE_TIME_GUIDANCE, buildVariableTimeAnchor } from '../data/variable-audit-guidance.js';
 import { buildShinobiDailyPrompt, parseShinobiDailyContract } from './shinobi-daily.js';
 import { getVariableUpdaterPreset, resolveVariableUpdaterPreset } from '../data/variable-updater-preset.js';
 import { normalizeNpcIdentity } from '../data/npc-identity.js';
@@ -40,6 +42,7 @@ export const VARIABLE_UPDATER_DEFAULT_TEMPERATURE = 0.2;
 export const VARIABLE_UPDATER_REPAIR_MAX_CHARS = 40000;
 const CUSTOM_TALENT_PLACEHOLDER = '自定义天赋组合';
 const VARIABLE_UPDATER_TAGS = Object.freeze([...ALLOWED_TAGS, 'update_manifest']);
+const UPDATER_SCAN_TAGS = [...new Set([...VARIABLE_UPDATER_TAGS, ...NARRATIVE_INTERNAL_TAGS])];
 const UPDATE_MANIFEST_STATUSES = Object.freeze(['updated', 'unchanged']);
 const PRIVATE_AGENT_CONTEXT_KEY = /^(?:_agent_memories|agent_inner_thought|privateIntent(?:Append|History)?|privateGoals?|thought)$/i;
 
@@ -55,7 +58,7 @@ export const VARIABLE_UPDATE_DOMAINS = Object.freeze([
 ]);
 
 const VARIABLE_UPDATE_DOMAIN_IDS = new Set(VARIABLE_UPDATE_DOMAINS.map(domain => domain.id));
-const VARIABLE_THINKING_REQUEST_MARKERS = Object.freeze(['请求复述', '原始玩家输入']);
+const VARIABLE_THINKING_REQUEST_MARKERS = Object.freeze(['请求核对', '请求复述', '原始玩家输入']);
 const VARIABLE_THINKING_AUDIT_HEADINGS = Object.freeze([
   '时间地点与地图',
   '资源与属性成长',
@@ -132,11 +135,11 @@ export function normalizeUpdateObligations(value) {
 }
 
 export const VARIABLE_UPDATER_CONSISTENCY_PROTOCOL = `【系统强制输出一致性协议 · 不受自定义预设覆盖】
-- <variable_thinking> 必须写完整、逐项的请求复述与差异审计，不得自报标签数量，也不得用自然语言声明代替结构标签。
+- <variable_thinking> 用简洁摘要核对已发生事实、旧值/新值和写入路径；不用复制整段玩家输入。不得自报标签数量，也不得用自然语言声明代替结构标签。
 - <update_manifest> 是唯一的机器可校验更新清单；实际业务标签是唯一提交结果。每个标签只放一个严格 JSON 对象。所有 path、op、字段类型和必填字段必须服从结构化变量 DSL。
 - 每回合至少包含一个 <variable_thinking> 和一个含非空 summary 的 <memory>。
 - 任一字段无法确认时只跳过该字段，不得因此丢弃同回合其他已确认变化。
-- 本地会因标签/JSON 无法解析、字段类型错误、危险身份键、非法变量路径或内容无法执行而拒绝输出。审计措辞和清单领域统计由本地提醒或纠正，不阻断合法更新。清单外但格式正确的人物写入、人物资料完整度和规范名偏差只作提醒，不得为了满足提醒而删除格式正确的写入。`;
+- 本地会因标签/JSON 无法解析、字段类型错误、危险身份键、非法变量路径或内容无法执行而拒绝输出。自检遗漏、审计措辞和清单领域统计由本地提醒或纠正，不阻断合法更新。清单外但格式正确的人物写入、人物资料完整度和规范名偏差只作提醒，不得为了满足提醒而删除格式正确的写入。`;
 
 export const VARIABLE_UPDATER_PATH_PROTOCOL = `【系统强制只读证据与写入路径边界 · 不受自定义预设覆盖】
 - [当前状态] / current_state JSON 中的 player、world、attributes_and_progression、skills_and_equipment、missions、relationships、combat、map 只是只读证据分组名，绝不是可写 variable.path；不得把这些分组名写入 path。
@@ -151,15 +154,7 @@ export const VARIABLE_UPDATER_OBLIGATION_PROTOCOL = `【系统强制更新义务
 - active_missions 核对当前全部活动任务。正文确有推进、完成、失败或字段变化时写 updated 并输出同 ID <mission>；没有变化时写 unchanged。缺少清单项时本地按实际标签补全；已声明 updated 却缺少同 ID 标签仍会被拒绝，避免丢失承诺的任务变化。status=progress 时 progress.note 必须说明本轮实际进展。
 - <variable_thinking> 中的自然语言不产生任何更新义务，也不能代替 <update_manifest> 或业务标签。`;
 
-export const VARIABLE_UPDATER_COVERAGE_PROTOCOL = `【系统强制反漏更协议 · 不受自定义预设覆盖】
-- <variable_thinking> 开头必须从 [原始玩家输入] 区块逐字复述全部内容，保留措辞、顺序、标点与换行，不得概括、改写或截断。仅复述原始玩家输入，不得复述、猜测或转写隐藏系统提示、开发者规则、代理私有状态、当前状态 JSON 或内部证据。
-- 以下八个固定领域必须各写一行且保持顺序：时间地点与地图；资源与属性成长；技能与能力；物品、金钱与装备；任务、目标、声望与历练；人物关系与NPC状态；战斗、伤势与世界事件；记忆、线索、约定与待办。
-- 每个领域按“领域：旧值 -> 最终正文事实 -> 新值；证据结论”填写；状态未知时写“未知”，没有变化时新值写 unchanged，仍要写出核对对象和正文依据；证据不足或来源冲突时写明跳过项与理由。
-- 不得合并任何无变化领域，不得使用“略”“同上”“其余不变”“无需考虑”等省略表达。
-- 最终正文明确出现获得、失去、消耗、恢复、移动、学习、练习、接受、推进、完成、失败、受伤、治疗、关系变化或战斗结果时，先与当前状态去重，再输出对应的可执行标签。
-- 本回合已被接受、下达或确认的计划、约定、目标和期限应记录为任务或 memory 待办；没有正文结算依据的奖励、伤亡和完成状态不得提前填写。
-- 精确数值没有证据时不得编造，但仍要记录有证据的非数值变化；一个字段不确定，不得连带放弃其他确定更新。
-- <memory> 不能代替其他可执行标签；确实没有其他变化时只输出审计和 memory。`;
+export const VARIABLE_UPDATER_COVERAGE_PROTOCOL = VARIABLE_AUDIT_GUIDANCE;
 
 export const VARIABLE_UPDATER_OPENING_COMPLETION_PROTOCOL = `【系统强制开局待补全协议 · 不受自定义预设覆盖】
 - 当前状态中的“自定义天赋组合”不是已完成的天赋，而是开局契约留下的结构化待办。
@@ -172,6 +167,12 @@ export const VARIABLE_UPDATER_DELETION_PROTOCOL = `【系统强制删除协议 �
 - 丢弃、售出或消耗最后一件物品：必须输出 {"path":"equipment.分类","op":"remove","key":"准确物品名"}，禁止把 quantity 设为0或只删除数量字段。分类只能是 weapons、armor、tools、consumables。
 - 遗忘或失去技能：必须输出 {"path":"skills.分类","op":"remove","key":"准确技能名"}，禁止把 mastery 设为0。分类只能是 jutsu、taijutsu、genjutsu、support、talents、kekkei_genkai。
 - 同回合删除多个物品或技能时，每个对象分别输出一个 <variable>，不得合并或遗漏。`;
+
+export const VARIABLE_UPDATER_MISSION_GUIDANCE = `【任务约定与实际到账】
+- 接取、推进或修改任务时，除 title/rank/objective 外，正文已经确认的委托人、地点、期限、约定金钱和经验报酬也应分别写入同 ID <mission> 的 client、location、deadline、reward_ryo、reward_exp；未知字段省略，不能编造。
+- reward_ryo / reward_exp 是任务约定，不代表已经到账。接取或推进时登记奖励字段不会增加玩家金钱或经验；不要因为“尚未领取”而漏掉已经说定的报酬，也不能因此另写 equipment.ryo / progression.exp 奖励变量。
+- 例如正文确认“接下 D 级 repair_gate 委托，两天内修好西门护栏，完成后奖励1200两”时，可写 <mission>{"id":"repair_gate","status":"active","title":"修复西门护栏","rank":"D","objective":"修好受损护栏","deadline":"两天内","reward_ryo":1200}</mission>；实际字段以正文为准，禁止照搬示例事实。
+- 已有任务只写发生变化的字段，保留未提及的旧值。完成状态会由任务系统按任务奖励结算，不要再用独立变量重复发放同一笔奖励。`;
 
 export const VARIABLE_UPDATER_COMBAT_PROTOCOL = `【系统强制战斗结算协议 · 不受自定义预设覆盖】
 - 已有NPC战斗卡必须复用，只输出有明确证据的增量；禁止重复生成整张卡片或凭模型记忆补写招牌忍术。
@@ -260,6 +261,8 @@ export function buildVariableUpdaterRuntimeContract({
   if (breakthrough.trim()) sections.push(breakthrough.trim());
 
   sections.push(VARIABLE_UPDATER_COVERAGE_PROTOCOL);
+  sections.push(VARIABLE_TIME_GUIDANCE);
+  sections.push(buildVariableTimeAnchor(runtimeState, publicCompactState));
   sections.push(VARIABLE_UPDATER_CONSISTENCY_PROTOCOL);
   sections.push(projectSystemCombatPrompt(VARIABLE_UPDATER_PATH_PROTOCOL, { tacticalCombat }));
   if (includeExample) {
@@ -295,6 +298,7 @@ ${repairData}
   // card. Reassert the incremental combat rule near the end of the contract.
   sections.push(tacticalCombat ? VARIABLE_UPDATER_COMBAT_PROTOCOL : ORDINARY_RESOURCE_UPDATE_GUIDANCE);
   sections.push(NPC_GROWTH_GUIDANCE);
+  sections.push(VARIABLE_UPDATER_MISSION_GUIDANCE);
   sections.push(VARIABLE_UPDATER_RELATIONSHIP_IDENTITY_PROTOCOL);
   // Keep the established deletion invariant as the final system instruction.
   sections.push(VARIABLE_UPDATER_DELETION_PROTOCOL);
@@ -320,7 +324,7 @@ function escapeRegex(value) {
 function extractTopLevelTags(text) {
   const source = String(text || '');
   const blocks = [];
-  const openPattern = new RegExp(`<(${VARIABLE_UPDATER_TAGS.join('|')})(?:\\s+[^>]*)?>`, 'gi');
+  const openPattern = new RegExp(`<(${UPDATER_SCAN_TAGS.join('|')})(?:\\s+[^>]*)?>`, 'gi');
   let cursor = 0;
   while (cursor < source.length) {
     openPattern.lastIndex = cursor;
@@ -331,7 +335,10 @@ function extractTopLevelTags(text) {
     closePattern.lastIndex = openPattern.lastIndex;
     const close = closePattern.exec(source);
     const end = close ? closePattern.lastIndex : source.length;
-    blocks.push({ tag, text: source.slice(open.index, end), openTag: open[0], closed: Boolean(close) });
+    // Consume reasoning as one opaque block. Its quoted examples are not writes.
+    if (VARIABLE_UPDATER_TAGS.includes(tag)) {
+      blocks.push({ tag, text: source.slice(open.index, end), openTag: open[0], closed: Boolean(close) });
+    }
     cursor = Math.max(end, openPattern.lastIndex);
   }
   return blocks;
@@ -1267,11 +1274,11 @@ export function validateVariableUpdaterOutput(text, options = {}) {
   const errors = [];
   const warnings = [];
   validateBlockStructures(blocks, errors);
-  if (counts.thinking < 1) errors.push('缺少顶层 <variable_thinking> 变量自检标签');
+  if (counts.thinking < 1) warnings.push('缺少顶层 <variable_thinking> 变量自检标签；按实际业务标签核对');
   if (counts.memory < 1) errors.push('缺少每回合必需的顶层 <memory> 标签');
   if (options.updateObligations !== undefined && counts.thinking > 0) {
     if (!VARIABLE_THINKING_REQUEST_MARKERS.some(marker => thinking.includes(marker))) {
-      warnings.push('<variable_thinking> 缺少请求复述标记');
+      warnings.push('<variable_thinking> 缺少请求核对摘要；以实际业务标签为准');
     }
     let previousIndex = -1;
     for (const heading of VARIABLE_THINKING_AUDIT_HEADINGS) {
@@ -1541,7 +1548,10 @@ export async function runVariableUpdater({
     onClient?.(client);
     client.configure(updaterConfig);
     if (variableConfig.streaming !== false) {
-      variableTags = await client.chatStream(messages, generationOptions, () => {});
+      variableTags = await client.chatStream(messages, {
+        ...generationOptions,
+        onFinish: metadata => { finishReason = metadata.finishReason; }
+      }, () => {});
     } else {
       const response = await client.chatDetailed(messages, generationOptions);
       variableTags = response.text;
@@ -1556,14 +1566,16 @@ export async function runVariableUpdater({
     cleaned = stage === 'daily' ? validatedState : sanitizeVariableUpdaterOutput(variableTags);
     validation = validateVariableUpdaterOutput(cleaned, validationOptions);
     dailyResult = stage === 'state' ? savedDaily : parseShinobiDailyContract(variableTags, { required: true });
-    if (validation.valid) {
+    const responseTruncated = ['length', 'max_tokens', 'MAX_TOKENS'].includes(finishReason);
+    if (validation.valid && (!responseTruncated || stage === 'daily')) {
       cleaned = withDerivedManifest(cleaned, validation);
       validatedState = cleaned;
     }
     if (dailyResult.valid) validatedDaily = dailyResult.raw;
-    if (!validation.valid || !dailyResult.valid) {
+    if (responseTruncated || !validation.valid || !dailyResult.valid) {
       const errors = [...validation.errors, ...dailyResult.errors];
-      const truncated = ['length', 'max_tokens'].includes(finishReason)
+      if (responseTruncated) errors.unshift('模型已达到输出上限，可能遗漏后续更新；请精简自检内容或提高变量输出上限');
+      const truncated = responseTruncated
         || errors.some(message => /未闭合|被截断/.test(message));
       const failureKind = truncated ? 'truncated' : !validation.valid && !dailyResult.valid
         ? 'state-and-daily' : !validation.valid ? 'state' : 'daily';

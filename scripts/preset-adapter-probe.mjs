@@ -5,8 +5,8 @@
  * each model actually follows the preset (compliance, immersion, refusal rate).
  *
  * Usage:
- *   GG_KEY=... node scripts/preset-adapter-probe.mjs --target=main --tag=baseline
- *   GG_KEY=... node scripts/preset-adapter-probe.mjs --target=lingxi --models=gemini-3.8-flash
+ *   GG_BASE_URL=... GG_KEY=... node scripts/preset-adapter-probe.mjs --target=main --tag=baseline
+ *   GG_BASE_URL=... GG_KEY=... node scripts/preset-adapter-probe.mjs --target=lingxi --models=gemini-3.8-flash
  *
  * Report is written to reports/preset-adapter-probe-<target>-<tag>-<stamp>.json
  */
@@ -82,7 +82,7 @@ function arg(name, fallback = '') {
   return hit ? hit.slice(name.length + 3) : fallback;
 }
 
-const BASE_URL = arg('base', process.env.GG_BASE_URL || 'https://gcli.ggchan.dev/v1');
+const BASE_URL = arg('base', process.env.GG_BASE_URL || '');
 const API_KEY = arg('key', process.env.GG_KEY || '');
 const TARGET = arg('target', 'main');
 const TAG = arg('tag', 'run');
@@ -111,8 +111,8 @@ const TIMEOUT_MS = Number(arg('timeout', '300000'));
 const MAX_TOKENS = Number(arg('maxTokens', '0'));
 const CONCURRENCY = Math.max(1, Number(arg('concurrency', '2')));
 
-if (!API_KEY) {
-  console.error('缺少 GG_KEY（或 --key=）。');
+if (!API_KEY || !BASE_URL) {
+  console.error('缺少本地环境变量 GG_BASE_URL / GG_KEY（或 --base= / --key=）。');
   process.exit(2);
 }
 
@@ -667,7 +667,6 @@ await fs.writeFile(reportPath, JSON.stringify({
   target: TARGET,
   tag: TAG,
   variant: VARIANT,
-  baseUrl: BASE_URL,
   models: MODELS,
   systemChars: system.length,
   depthMessages: history.length,

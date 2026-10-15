@@ -6,6 +6,7 @@ import { KNOWLEDGE_BASE } from '../data/knowledge-base.js';
 import { getMemoryConfig } from '../data/memory-config.js';
 import { createContinuityCasToken, isContinuityCasCurrent } from '../core/continuity-ledger.js';
 import { projectNarrativeForMemory } from '../core/narrative-memory.js';
+import { recordMemoryRecallTrace } from '../core/memory-recall-trace.js';
 
 const KEEP_TURN_SUMMARIES_AFTER_COMPRESSION = 3;
 const TURN_SUMMARY_LIMIT = 900;
@@ -267,30 +268,35 @@ class MemorySystem {
     const isQuiet   = !isCombat && !missionsActive;
     const configuredBudget = getMemoryConfig().promptBudget;
     const budget = isQuiet ? Math.floor(configuredBudget * 0.75) : configuredBudget;
-    const parts = [];
+    const parts = [], trace = [];
     let used = 0;
-    const push = (block) => { if (used + block.length > budget) return false; parts.push(block); used += block.length; return true; };
+    const push = (block, sources = []) => {
+      if (used + block.length > budget) return false;
+      parts.push(block); used += block.length;
+      if (opts.captureTrace) trace.push({ title: block.split('\n')[0].replace(/^##\s*/, ''), text: block, sources });
+      return true;
+    };
     const corrections = buildMemoryCorrectionContext({ _memory: memory }, { maxChars: Math.min(2000, Math.floor(budget * 0.3)) });
     if (corrections) push(corrections);
-    const trimPush = (header, lines, limit) => {
+    const trimPush = (header, lines, limit, sources = []) => {
       const body = lines.slice(0, limit).join('\n');
-      if (body) push(`${header}\n${body}`);
+      if (body) push(`${header}\n${body}`, sources.slice(0, limit));
     };
 
     // L0: 置顶
     const pinsLines = memory.pins ? memory.pins.split('\n').filter(Boolean) : [];
-    if (pinsLines.length) trimPush('## 置顶提醒', pinsLines.slice(-5).map(item => `- ${item}`), 5);
+    if (pinsLines.length) trimPush('## 置顶提醒', pinsLines.slice(-5).map(item => `- ${item}`), 5, pinsLines.slice(-5).map(text => ({ field: 'pins', text })));
 
     if (Array.isArray(opts.semanticRecall) && opts.semanticRecall.length) {
       const recalled = opts.semanticRecall.slice(0, 4).map(item => `- [历史记录 · 第 ${item.turn} 回] ${String(item.text).slice(0, 420)}`);
-      trimPush('## 与本轮有关的历史记忆', recalled, 4);
+      trimPush('## 与本轮有关的历史记忆', recalled, 4, opts.semanticRecall.slice(0, 4).map(item => ({ ...item.source, text: item.text })));
     }
 
     // L3: 卷摘要(压缩版)
     const volumes = this._parseChapterData(memory.volumes);
     if (volumes.length) {
       const body = volumes.slice(-3).map(v => `- [卷${v.id}] ${v.summary.slice(0, 150)}`).join('\n');
-      if (body) push(`## 卷层摘要\n${body.slice(0, BUDGET_PER_SECTION.volumes)}`);
+      if (body) push(`## 卷层摘要\n${body.slice(0, BUDGET_PER_SECTION.volumes)}`, volumes.slice(-3).map(v => ({ fromTurn: v.from ?? null, toTurn: v.to ?? null })));
     }
 
     // L2: 章节
@@ -307,7 +313,7 @@ class MemorySystem {
         .map(s => s.ch);
       const injected = [...recent, ...scored].slice(-MAX_CHAPTERS_INJECT);
       const body = injected.map(c => `- [第${c.id}章] ${c.summary.slice(0, 120)}`).join('\n');
-      if (body) push(`## 章节编年\n${body.slice(0, BUDGET_PER_SECTION.chapters)}`);
+      if (body) push(`## 章节编年\n${body.slice(0, BUDGET_PER_SECTION.chapters)}`, injected.map(c => ({ fromTurn: c.from ?? null, toTurn: c.to ?? null })));
       if (memory.chapter_buffer) {
         push(`## 待归章剧情\n${memory.chapter_buffer.replace(/\s+/g, ' ').slice(-Math.min(600, budget - used - 100))}`);
       }
@@ -327,7 +333,7 @@ class MemorySystem {
         .filter(s => s.score > 0)
         .sort((a, b) => b.score - a.score || scored.indexOf(b) - scored.indexOf(a))
         .slice(0, FACTS_INJECT_LIMIT);
-      if (top.length) trimPush('## 相关事实', top.map(s => `- ${s.fact}`), Math.min(top.length, 10));
+      if (top.length) trimPush('## 相关事实', top.map(s => `- ${s.fact}`), Math.min(top.length, 10), top.map(item => ({ field: 'facts', text: item.fact })));
     }
 
     // 归档记忆
@@ -342,9 +348,9 @@ class MemorySystem {
     // 线索/事件 — 安静回合跳过
     if (!isQuiet || used + 300 < budget) {
       const cluesLines = memory.clues ? memory.clues.split('\n').filter(Boolean) : [];
-      if (cluesLines.length) trimPush('## 未解线索', cluesLines.slice(-6).map(item => `- ${this.formatClueLine(item)}`), 6);
+      if (cluesLines.length) trimPush('## 未解线索', cluesLines.slice(-6).map(item => `- ${this.formatClueLine(item)}`), 6, cluesLines.slice(-6).map(text => ({ field: 'clues', text })));
       const impLines = memory.important_events ? memory.important_events.split('\n').filter(Boolean) : [];
-      if (impLines.length) trimPush('## 重要事件', impLines.slice(-5).map(item => `- ${item}`), 5);
+      if (impLines.length) trimPush('## 重要事件', impLines.slice(-5).map(item => `- ${item}`), 5, impLines.slice(-5).map(text => ({ field: 'important_events', text })));
     }
 
     // NPC 记忆
@@ -385,6 +391,7 @@ class MemorySystem {
     }
 
     this._aliasCache = null;
+    if (opts.captureTrace) recordMemoryRecallTrace(state, trace);
     return parts.length ? `[动态记忆 - 优先级高于世界书]\n${parts.join('\n\n')}` : '';
   }
 

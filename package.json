@@ -1,6 +1,6 @@
 {
   "name": "naruto-rpg",
-  "version": "3.6.4",
+  "version": "3.7.0",
   "description": "火影忍者 AI 文字跑团 RPG — 网页端版本（Discord 登录 + 云存档）",
   "main": "server/index.js",
   "type": "module",
@@ -23,6 +23,7 @@
     "test:timeline-file": "node scripts/timeline-file-codec-regression.mjs",
     "test:save-library": "node scripts/save-library-busy-regression.mjs && node scripts/save-library-regression.mjs && node scripts/save-library-if-regression.mjs && node scripts/continuation-save-browser-regression.mjs",
     "test:timeline-node": "node scripts/timeline-node-codec-regression.mjs",
+    "test:timeline-node-large": "node scripts/timeline-node-large-recovery-regression.mjs",
     "test:shinobi-daily": "node scripts/shinobi-daily-regression.mjs",
     "test:lingxi": "node scripts/lingxi-catalog-regression.mjs && node scripts/lingxi-tools-regression.mjs && node scripts/agent-tool-fallback-regression.mjs && node scripts/lingxi-canon-search-regression.mjs && node scripts/lingxi-worldbook-management-regression.mjs && node scripts/lingxi-research-gate-regression.mjs && node scripts/lingxi-project-state-regression.mjs && node scripts/lingxi-music-regression.mjs && node scripts/music-channel-and-window-regression.mjs && node scripts/music-stream-regression.mjs && node scripts/lingxi-image-studio-regression.mjs && node scripts/lingxi-image-library-regression.mjs && node scripts/lingxi-player-action-regression.mjs && node scripts/lingxi-combat-action-regression.mjs && node scripts/lingxi-approval-broker-regression.mjs && node scripts/lingxi-project-write-adapters-regression.mjs && node scripts/lingxi-gameplay-actions-regression.mjs && node scripts/story-direction-planning-regression.mjs && node scripts/lingxi-cloud-save-action-regression.mjs",
     "test:lingxi-ui": "node scripts/run-lingxi-ui-tests.mjs",
@@ -55,7 +56,7 @@
     "generate-version": "node scripts/generate-version.mjs",
     "deploy:production": "bash deploy-v3.sh",
     "deploy:dry-run": "bash deploy-v3.sh --dry-run",
-    "test:variable-updater": "node scripts/variable-domain-regression.mjs && node scripts/variable-updater-recovery-regression.mjs && node scripts/variable-updater-staged-repair-regression.mjs && node scripts/developer-panel-diagnostics-regression.mjs",
+    "test:variable-updater": "node scripts/variable-domain-regression.mjs && node scripts/variable-updater-recovery-regression.mjs && node scripts/variable-updater-staged-repair-regression.mjs && node scripts/developer-panel-diagnostics-regression.mjs && node scripts/variable-execution-regression.mjs && node scripts/ai-request-compatibility-regression.mjs && node scripts/variable-time-regression.mjs",
     "test:continuation-save": "node scripts/continuation-save-regression.mjs && node scripts/continuation-save-browser-regression.mjs",
     "test:deepseek": "node scripts/deepseek-mode-regression.mjs && node scripts/deepseek-mode-browser-regression.mjs",
     "test:turn-receipt": "node scripts/turn-receipt-regression.mjs && node scripts/turn-receipt-pipeline-regression.mjs",
@@ -64,7 +65,9 @@
     "test:save-streaming": "node scripts/save-library-streaming-regression.mjs && node scripts/save-library-string-limit-regression.mjs",
     "test:large-save-rescue": "node scripts/timeline-recovery-regression.mjs && node scripts/incremental-continuation-regression.mjs && node scripts/large-timeline-startup-regression.mjs",
     "test:history-window": "node scripts/history-window-regression.mjs",
-    "test:vector-memory": "node scripts/vector-memory-regression.mjs && node scripts/vector-memory-browser-regression.mjs"
+    "test:vector-memory": "node scripts/vector-memory-regression.mjs && node scripts/vector-memory-browser-regression.mjs",
+    "test:shared-storage": "node scripts/shared-timeline-storage-regression.mjs",
+    "test:memory-recall-trace": "node scripts/memory-recall-trace-regression.mjs"
   },
   "dependencies": {
     "better-sqlite3": "13.0.3",

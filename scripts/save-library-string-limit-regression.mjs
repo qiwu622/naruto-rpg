@@ -80,14 +80,18 @@ try {
   const saved = await page.evaluate(async () => {
     const entries = await localSaveLibrary.list(PERSONAL_SAVE_KIND);
     window.originalEntry = entries[0];
-    const pack = await localSaveLibrary.readPackage(originalEntry.id, PERSONAL_SAVE_KIND);
+    const stored = originalEntry.storage === 'timeline_archive'
+      ? await localSaveLibrary.archiveTask('export', { id: originalEntry.id })
+      : await localSaveLibrary._read('files', originalEntry.id);
+    const { decodeTimelineSaveFile } = await import('/js/core/timeline-file-codec.js');
+    const { validateSavePackage } = await import('/js/core/save-library.js');
+    const pack = await validateSavePackage(await decodeTimelineSaveFile(stored.blob));
     const data = pack.payload;
-    const stored = await localSaveLibrary._read('files', originalEntry.id);
     const reader = stored.blob.stream().pipeThrough(new DecompressionStream('gzip')).getReader();
     let decodedBytes = 0;
     while (true) { const { value, done } = await reader.read(); if (done) break; decodedBytes += value.length; }
     reader.releaseLock();
-    return { id: originalEntry.id, checksum: originalEntry.checksum, nodes: data.nodes.length, branches: data.branches.length, decodedBytes,
+    return { id: originalEntry.id, checksum: pack.checksum.value, nodes: data.nodes.length, branches: data.branches.length, decodedBytes,
       intact: data.nodes.every(node => node.clean_response.length === 1024*1024 + node.id.length*2+2 && node.clean_response.startsWith(node.id+'|') && node.clean_response.endsWith('|'+node.id)),
       daily: data.nodes.every(node => node.shinobi_daily?.headline?.title),
       pins: data.nodes.at(-1).state_snapshot._memory.pins,
@@ -110,7 +114,7 @@ try {
     return { count:entries.length, nodes:data.nodes.length, first:data.nodes[0].turn_number, last:data.nodes.at(-1).turn_number,
       ledger:data.nodes.at(-1).state_snapshot._continuity.events.length,
       intact:data.nodes.every(node => node.clean_response.length === 1024*1024+node.id.length*2+2),
-      original:entries.some(item => item.id === originalEntry.id && item.checksum === originalEntry.checksum),
+      original:entries.some(item => item.id === originalEntry.id && (item.checksum || item.snapshotRevision) === (originalEntry.checksum || originalEntry.snapshotRevision)),
       current:stateManager.getSub('_meta').current_node_id === originalPosition };
   });
   assert.equal(copy.nodes, 100); assert.equal(copy.first, 294); assert.equal(copy.last, 393); assert.equal(copy.ledger, 393);
@@ -139,7 +143,7 @@ try {
   }), undefined, { timeout: 600000, polling: 2000 });
   assert.ok(await page.evaluate(async expected => {
     const entries = await localSaveLibrary.list(PERSONAL_SAVE_KIND);
-    return entries.length >= expected && entries.some(entry => entry.id === originalEntry.id && entry.checksum === originalEntry.checksum);
+    return entries.length >= expected && entries.some(entry => entry.id === originalEntry.id && (entry.checksum || entry.snapshotRevision) === (originalEntry.checksum || originalEntry.snapshotRevision));
   }, copy.count));
   ok('new-game preserves both archives and clears the working timeline only after backup commits');
   await page.reload();

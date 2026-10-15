@@ -1,4 +1,5 @@
 import { normalizeNpcIdentity } from './npc-identity.js';
+import { parseGameCalendar } from '../utils/game-calendar.js';
 import { projectSystemCombatPrompt, ORDINARY_RESOURCE_UPDATE_GUIDANCE } from './combat-prompt-mode.js';
 
 export const VAR_SCHEMA = {
@@ -459,12 +460,7 @@ export function getVariableUpdateDomainPrompt() {
 }
 
 export function calendarMonthFromValue(value) {
-  if (typeof value !== 'string') return null;
-  const text = value.trim();
-  const canonical = text.match(/^K\d{3,4}-(\d{2})-\d{2}(?:[T·\s].*)?$/i);
-  const localized = text.match(/^木叶\s*\d+\s*年\s*(\d{1,2})\s*月\s*\d{1,2}\s*日(?:[·\s].*)?$/);
-  const month = Number(canonical?.[1] ?? localized?.[1]);
-  return Number.isInteger(month) && month >= 1 && month <= 12 ? month : null;
+  return parseGameCalendar(value)?.month ?? null;
 }
 
 function validateNumericValue(path, op, value, { min = null, max = null } = {}) {

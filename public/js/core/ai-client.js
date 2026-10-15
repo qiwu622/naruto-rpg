@@ -362,6 +362,17 @@ function visibleReasoningText(data) {
   return '';
 }
 
+function emitCompletionMetadata(options, data) {
+  const finishReason = data?.choices?.[0]?.finish_reason
+    ?? data?.delta?.stop_reason ?? data?.stop_reason;
+  if (finishReason != null) options?.onFinish?.({ finishReason });
+}
+
+function isPermanentRequestError(error) {
+  const status = Number(error?.statusCode);
+  return status >= 400 && status < 500 && ![408, 409, 425, 429].includes(status);
+}
+
 function emitReasoning(options, data) {
   if (typeof options?.onReasoning !== 'function') return;
   const reasoning = visibleReasoningText(data);
@@ -594,7 +605,10 @@ class OpenAICompatibleAdapter extends AIAdapter {
       messages: normalizeOpenAIMessageOrder(prepared),
       temperature: options.temperature ?? 0.9,
       top_p: options.top_p ?? 0.9,
-      frequency_penalty: options.frequency_penalty ?? 0.2,
+      // Gemini-compatible relays can reject even a default nonzero penalty.
+      // Match the selected model, never a particular player's endpoint.
+      ...(!/(?:^|[^a-z0-9])gemini[-.]/i.test(this.model)
+        ? { frequency_penalty: options.frequency_penalty ?? 0.2 } : {}),
       stream,
       ...(stream ? { stream_options: { include_usage: true } } : {})
     }, options), this.config);
@@ -629,6 +643,7 @@ class OpenAICompatibleAdapter extends AIAdapter {
       }
       const data = await response.json();
       this._reportUsage(data.usage);
+      emitCompletionMetadata(options, data);
       emitReasoning(options, data);
       return {
         text: data.choices?.[0]?.message?.content || '',
@@ -702,6 +717,7 @@ class OpenAICompatibleAdapter extends AIAdapter {
               throw streamError;
             }
             if (data.usage) lastUsage = data.usage;
+            emitCompletionMetadata(options, data);
             emitReasoning(options, data);
             const content = data.choices?.[0]?.delta?.content || '';
             if (content) { fullContent += content; onChunk?.(content); }
@@ -715,6 +731,7 @@ class OpenAICompatibleAdapter extends AIAdapter {
           const data = parseJsonResponse(rawText, 'AI');
           this._reportUsage(data.usage);
           if (data.error) throw createStreamPayloadError(data, 'AI');
+          emitCompletionMetadata(options, data);
           emitReasoning(options, data);
           const content = data.choices?.[0]?.message?.content || '';
           if (content) {
@@ -742,13 +759,13 @@ class OpenAICompatibleAdapter extends AIAdapter {
             await waitWithAbort((retryDelay * 3) * Math.pow(2, attempt), options.signal);
           }
           lastError = failure;
-          if (failure.isAuthError || failure.isCancelled || attempt >= maxRetries) throw lastError;
+          if (isPermanentRequestError(failure) || failure.isAuthError || failure.isCancelled || attempt >= maxRetries) throw lastError;
         } finally {
           abortScope.dispose();
         }
       } catch (outerError) {
         lastError = outerError;
-        if (outerError.isAuthError || outerError.isCancelled || outerError.partialResponse) throw outerError;
+        if (isPermanentRequestError(outerError) || outerError.isAuthError || outerError.isCancelled || outerError.partialResponse) throw outerError;
         if (attempt >= maxRetries) throw outerError;
       }
     }
@@ -861,6 +878,7 @@ class ClaudeAdapter extends AIAdapter {
         throw new Error(`Claude API Error ${response.status}: ${err}`);
       }
       const data = await response.json();
+      emitCompletionMetadata(options, data);
       emitReasoning(options, data);
       const text = Array.isArray(data.content)
         ? data.content.filter(block => block?.type === 'text').map(block => block.text || '').join('')
@@ -945,6 +963,7 @@ class ClaudeAdapter extends AIAdapter {
               streamError.partialResponse = fullContent || null;
               throw streamError;
             }
+            emitCompletionMetadata(options, data);
             if (data.type === 'message_start' && data.message?.usage) {
               lastUsage = data.message.usage;
             }
@@ -966,6 +985,7 @@ class ClaudeAdapter extends AIAdapter {
 
           const data = parseJsonResponse(rawText, 'Claude AI');
           if (data.error) throw createStreamPayloadError(data, 'Claude AI');
+          emitCompletionMetadata(options, data);
           emitReasoning(options, data);
           const content = Array.isArray(data.content)
             ? data.content.filter(block => block?.type === 'text').map(block => block.text || '').join('')
@@ -995,13 +1015,13 @@ class ClaudeAdapter extends AIAdapter {
             await waitWithAbort((retryDelay * 3) * Math.pow(2, attempt), options.signal);
           }
           lastError = failure;
-          if (failure.isAuthError || failure.isCancelled || attempt >= maxRetries) throw lastError;
+          if (isPermanentRequestError(failure) || failure.isAuthError || failure.isCancelled || attempt >= maxRetries) throw lastError;
         } finally {
           abortScope.dispose();
         }
       } catch (outerError) {
         lastError = outerError;
-        if (outerError.isAuthError || outerError.isCancelled || outerError.partialResponse) throw outerError;
+        if (isPermanentRequestError(outerError) || outerError.isAuthError || outerError.isCancelled || outerError.partialResponse) throw outerError;
         if (attempt >= maxRetries) throw outerError;
       }
     }
@@ -1221,6 +1241,7 @@ export class AIClient {
           }
           const text = visibleResponseText(event);
           if (text) { streamedContent += text; onChunk?.(text); }
+          emitCompletionMetadata(options, event);
           emitReasoning(options, event);
           if (event.type === 'message_stop') return STREAM_COMPLETE;
         }, requestController.signal);
@@ -1254,6 +1275,7 @@ export class AIClient {
         throw createStreamPayloadError(data, '代理 AI');
       }
       if (data.usage) eventBus.emit('ai:usage', { ...data.usage, model: config.model });
+      emitCompletionMetadata(options, data);
       emitReasoning(options, data);
       const text = visibleResponseText(data);
       if (recoveryAttempt && !String(text || '').trim()) {

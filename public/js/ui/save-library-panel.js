@@ -17,7 +17,7 @@ import { saveLibraryStyles, saveLibraryModalStyles } from '../../css/components/
 export const IF_LINES_KIND = 'if_lines';
 const glyph = (name, size = 16) => icon(name, size).replace('<svg', '<svg aria-hidden="true" focusable="false"');
 const date = value => value ? new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', year: 'numeric' }) : '尚未保存快照';
-const size = value => value == null ? '房间记录' : value < 1024 * 1024 ? `${Math.ceil(value / 1024)} KB` : `${(value / 1024 / 1024).toFixed(2)} MB`;
+const size = value => value == null ? '尚未统计大小' : value < 1024 * 1024 ? `${Math.ceil(value / 1024)} KB` : `${(value / 1024 / 1024).toFixed(2)} MB`;
 const color = value => /^#[\da-f]{3,8}$/i.test(value || '') ? value : '#aab8e7';
 const continuationRange = scope => `正文与回退：第 ${Number(scope.from_turn) || 0}–${Number(scope.through_turn) || 0} 回合`;
 let activeModal = null;
@@ -91,7 +91,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
   }
 
   connectedCallback() { this._authSubscription = eventBus.on('auth:changed', () => { this.updateCloudStatusScopes(); if (this.cloudView) void this.refresh(); }); }
-  disconnectedCallback() { this._authSubscription?.(); }
+  disconnectedCallback() { this._authSubscription?.(); this._maintenanceAbort?.abort(); }
 
   configure({ kind = PERSONAL_SAVE_KIND, roomsOnly = false, connectRoom = null, fromNodeId = null, cloud = false, onLoaded, onClose } = {}) {
     Object.assign(this, { kind: roomsOnly ? ROOM_SAVE_KIND : kind, roomsOnly, connectRoom, fromNodeId });
@@ -123,7 +123,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
             <button id="capture" class="button primary">${glyph('archive')}保存当前个人档</button><button id="continuation" class="button quiet">生成轻量续玩副本</button><button id="create-line" class="button primary">${glyph('plus')}创建 IF 线</button><button id="new-game" class="button quiet">${glyph('plus')}保留旧档并开新档</button><button id="cloud-current" class="button primary" hidden>${glyph('cloud')}上传当前进度</button>
           </div></section>
           <div id="current-sync" class="sync-section"><p class="sync-caption">当前个人档 <span>云同步</span></p><cloud-sync-status aria-label="当前个人档同步状态"></cloud-sync-status></div>
-          <div class="toolbar"><label class="search">${glyph('search')}<input id="search" type="search" aria-label="搜索存档" placeholder="搜索名称、角色或地点…"></label><select id="sort" aria-label="排序"><option value="newest">最近更新</option><option value="oldest">最早创建</option><option value="turn">回合进度</option></select><button id="import" class="button quiet">${glyph('download')}导入到存档库</button><button id="cloud-manager" class="button quiet">${glyph('cloud')}<span>云端管理</span></button><button id="refresh" class="icon-button" aria-label="刷新" title="刷新">${glyph('refresh-cw')}</button><input id="file" type="file" accept="${TIMELINE_FILE_ACCEPT}" hidden></div>
+          <div class="toolbar"><label class="search">${glyph('search')}<input id="search" type="search" aria-label="搜索存档" placeholder="搜索名称、角色或地点…"></label><select id="sort" aria-label="排序"><option value="newest">最近更新</option><option value="oldest">最早创建</option><option value="turn">回合进度</option></select><button id="import" class="button quiet">${glyph('download')}导入到存档库</button><button id="cloud-manager" class="button quiet">${glyph('cloud')}<span>云端管理</span></button><button id="space-manager" class="button quiet">${glyph('database')}空间管理</button><button id="pause-maintenance" class="button quiet" hidden>暂停整理</button><button id="refresh" class="icon-button" aria-label="刷新" title="刷新">${glyph('refresh-cw')}</button><input id="file" type="file" accept="${TIMELINE_FILE_ACCEPT}" hidden></div>
           <p id="hint" class="hint"></p><a href="recovery.html" class="hint">大档卡顿或打不开？进入存档救援 →</a><p id="status" class="status" role="status" aria-live="polite"></p><div id="manual-sync" class="sync-section" hidden><p class="sync-caption">所选存档 <span id="manual-sync-label"></span></p><cloud-sync-status aria-label="所选存档上传状态"></cloud-sync-status></div><div id="list" class="list"></div>
           <section id="preview" class="preview" hidden><div class="preview-heading"><h3>本地快照 · 只读</h3><button id="close-preview" class="button quiet small">收起快照</button></div><pre id="snapshot-story"></pre><h4>当时的日报</h4><pre id="snapshot-daily"></pre><details><summary>查看存档中的变量</summary><pre id="snapshot-vars"></pre></details></section>
         </div>
@@ -141,6 +141,11 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
       const index = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
       event.preventDefault(); tabs[index].click(); tabs[index].focus();
     };
+    this.$('#space-manager').onclick = () => this.run(async () => {
+      const { openStorageManager } = await import('./storage-manager-panel.js');
+      await openStorageManager({ onChanged: () => this.refresh() });
+    });
+    this.$('#pause-maintenance').onclick = () => this._maintenanceAbort?.abort();
     this.$('#refresh').onclick = () => this.run(() => this.refresh());
     this.$('#search').oninput = () => this.renderList();
     this.$('#sort').onchange = () => this.renderList();
@@ -198,7 +203,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
       this.$('#manual-sync cloud-sync-status').scope = { userId, saveKey: this._manualSyncId || '', enforceCurrent: false };
     }
   }
-  updateDisabled() { this.$$('button,input,select').forEach(element => { element.disabled = (element.id !== 'close' && this.busy) || element.dataset.disabled === 'true'; }); }
+  updateDisabled() { this.$$('button,input,select').forEach(element => { element.disabled = (!['close', 'pause-maintenance'].includes(element.id) && this.busy) || element.dataset.disabled === 'true'; }); }
   async run(operation) {
     if (this.busy) return;
     this.busy = true; this.status('正在处理…'); this.updateDisabled();
@@ -238,6 +243,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     this.$('#cloud-manager span').textContent = cloud ? '返回本机' : '云端管理';
     this.$('#cloud-manager').setAttribute('aria-pressed', String(cloud));
     this.$('#import').hidden = lines || cloud;
+    this.$('#space-manager').hidden = inRoom || cloud;
     this.$('#search').placeholder = lines ? '搜索线路名称或备注…' : inRoom ? '搜索房间名称或房间号…' : '搜索名称、角色或地点…';
     const branch = branches.find(item => item.id === this.meta.active_branch);
     const snapshot = current?.state_snapshot ?? {};
@@ -321,14 +327,14 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     const button = (action, label, options = {}) => this.actionButton(action, entry.id, label, options);
     const backup = String(entry.reason || '').startsWith('before-') || entry.reason === 'library-open';
     return `<article class="entry" data-save-id="${escAttr(entry.id)}"${rooms ? ' style="--entry-color:#77bca6"' : ''}>
-      <div class="entry-head"><h3>${escHtml(entry.label)}</h3><span class="tag${entry.continuation ? ' light' : ''}">${rooms ? '联机' : entry.continuation ? '轻量续玩' : backup ? '自动备份' : '个人档'}</span></div>
+      <div class="entry-head"><h3>${escHtml(entry.label)}</h3><span class="tag${entry.continuation ? ' light' : ''}">${rooms ? '联机' : entry.continuation ? '轻量续玩' : entry.compacted ? '无损整理' : backup ? '自动备份' : '个人档'}</span></div>
       <div class="metadata"><span>${glyph(rooms ? 'users' : 'user', 13)}${rooms ? `玩家 ${escHtml(entry.seat || '—')}` : escHtml(entry.character || '忍者冒险')}</span><span>第 ${Number(entry.turn) || 0} 回合</span>${rooms ? '' : `<span>${entry.branchCount == null ? '完整时间线' : `${Number(entry.branchCount) || 0} 条 IF 线`}</span>`}</div>
       <p class="excerpt">${rooms ? `${escHtml(entry.roomCode || '')} · ${entry.snapshotAt ? '已保存正文、日报与可见变量快照' : '仅房间历史，尚未保存快照'}` : [entry.location, entry.branchName, entry.summary].filter(Boolean).map(escHtml).join(' · ') || '完整时间线已保存，可读取后继续冒险。'}</p>
       ${!rooms && usesProjectServerFeatures() ? `<cloud-sync-status data-sync-save-id="${escAttr(entry.id)}" aria-label="此存档上传状态"></cloud-sync-status>` : ''}
       ${entry.continuation ? `<p class="save-scope">${continuationRange(entry.continuation)}<br>此前记忆保留；其他线路请读取原档。</p>` : ''}
-      ${rooms ? '' : `<div class="entry-actions">${button('continuation', '生成轻量副本')}</div>`}
+      ${rooms ? '' : `<div class="entry-actions">${button('continuation', '生成轻量副本')}${entry.storage === 'timeline_archive' && !entry.compacted ? button('compact', '无损整理') : ''}</div>`}
       <div class="entry-footer">${!rooms || isMultiplayerEntryVisible() ? button('load', rooms ? '重新进入' : '读取', { primary: true, image: rooms ? 'users' : 'archive' }) : ''}<div class="entry-ops">${entry.snapshotAt ? button('preview', '查看快照', { image: 'zen' }) : ''}${button('rename', '改名', { image: 'pencil' })}${entry.snapshotAt ? button('export', '导出', { image: 'export' }) : ''}${!rooms && usesProjectServerFeatures() ? button('cloud', '上传到云端', { image: 'cloud' }) : ''}${button('delete', '删除本地记录', { image: 'trash' })}</div></div>
-      <p class="entry-time">${escHtml(date(entry.snapshotAt || entry.updatedAt))} · ${size(entry.bytes)}</p></article>`;
+      <p class="entry-time">${escHtml(date(entry.snapshotAt || entry.updatedAt))} · ${size(entry.bytes)}${entry.compacted ? ' · 含共享数据的独立估算' : entry.sharedPayload ? ' · 回合记录，另有共享数据' : ''}</p></article>`;
   }
 
   async act(action, id) {
@@ -347,6 +353,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     const entry = await localSaveLibrary.get(id, this.kind, this.owner);
     if (action === 'cloud') return this.uploadCloud(entry);
     if (action === 'continuation') return this.createContinuation(entry);
+    if (action === 'compact') return this.compactArchive(entry);
     if (action === 'load') {
       if (this.kind === ROOM_SAVE_KIND && !isMultiplayerEntryVisible()) return;
       if (this.kind === ROOM_SAVE_KIND) await localRoomHistory.resume(id, this.connectRoom || (roomId => eventBus.request('app:open-multiplayer', { roomId })));
@@ -372,6 +379,21 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
       const confirmed = await customElements.get('game-modal').confirm({ title: '删除本地存档', message: `删除「${entry.label}」？这不会删除服务器房间、当前游戏进度或其他存档。`, okLabel: '删除', cancelLabel: '取消' });
       if (confirmed) { await localSaveLibrary.remove(id, this.kind, this.owner); await this.refresh(); }
     }
+  }
+
+  async compactArchive(source) {
+    const confirmed = await customElements.get('game-modal').confirm({ title: '无损整理存档',
+      message: `为「${source.label}」创建更省空间的副本，保留全部回合和 IF 线。原档会保留；整理完成前需要额外空间。中途可暂停，之后在空间管理中继续。`, okLabel: '保留原档并整理', cancelLabel: '取消' });
+    if (!confirmed) { this.status(''); return; }
+    this._maintenanceAbort = new AbortController(); this.$('#pause-maintenance').hidden = false;
+    try {
+      const { entry } = await personalSaveLibrary.compact({ sourceId: source.id, signal: this._maintenanceAbort.signal, onProgress: text => this.status(text) });
+      await this.refresh();
+      this.status(`整理副本已校验完成：${size(entry.compactionSourceBytes)} → ${size(entry.bytes)}（独立估算）。全部回合和 IF 线保留。原档仍在，可读取新副本继续游玩。`);
+    } catch (error) {
+      if (error.name === 'AbortError') this.status('整理已暂停，原档保留。可在空间管理中继续。');
+      else throw error;
+    } finally { this._maintenanceAbort = null; this.$('#pause-maintenance').hidden = true; }
   }
 
   async createContinuation(source = null) {

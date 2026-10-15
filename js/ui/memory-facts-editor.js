@@ -58,6 +58,12 @@ export class MemoryFactsEditor extends HTMLElementBase {
     this._connected = false;
   }
 
+  locateFact(text, field = 'all') {
+    this._query = String(text || ''); this._field = Object.hasOwn(FIELD_LABELS, field) ? field : 'all';
+    this._page = 0; this.render();
+    this.querySelector('[data-memory-search]')?.focus({ preventScroll: true });
+  }
+
   _expected() {
     return {
       nodeId: this._viewState?._meta?.current_node_id || null,

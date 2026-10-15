@@ -1,7 +1,6 @@
 import { deepClone, generateId, getValueByPath, setValueByPath, isSafePath, isSafePathKey } from '../utils/format.js';
 import { eventBus } from './event-bus.js';
 import {
-  calendarMonthFromValue,
   coerceValue,
   getDefaults,
   isKnownKey,
@@ -11,10 +10,12 @@ import {
   VAR_SCHEMA
 } from '../data/var-schema.js';
 import { normalizeStateCommands } from './state-command-normalizer.js';
+import { parseGameCalendar } from '../utils/game-calendar.js';
 import { createContinuityLedger, migrateLegacyMemory } from './continuity-ledger.js';
 
 import { openTimelineDB, SUMMARY_STORE, buildTimelineIndex, timelineRevision } from './timeline-db.js';
 import { listingTimelineNode } from './timeline-node-codec.js';
+import { PAYLOAD_CHUNK_STORE, putPayloadChunks } from './timeline-payload-chunks.js';
 import { normalizeHistoryViewTurns, DEFAULT_HISTORY_VIEW_TURNS } from './timeline-preferences.js';
 const STORE_NODES = 'timeline_nodes';
 const STORE_BRANCHES = 'timeline_branches';
@@ -411,11 +412,14 @@ class StateManager {
             }
           }
           if (key === '世界·时间') {
-            const month = calendarMonthFromValue(coerced);
-            if (month != null && this.state['世界·月份'] !== month) {
-              oldValues['世界·月份'] = deepClone(this.state['世界·月份']);
-              this.state['世界·月份'] = month;
-              applied.push({ key: '世界·月份', op: '=', value: month, derivedFrom: '世界·时间' });
+            const calendar = parseGameCalendar(coerced);
+            if (calendar) {
+              for (const [derivedKey, value] of [['世界·月份', calendar.month], ['世界·年代', calendar.year]]) {
+                if (this.state[derivedKey] === value) continue;
+                if (!Object.hasOwn(oldValues, derivedKey)) oldValues[derivedKey] = deepClone(this.state[derivedKey]);
+                this.state[derivedKey] = value;
+                applied.push({ key: derivedKey, op: '=', value, derivedFrom: '世界·时间' });
+              }
             }
           }
           applied.push(v);
@@ -1297,7 +1301,7 @@ class StateManager {
     if (typeof mutator !== 'function') throw new TypeError('时间线事务需要同步变更函数');
     if (!this._db) await this.initDB();
     return new Promise((resolve, reject) => {
-      const tx = this._db.transaction([STORE_NODES, STORE_BRANCHES, STORE_META, SUMMARY_STORE], 'readwrite');
+      const tx = this._db.transaction([STORE_NODES, STORE_BRANCHES, STORE_META, SUMMARY_STORE, PAYLOAD_CHUNK_STORE], 'readwrite');
       const nodeStore = tx.objectStore(STORE_NODES);
       const branchStore = tx.objectStore(STORE_BRANCHES);
       const metaStore = tx.objectStore(STORE_META);
@@ -1366,6 +1370,7 @@ class StateManager {
           for (const id of mutation.deleteNodeIds || []) { nodeStore.delete(id); tx.objectStore(SUMMARY_STORE).delete(id); }
           for (const id of mutation.deleteBranchIds || []) branchStore.delete(id);
           for (const key of mutation.deleteMetaKeys || []) metaStore.delete(key);
+          putPayloadChunks(tx, mutation.payloadChunks, abortWith);
           for (const node of mutation.nodes || []) { nodeStore.put(node); tx.objectStore(SUMMARY_STORE).put(listingTimelineNode(node)); }
           for (const branch of mutation.branches || []) branchStore.put(branch);
           if (mutation.meta) metaStore.put(mutation.meta);

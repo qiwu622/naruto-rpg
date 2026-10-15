@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="zh-CN" data-release-version="3.6.4">
+<html lang="zh-CN" data-release-version="3.7.0">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#101113">
-  <meta name="description" content="忍者手记 v3.6.4 更新公告与历史版本说明。">
-  <title>更新公告 · 忍者手记 v3.6.4</title>
+  <meta name="description" content="忍者手记 v3.7.0 更新公告与历史版本说明。">
+  <title>更新公告 · 忍者手记 v3.7.0</title>
   <style>
     :root { color-scheme:dark; --ink:#101113; --paper:#ede6d9; --muted:#aaa49c; --gold:#d7b17a; }
     * { box-sizing:border-box; }
@@ -56,30 +56,53 @@
   <div class="wrap">
     <header class="top"><a class="brand" href="/">忍者手记</a><a class="pill" href="/">进入游戏 ↗</a></header>
     <section class="hero" aria-labelledby="title">
-      <p class="eyebrow">RELEASE NOTES · 2026-10-11</p>
-      <h1 id="title">v3.6.4 · 更新公告</h1>
+      <p class="eyebrow">RELEASE NOTES · 2026-10-15</p>
+      <h1 id="title">v3.7.0 · 更新公告</h1>
       <p>每一次更新，都记录在这里。查看本次变化、升级说明与历史版本。</p>
       <div class="links"><a class="pill primary" href="https://www.qiwu.asia/app/android/naruto-rpg.apk">安卓安装包</a><a class="pill" href="https://github.com/qiwu622/naruto-rpg/releases">GitHub 下载</a><a class="pill" href="#history">历史公告 ↓</a></div>
     </section>
     <div class="layout">
-      <nav aria-label="本次更新目录"><p>本次更新</p><a href="#section-1">本次更新</a></nav>
-      <article aria-label="v3.6.4 更新内容"><p><strong>2026-10-11</strong></p>
+      <nav aria-label="本次更新目录"><p>本次更新</p><a href="#section-1">本次更新</a>
+<a href="#section-2">升级说明</a></nav>
+      <article aria-label="v3.7.0 更新内容"><p><strong>2026-10-15 · 变量、时间与大档优化</strong></p>
 <h2 id="section-1">本次更新</h2>
 <ul>
-<li><strong>大档优化</strong>：按需读取历史，后台逐条保存、导出，减少长档卡死。</li>
-<li><strong>旧档救援</strong>：先保留完整原档，再选择恢复点生成续玩副本；失败或取消不覆盖原档。</li>
-<li><strong>回合数自选</strong>：历史每页数量、续玩副本保留数量均可设置，默认 <strong>100</strong>。</li>
-<li><strong>App 内更新</strong>：在客户端查看公告、下载进度并直接安装，无需去官网找安装包。</li>
-<li><strong>可选向量记忆</strong>：默认关闭；自行开启后辅助召回，网络失败仍可继续游玩。</li>
-<li>同步此前大档导入、保存忙碌误报、流式滚动和思维链默认折叠修复。</li>
+<li><strong>变量更可靠</strong>：修复自检吞掉更新、标签顺序错乱和部分漏写，减少无效重试。</li>
+<li><strong>时间正常推进</strong>：支持精确时刻、跨日跨年；未选选项和未来约定不提前发生。</li>
+<li><strong>大档无损整理</strong>：保留完整原档，生成共享存储副本；支持暂停、断点续做和空间管理。</li>
+<li><strong>记忆依据可查看</strong>：查看本轮实际纳入的记忆并定位修订；向量记忆仍默认关闭。</li>
+<li><strong>安卓同步更新</strong>：包含 32 MiB 读取修复，可在客户端查看公告、下载并覆盖安装。</li>
 </ul>
-<p class="callout"><strong>旧存档兼容，无需重新开档。</strong> 完整旧回合和 IF 线保留在原档中，轻量副本只保留所选范围。</p>
-<p class="callout">安卓旧版本次通过原有更新入口<strong>覆盖安装一次</strong>，此后可在客户端内更新。安装仍需安卓系统确认；<strong>不要卸载旧版或清除应用数据</strong>。</p>
-<p><a href="https://www.qiwu.asia/announcements.html" target="_blank" rel="noopener noreferrer">网站公告</a> · <a href="https://www.qiwu.asia/app/android/naruto-rpg.apk" target="_blank" rel="noopener noreferrer">安卓下载</a> · <a href="https://github.com/qiwu622/naruto-rpg/releases/tag/v3.6.4" target="_blank" rel="noopener noreferrer">GitHub</a></p></article>
+<h2 id="section-2">升级说明</h2>
+<p class="callout">网页请在原浏览器刷新；安卓覆盖安装即可，<strong>无需卸载或重新开档</strong>。</p>
+<p class="callout">旧档升级保留原始记录。无损整理不会自动删除原档，保留原档期间总占用不会立即减少；JSON/gzip 导入导出继续兼容。升级后的本地数据库请使用新版程序读取。</p>
+<p><a href="https://www.qiwu.asia/announcements.html" target="_blank" rel="noopener noreferrer">网站公告</a> · <a href="https://www.qiwu.asia/app/android/naruto-rpg.apk" target="_blank" rel="noopener noreferrer">安卓下载</a> · <a href="https://github.com/qiwu622/naruto-rpg/releases/tag/v3.7.0" target="_blank" rel="noopener noreferrer">GitHub</a></p></article>
     </div>
     <section class="history" id="history"><h2>历史版本</h2><p class="muted">本次完整公告与之前版本的更新记录。</p>
+    <details><summary><span>v3.6.5</span><time>2026-10-15</time></summary>
+      <div class="history-content"><ul>
+<li>修复正常大档读取时误报“时间线节点解压后超过 32 MiB 上限”，覆盖历史回看、读档、后台导出和旧档救援。</li>
+<li>单节点压缩与解压使用分块 JSON 读写，减少整块字符串复制；保留损坏数据、格式和显式读取限额检查，不重写或删除原始旧档。</li>
+<li>本次仅发布网页热修复与公告；在原浏览器刷新后生效，旧档兼容，无需重新开档。安卓安装包仍为 v3.6.4。</li>
+</ul></div>
+    </details>
+    <details><summary><span>v3.6.4</span><time>2026-10-11</time></summary>
+      <div class="history-content"><h3>存档与安卓更新</h3>
+<ul>
+<li>大档启动按需读取；后台逐条保存、导出及生成续玩副本，降低整档展开导致的内存压力。</li>
+<li>独立旧档救援保留原始记录，支持选择恢复点；取消、空间不足和失败回滚保护原档。</li>
+<li>历史每页显示和续玩保留回合数可设置，默认 100；旧回合分页读取，完整原档与 IF 线保留。</li>
+<li>可选向量记忆默认关闭，启用后限制召回与缓存数量，离线或超时沿用原流程。</li>
+<li>安卓客户端内下载更新、显示进度、校验大小/哈希/包名/版本/签名并唤起系统安装；下载可在后台继续。</li>
+<li>安装前等待当前回合完成，旧版覆盖升级保留本地存档；本次同步 3.6.1–3.6.3 的存档和阅读修复至 App 与 GitHub。</li>
+</ul></div>
+    </details>
     <details><summary><span>v3.6.3</span><time>2026-10-10</time></summary>
-      <div class="history-content"></div>
+      <div class="history-content"><ul>
+<li>修复大档刷新后进入存档库，首次保存误报“正文正在生成或存档正在切换”：打开面板只读取目录，不再后台隐式备份全档；保存、切档和开新档继续在明确操作时执行完整备份。</li>
+<li>区分回合生成和存档操作的等待提示，补充重复打开入口、保存时关闭重开、失败重试、取消开新档的真实浏览器回归；大档测试改走应用实际入口。</li>
+<li>网页热修复：正式站与测试站刷新后生效，旧档兼容；安卓安装包仍为 v3.6.0。</li>
+</ul></div>
     </details>
     <details><summary><span>v3.6.2</span><time>2026-10-10</time></summary>
       <div class="history-content"><ul>

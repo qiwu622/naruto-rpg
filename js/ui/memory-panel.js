@@ -5,6 +5,7 @@ import { memorySystem } from '../systems/memory-system.js';
 import { getMemoryConfig, saveMemoryConfig } from '../data/memory-config.js';
 import { icon } from '../utils/icons.js';
 import './memory-facts-editor.js';
+import './memory-recall-panel.js';
 import { projectCorrectedMemory } from '../core/memory-corrections.js';
 import { vectorMemory, getVectorCredentials, saveVectorCredentials } from '../core/vector-memory.js';
 
@@ -24,6 +25,7 @@ class MemoryPanel extends HTMLElement {
   _render() {
     const cfg = getMemoryConfig();
     this.innerHTML = `
+      <memory-recall-panel></memory-recall-panel>
       <memory-facts-editor></memory-facts-editor>
       <div class="pane-grid">
         <section>
@@ -137,6 +139,11 @@ class MemoryPanel extends HTMLElement {
           <div class="mem-chapters" data-mem-chapters style="max-height:400px;overflow:auto;font-size:12px;padding-right:8px;">加载中…</div>
         </section>
       </div>`;
+
+    this.querySelector('memory-recall-panel').addEventListener('memory-locate-fact', ({ detail }) => {
+      const editor = this.querySelector('memory-facts-editor');
+      editor.locateFact(detail.text, detail.field); editor.scrollIntoView({ block: 'nearest' });
+    });
 
     // 字段变更即时保存
     const memFields = ['memAiCompressionEnabled','memDeepEnabled','memDeepCycle','memDeepModel','memChapterWindow',

@@ -30,7 +30,7 @@ export function captureTimelineArchive(db, { label = '', reason = 'manual', rese
     const meta = tx.objectStore('timeline_meta'), archives = tx.objectStore('timeline_archives');
     const records = tx.objectStore('timeline_archive_nodes'), summaries = tx.objectStore(SUMMARY_STORE);
     const id = newId(), now = Date.now();
-    let count = 0, root, branchList, latest, current, result, failure, revision;
+    let count = 0, bytes = 0, sharedPayload = false, root, branchList, latest, current, result, failure, revision;
     const abort = () => { failure = cancelled(); try { tx.abort(); } catch {} };
     signal?.addEventListener('abort', abort, { once: true });
     const fail = error => { failure = error; try { tx.abort(); } catch {} };
@@ -75,7 +75,7 @@ export function captureTimelineArchive(db, { label = '', reason = 'manual', rese
         branchName: branchList.find(branch => branch.id === root?.value?.active_branch)?.name || '主线',
         summary: chosen?.summary || '', location: chosen?.location || '',
         continuation: root?.value?.continuation || null,
-        meta: root, branches: branchList, complete: true };
+        meta: root, branches: branchList, bytes, sharedPayload, complete: true };
       // Count the committed raw records before exposing the backup or clearing
       // anything. An error/quota failure aborts every write in this transaction.
       const check = records.index('archiveId').count(archiveRange(id));
@@ -103,9 +103,11 @@ export function captureTimelineArchive(db, { label = '', reason = 'manual', rese
         if (!cursor) { finishBackup(); return; }
         try {
           const node = cursor.value;
+          bytes += estimateTimelineNodeBytes(node);
+          sharedPayload ||= node.payload_encoding === 'shared-json-v1';
           const listed = { id: node.id, turn_number: node.turn_number,
             character: String(node.state_snapshot?.['玩家·姓名'] || node.state_snapshot?.player?.name || '').slice(0, 100),
-            summary: String(node.summary || '').slice(0, 220), location: String(node.location || node.state_snapshot?.['世界·地点'] || '').slice(0, 120) };
+            summary: String(node.summary || '').slice(0, 220), location: String(node.location || node.payload_location || node.state_snapshot?.['世界·地点'] || '').slice(0, 120) };
           if (!latest || listed.turn_number > latest.turn_number) latest = listed;
           if (node.id === root?.value?.current_id) current = listed;
           const write = records.add({ archiveId: id, id: node.id, node });
@@ -119,12 +121,12 @@ export function captureTimelineArchive(db, { label = '', reason = 'manual', rese
 async function logicalArchiveNode(db, id, nodeId) {
   const record = await readDB(db, 'timeline_archive_nodes', [id, nodeId]);
   if (!record?.node) throw new Error(`原档缺少回合 ${nodeId}，未修改原档`);
-  return sanitizeTimelineNode(await decompressTimelineNode(record.node));
+  return sanitizeTimelineNode(await decompressTimelineNode(record.node, { db }));
 }
 
 // Immutable backups allow one small readonly transaction per record, avoiding
 // a long-lived transaction across asynchronous compression/stream backpressure.
-async function* archiveNodes(db, entry, signal) {
+export async function* archiveNodes(db, entry, signal) {
   let previous;
   let count = 0;
   while (true) {
@@ -174,7 +176,7 @@ export async function exportTimelineArchive(db, entry, { onProgress = () => {}, 
     let count = 0;
     for await (const raw of archiveNodes(db, entry, signal)) {
       if (count) yield encoder.encode(',');
-      const { memory_snapshot, payload, payload_encoding, payload_bytes, ...node } = await decompressTimelineNode(raw);
+      const { memory_snapshot, payload, payload_encoding, payload_bytes, ...node } = await decompressTimelineNode(raw, { db });
       yield* json(cleanSaveData(sanitizeTimelinePersistenceValue(node, 'timeline_export')));
       count++; onProgress(`正在导出：${count} / ${entry.nodeCount}`);
     }
@@ -260,6 +262,7 @@ export async function createContinuationArchive(db, source, { keepTurns = DEFAUL
     branchName: header.branches[0].name, turn: last.turn_number, continuation: header.meta.value.continuation,
     summary: String(head.summary || '').slice(0, 220), location: String(head.location || head.state_snapshot?.['世界·地点'] || '').slice(0, 120),
     complete: false, bytes: 0 };
+  for (const key of ['compacted', 'sharedPayload', 'indexBytes', 'sharedPayloadBytes', 'compactionSourceBytes']) delete entry[key];
   try {
     await archiveWrite(db, tx => tx.objectStore('timeline_archives').add(entry), signal);
     for (let index = 0; index < retained.length; index++) {
@@ -301,6 +304,25 @@ export async function createContinuationArchive(db, source, { keepTurns = DEFAUL
 }
 
 export async function runArchiveTask(db, action, options = {}, context = {}) {
+  if (['compact', 'resume-compaction', 'cleanup', 'discard-job', 'remove', 'create-continuation', 'rescue'].includes(action)) {
+    // Older WebViews can still use the existing archive operations. Only the
+    // new resumable maintenance/GC features require cross-context locking.
+    if (!globalThis.navigator?.locks && ['remove', 'create-continuation', 'rescue'].includes(action)) {
+      return executeArchiveTask(db, action, options, context);
+    }
+    const { withStorageMaintenanceLock } = await import('./timeline-storage-maintenance.js');
+    return withStorageMaintenanceLock(() => executeArchiveTask(db, action, options, context));
+  }
+  return executeArchiveTask(db, action, options, context);
+}
+
+async function executeArchiveTask(db, action, options = {}, context = {}) {
+  if (['compact', 'resume-compaction', 'storage-stats', 'cleanup', 'discard-job'].includes(action)) {
+    const maintenance = await import('./timeline-storage-maintenance.js');
+    if (action === 'storage-stats') return maintenance.inspectTimelineStorage(db, context);
+    if (action === 'cleanup' || action === 'discard-job') return maintenance.cleanTimelineStorage(db, { discardId: action === 'discard-job' ? options.id : '' }, context);
+    return maintenance.compactTimelineArchive(db, { ...options, resume: action === 'resume-compaction' }, context);
+  }
   if (action === 'capture') return captureTimelineArchive(db, options, context);
   if (action === 'list') return (await readDB(db, 'timeline_archives')).filter(entry => entry.complete);
   if (action === 'status') return { meta: await readDB(db, 'timeline_meta', 'root'), archives: await readDB(db, 'timeline_archives') };
@@ -311,7 +333,7 @@ export async function runArchiveTask(db, action, options = {}, context = {}) {
     const branches = await readDB(db, 'timeline_branches');
     const raw = await readDB(db, 'timeline_nodes', meta.value.current_id);
     if (!raw) throw new Error('保存位置对应的回合不存在，请先保留原档');
-    const current = sanitizeTimelineNode(await decompressTimelineNode(raw));
+    const current = sanitizeTimelineNode(await decompressTimelineNode(raw, { db }));
     const count = await new Promise((resolve, reject) => {
       const tx = db.transaction('timeline_nodes'), request = tx.objectStore('timeline_nodes').count();
       tx.oncomplete = () => resolve(request.result); tx.onabort = () => reject(tx.error);
@@ -350,18 +372,25 @@ export async function runArchiveTask(db, action, options = {}, context = {}) {
     return { backup, current };
   }
   if (action === 'rename' || action === 'remove') return new Promise((resolve, reject) => {
+    let failure;
     const tx = db.transaction(['timeline_archives', 'timeline_archive_nodes'], 'readwrite');
     if (action === 'rename') {
       if (!String(options.label || '').trim()) throw new Error('请输入存档名称');
       entry.label = String(options.label).trim().slice(0, 100); entry.updatedAt = Date.now();
       tx.objectStore('timeline_archives').put(entry);
     } else {
+      const pending = tx.objectStore('timeline_archives').getAll();
+      pending.onsuccess = () => {
+        if (pending.result.some(item => !item.complete && item.job?.sourceId === entry.id)) {
+          failure = new Error('有未完成的整理任务正在使用这个原档，请先完成或清理该任务'); tx.abort();
+        }
+      };
       tx.objectStore('timeline_archives').delete(entry.id);
       const request = tx.objectStore('timeline_archive_nodes').index('archiveId').openCursor(archiveRange(entry.id));
       request.onsuccess = () => { const cursor = request.result; if (cursor) { cursor.delete(); cursor.continue(); } };
     }
     tx.oncomplete = () => resolve(action === 'rename' ? entry : null);
-    tx.onabort = () => reject(tx.error); tx.onerror = () => {};
+    tx.onabort = () => reject(failure || tx.error); tx.onerror = () => {};
   });
   throw new Error('未知存档后台操作');
 }

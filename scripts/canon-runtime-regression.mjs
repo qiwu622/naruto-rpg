@@ -545,7 +545,7 @@ test('editable presets expose V2 lifecycle and unchanged JT authority', () => {
   const main = DEFAULT_MAIN_PRESET.entries.map(entry => entry.content).join('\n');
   const updater = DEFAULT_VARIABLE_UPDATER_PRESET.entries.map(entry => entry.content).join('\n');
   assert.match(DEFAULT_MAIN_PRESET_VERSION, /relationship-rename-v18/);
-  assert.equal(DEFAULT_VARIABLE_UPDATER_PRESET_VERSION, 18);
+  assert.equal(DEFAULT_VARIABLE_UPDATER_PRESET_VERSION, 19);
   for (const text of [main, updater]) {
     assert.match(text, /DAY-\{HIST\|P1\|P2\|BOR\}-\*/);
     assert.match(text, /SCN-\{HIST\|P1\|P2\|BOR\}-\*/);

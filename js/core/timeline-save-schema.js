@@ -1,5 +1,6 @@
 import { inspectContinuityLedger, inspectMemoryEvent } from './continuity-ledger.js';
 import { validateShinobiDaily } from './shinobi-daily.js';
+import { SHARED_PAYLOAD_ENCODING } from './timeline-payload-chunks.js';
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -103,6 +104,9 @@ export function sanitizeTimelineNode(node, path = 'timeline_node') {
       sanitized.payload_encoding = TIMELINE_NODE_PAYLOAD_ENCODING;
       sanitized.payload = bytes;
     }
+  }
+  if (encoding === SHARED_PAYLOAD_ENCODING && isRecord(payload)) {
+    sanitized.payload = sanitizeTimelinePersistenceValue(payload, `${path}.payload`);
   }
   return sanitized;
 }

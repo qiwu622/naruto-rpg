@@ -3,6 +3,7 @@ import { eventBus } from '../core/event-bus.js';
 import { formatGameTime } from '../utils/format.js';
 import { CANON_DATABASE } from '../data/canon-database.js';
 import { FINAL_EVENT_STATUSES } from '../data/instruction-contract.js';
+import { GAME_DAYS_PER_MONTH, GAME_TIME_PERIODS, gameTimePosition, parseGameCalendar } from '../utils/game-calendar.js';
 
 class WorldStateSystem {
   getWorldState() {
@@ -40,6 +41,9 @@ class WorldStateSystem {
   }
 
   _parseCalendarString(str) {
+    const complete = parseGameCalendar(str);
+    if (complete) return complete;
+    // Preserve the legacy season/day notation when reading older saves.
     const result = { year: '木叶48年', month: 1, day: 1, time_of_day: '清晨' };
     const yearMatch = str.match(/木叶(\d+)年/);
     if (yearMatch) result.year = `木叶${yearMatch[1]}年`;
@@ -56,7 +60,7 @@ class WorldStateSystem {
     const oldDayMatch = str.match(/第(\d+)天/);
     if (newDayMatch) result.day = parseInt(newDayMatch[1]);
     else if (oldDayMatch) result.day = parseInt(oldDayMatch[1]);
-    const timeOrder = ['清晨', '上午', '正午', '午后', '傍晚', '夜晚', '深夜'];
+    const timeOrder = GAME_TIME_PERIODS;
     for (const t of timeOrder) {
       if (str.includes(t)) { result.time_of_day = t; break; }
     }
@@ -65,18 +69,21 @@ class WorldStateSystem {
 
   advanceTime(mode = 'scene') {
     const cal = this._validateCalendar(this.getCalendar());
-    const timeOrder = ['清晨', '上午', '正午', '午后', '傍晚', '夜晚', '深夜'];
-
-    const currentTimeIdx = timeOrder.indexOf(cal.time_of_day || '清晨');
+    const timeOrder = GAME_TIME_PERIODS;
+    const { index: currentTimeIdx, beforeDawn } = gameTimePosition(cal.time_of_day);
 
     switch (mode) {
       case 'moment':
-        cal.time_of_day = timeOrder[Math.min(currentTimeIdx + 1, timeOrder.length - 1)];
+        cal.time_of_day = timeOrder[(currentTimeIdx + 1) % timeOrder.length];
+        if (currentTimeIdx === timeOrder.length - 1 && !beforeDawn) {
+          cal.day += 1;
+          this._checkMonthChange(cal);
+        }
         break;
       case 'scene':
         cal.time_of_day = timeOrder[Math.min(currentTimeIdx + 2, timeOrder.length - 1)];
         if (currentTimeIdx >= timeOrder.length - 2) {
-          cal.day = (cal.day || 1) + 1;
+          if (!beforeDawn) cal.day = (cal.day || 1) + 1;
           cal.time_of_day = timeOrder[0];
           this._checkMonthChange(cal);
         }
@@ -126,8 +133,7 @@ class WorldStateSystem {
   }
 
   _checkMonthChange(cal) {
-    const DAYS_PER_MONTH = 30;
-    if (cal.day > DAYS_PER_MONTH) {
+    if (cal.day > GAME_DAYS_PER_MONTH) {
       cal.day = 1;
       if (cal.month < 12) {
         cal.month = cal.month + 1;

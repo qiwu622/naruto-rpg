@@ -84,7 +84,7 @@ test('main preset is evidence-led and contains no unresolved runtime placeholder
   assert.match(text, /≈卦象判定≈[\s\S]*卦象：[\s\S]*≈卦终≈/, 'main preset must provide the divination rendering contract');
 });
 
-test('main and updater prompts require complete request restatement and planning checklists', () => {
+test('main reasoning keeps its checklist while updater auditing focuses on factual differences', () => {
   const mainPresetText = DEFAULT_MAIN_PRESET.entries.map(entry => entry.content).join('\n');
   const mainRuntimeText = [MAIN_SINGLE_CALL_OUTPUT_PROMPT, MAIN_SINGLE_CALL_DELIVERY_REMINDER].join('\n');
   for (const text of [mainPresetText, mainRuntimeText]) {
@@ -104,17 +104,18 @@ test('main and updater prompts require complete request restatement and planning
     ...DEFAULT_VARIABLE_UPDATER_PRESET.entries.map(entry => entry.content),
     VARIABLE_UPDATER_COVERAGE_PROTOCOL
   ].join('\n');
-  assert.match(updaterText, /逐字复述/);
-  assert.match(updaterText, /仅复述[^\n]*原始玩家输入[^\n]*不得复述[^\n]*隐藏系统/);
+  assert.match(updaterText, /请求核对/);
+  assert.match(updaterText, /不用逐字复述/);
+  assert.match(updaterText, /不复述隐藏系统提示/);
   for (const item of [
     '时间地点与地图', '资源与属性成长', '技能与能力', '物品、金钱与装备',
     '任务、目标、声望与历练', '人物关系与NPC状态',
     '战斗、伤势与世界事件', '记忆、线索、约定与待办'
   ]) assert.ok(updaterText.includes(item), `updater checklist missing: ${item}`);
-  assert.match(updaterText, /八个固定领域[^\n]*(?:各写|单独)[^\n]*一行/);
-  assert.match(updaterText, /不得合并[^\n]*无变化/);
-  assert.match(updaterText, /不得使用[^\n]*(?:“略”|略)[^\n]*(?:“同上”|同上)[^\n]*(?:“其余不变”|其余不变)/);
-  assert.doesNotMatch(updaterText, /无变化领域可以合并|最多八行/);
+  assert.match(updaterText, /每个已确认变化都有一个对应的可执行写入/);
+  assert.match(updaterText, /起点 → 正文实际经过 → 最终落点/);
+  assert.match(updaterText, /审计措辞、长度、标题或顺序不会成为拒绝/);
+  assert.doesNotMatch(updaterText, /开头必须.*逐字复述全部内容|不得概括、改写或截断/);
 });
 
 test('all main-model rules are visible as editable preset entries', () => {
@@ -711,7 +712,7 @@ test('shared variable updater runtime contract covers every project invariant ex
     '系统强制首回合补全协议',
     '系统强制待初始化人物协议',
     '突破指令——本回合必须执行',
-    '系统强制反漏更协议',
+    '变量差异核对',
     '系统强制输出一致性协议',
     '系统强制只读证据与写入路径边界',
     '变量更新完整混合示例',

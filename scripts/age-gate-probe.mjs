@@ -8,7 +8,7 @@
  *  - the raw completion is NEVER printed and NEVER written to disk;
  *  - only a verdict + response length + a short refusal marker are reported.
  *
- * Usage: GG_KEY=... node scripts/age-gate-probe.mjs [--models=a,b]
+ * Usage: GG_BASE_URL=... GG_KEY=... node scripts/age-gate-probe.mjs [--models=a,b]
  */
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -20,13 +20,13 @@ function arg(name, fallback = '') {
   return hit ? hit.slice(name.length + 3) : fallback;
 }
 
-const BASE_URL = arg('base', 'https://gcli.ggchan.dev/v1');
+const BASE_URL = arg('base', process.env.GG_BASE_URL || '');
 const API_KEY = arg('key', process.env.GG_KEY || '');
 const MODELS = arg('models', 'gemini-3.1-pro-preview,gemini-3.8-flash')
   .split(',').map(v => v.trim()).filter(Boolean);
 
-if (!API_KEY) {
-  console.error('缺少 GG_KEY');
+if (!API_KEY || !BASE_URL) {
+  console.error('缺少本地环境变量 GG_BASE_URL / GG_KEY');
   process.exit(2);
 }
 

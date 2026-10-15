@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   createNarrativeArtifact,
+  extractNarrativeInstructions,
   renderNarrativeInstructions,
   sanitizeNarrativeDisplayText,
   sanitizeNarrativePartialText,
@@ -35,6 +36,20 @@ async function test(name, fn) {
   passed++;
   console.log(`PASS ${name}`);
 }
+
+await test('literal unclosed tag names inside audit prose do not swallow following real instructions', () => {
+  for (const wrapper of ['variable_thinking', 'thinking', 'model_private_notes', 'context visibility="private"']) {
+    const name = wrapper.split(' ')[0];
+    for (const tag of ['variable', 'var', 'memory', 'mission', 'relationship', 'combat', 'event']) {
+      const raw = `<${wrapper}>本轮使用 <${tag}> 标签记录，不在这里执行。</${name}>`
+        + `<${tag}>${JSON.stringify({ summary: '真实已发生结果' })}</${tag}>`;
+      const blocks = extractNarrativeInstructions(raw);
+      assert.deepEqual(blocks.map(block => block.tag), [tag], `${wrapper}: ${tag}`);
+      assert.equal(JSON.parse(blocks[0].content).summary, '真实已发生结果');
+      assert.equal(sanitizeNarrativeDisplayText(raw), '');
+    }
+  }
+});
 
 await test('NarrativeArtifact separates visible prose, instructions, audit and evidence', () => {
   const raw = `<thinking>内部推理引用 E1 与 EV-P2-SECRET-01</thinking>

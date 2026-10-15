@@ -26,7 +26,7 @@ function* quotedString(value) {
   yield '"';
 }
 
-function* jsonTokens(value, visiting) {
+function* jsonTokens(value, visiting, canonical = false) {
   if (typeof value === 'string') { yield* quotedString(value); return; }
   if (!value || typeof value !== 'object') {
     const text = JSON.stringify(value);
@@ -41,19 +41,19 @@ function* jsonTokens(value, visiting) {
       if (index) yield ',';
       const item = jsonValue(value[index], String(index));
       if (omitted(item)) yield 'null';
-      else yield* jsonTokens(item, visiting);
+      else yield* jsonTokens(item, visiting, canonical);
     }
     yield ']';
   } else {
     yield '{';
     let comma = false;
-    for (const key of Object.keys(value)) {
+    for (const key of (canonical ? Object.keys(value).sort() : Object.keys(value))) {
       const item = jsonValue(value[key], key);
       if (omitted(item)) continue;
       if (comma) yield ',';
       comma = true;
       yield* quotedString(key); yield ':';
-      yield* jsonTokens(item, visiting);
+      yield* jsonTokens(item, visiting, canonical);
     }
     yield '}';
   }
@@ -62,8 +62,8 @@ function* jsonTokens(value, visiting) {
 
 // Byte-for-byte equivalent to JSON.stringify for JSON save data, without
 // ever materializing the complete document in a JavaScript string.
-export function createSaveJsonByteStream(data) {
-  const tokens = jsonTokens(jsonValue(data, ''), new WeakSet());
+export function createSaveJsonByteStream(data, { canonical = false } = {}) {
+  const tokens = jsonTokens(jsonValue(data, ''), new WeakSet(), canonical);
   const encoder = new TextEncoder();
   return new ReadableStream({
     pull(controller) {
@@ -96,9 +96,9 @@ export function saveJsonContainsText(data, needles) {
   return false;
 }
 
-export async function checksumSaveJson(data) {
+export async function checksumSaveJson(data, { canonical = false } = {}) {
   const digest = globalThis.NarutoSaveCodec.sha256.create();
-  const reader = createSaveJsonByteStream(data).getReader();
+  const reader = createSaveJsonByteStream(data, { canonical }).getReader();
   let yieldedAt = performance.now();
   try {
     while (true) {

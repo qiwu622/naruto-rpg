@@ -30,8 +30,8 @@ export const IMPORTED_PRESET_SINGLE_CALL_NO_CHANGE_EXAMPLE = `<state_update>{"ch
 <memory>{"summary":"本回合没有发生需要写入变量的业务变化。","facts":[],"clues":[],"pins":[],"remove_pins":[],"npc_notes":{}}</memory>
 ${dailyContract}`;
 
-export const VARIABLE_UPDATER_MIXED_EXAMPLE = `<variable_thinking>请求复述：护送途中击退拦路者，把用完的烟雾弹丢掉，继续前往东部驿站。
-1. 时间地点与地图：木叶东门 -> 正文确认队伍到达东部驿道 -> 火之国·东部驿道；地点与地图均需更新。
+export const VARIABLE_UPDATER_MIXED_EXAMPLE = `<variable_thinking>请求核对：护送队伍已击退拦路者，用完烟雾弹，并赶路抵达东部驿道。
+1. 时间地点与地图：木叶48年3月12日·清晨 -> 正文确认赶路至当日午后 -> 木叶48年3月12日·午后，写 world_state.calendar；木叶东门 -> 火之国·东部驿道，另写地点与地图。
 2. 资源与属性成长：历练120 -> 正文确认击退拦路者 -> 历练增加15；有明确战斗结算依据。
 3. 技能与能力：现有技能 -> 正文没有学习、遗忘或熟练度变化 -> unchanged；无技能标签。
 4. 物品、金钱与装备：烟雾弹1枚 -> 正文确认最后一枚已经用完 -> 删除烟雾弹；不把数量设为0。
@@ -40,6 +40,7 @@ export const VARIABLE_UPDATER_MIXED_EXAMPLE = `<variable_thinking>请求复述�
 7. 战斗、伤势与世界事件：遭遇拦路者 -> 正文确认战斗胜利且驿道恢复通行 -> 战斗结束并记录事件结果。
 8. 记忆、线索、约定与待办：护送约定未完成 -> 正文确认仍需抵达东部驿站 -> 记录本轮结果与下一步待办。</variable_thinking>
 <update_manifest>{"domains":{"world":"updated","attributes":"updated","skills":"unchanged","equipment":"updated","missions":"updated","relationships":"updated","combat":"updated","events":"updated"},"present_npcs":{"海野伊鲁卡":"updated"},"active_missions":{"M-护送药材":"updated"}}</update_manifest>
+<variable>{"path":"world_state.calendar","op":"set","value":"木叶48年3月12日·午后"}</variable>
 <variable>{"path":"world_state.current_location","op":"set","value":"火之国·东部驿道"}</variable>
 <variable>{"path":"world_state.map.known_locations","op":"assign","key":"火之国·东部驿道","value":{"x":68,"y":34,"desc":"连接木叶与东部驿站的公开运输道路","tier":"wilderness"}}</variable>
 <variable>{"path":"world_state.map.explored_regions","op":"push","value":"火之国东部"}</variable>

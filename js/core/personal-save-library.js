@@ -93,6 +93,15 @@ export class PersonalSaveLibrary {
     });
   }
 
+  async compact({ sourceId, label, onProgress = () => {}, signal } = {}) {
+    return this.exclusive(async () => {
+      const source = await this.library.get(sourceId, PERSONAL_SAVE_KIND);
+      if (source.storage !== 'timeline_archive') throw new Error('请先读取这个旧格式存档并保存到存档库，再进行无损整理。原文件保留。');
+      const entry = await this.archiveTask('compact', { id: source.id, label }, { onProgress, signal });
+      return { source, entry };
+    });
+  }
+
   async importData(data, label = '') {
     if (data?.schema === SAVE_PACKAGE_SCHEMA) {
       await validateSavePackage(data);

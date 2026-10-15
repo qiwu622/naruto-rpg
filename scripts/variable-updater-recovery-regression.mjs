@@ -1075,7 +1075,7 @@ await test('secondary updates keep current changes while recording a later plot 
   }
 });
 
-await test('runtime prompt forces a domain-by-domain diff even for legacy custom presets', () => {
+await test('runtime prompt supplies factual difference and time checks to legacy custom presets', () => {
   const messages = variableUpdater.buildVariableUpdaterMessages({
     name: '旧自定义预设',
     version: 1,
@@ -1095,10 +1095,11 @@ await test('runtime prompt forces a domain-by-domain diff even for legacy custom
   });
   const prompt = messages.map(message => message.content).join('\n');
   assert.match(prompt, /\[原始玩家输入\][\s\S]*结束训练/);
-  assert.match(prompt, /系统强制反漏更协议/);
-  assert.match(prompt, /领域：旧值 -> 最终正文事实 -> 新值/);
-  assert.match(prompt, /已被接受、下达或确认的计划、约定、目标和期限[\s\S]*任务或 memory 待办/);
-  assert.match(prompt, /<memory> 不能代替其他可执行标签/);
+  assert.match(prompt, /变量差异核对/);
+  assert.match(prompt, /旧值 → 新值/);
+  assert.match(prompt, /已接受的计划、约定、目标、期限[\s\S]*任务或 memory 待办/);
+  assert.match(prompt, /每个已确认变化都有一个对应的可执行写入/);
+  assert.match(prompt, /\[本回合时间基点\]/);
   assert.doesNotMatch(prompt, /输出清单：\s*variable=/);
 });
 

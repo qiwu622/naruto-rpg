@@ -6,6 +6,7 @@ import {
   normalizeRelationshipInstruction
 } from '../data/var-schema.js';
 import {
+  extractNarrativeInstructions,
   sanitizeNarrativeDisplayText,
   sanitizeNarrativePartialText
 } from './narrative-artifact.js';
@@ -40,13 +41,16 @@ export class InstructionParser {
         memory: null, memories: []
       };
     }
-    const combats = this.extractCombatStates(text);
-    const missions = this.extractMissionUpdates(text);
-    const relationships = this.extractRelationshipChanges(text);
-    const events = this.extractEventTriggers(text);
-    const memories = this.extractMemoryUpdates(text);
+    // Validation and execution must agree about which tags are instructions.
+    // Audits may quote tags as examples; those are never state changes.
+    const blocks = extractNarrativeInstructions(text);
+    const combats = this.extractCombatStates(text, blocks);
+    const missions = this.extractMissionUpdates(text, blocks);
+    const relationships = this.extractRelationshipChanges(text, blocks);
+    const events = this.extractEventTriggers(text, blocks);
+    const memories = this.extractMemoryUpdates(text, blocks);
     return sanitizeInstructionData({
-      variables: this.extractVarUpdates(text),
+      variables: this.extractVarUpdates(text, blocks),
       combat: combats[0] || null, combats,
       mission: missions[0] || null, missions,
       relationship: relationships[0] || null, relationships,
@@ -55,84 +59,33 @@ export class InstructionParser {
     });
   }
 
-  extractVarUpdates(text) {
+  extractVarUpdates(text, blocks = extractNarrativeInstructions(text)) {
     const updates = [];
-
-    const varRegex = /<var>([\s\S]*?)<\/var>/g;
-    let match;
-    while ((match = varRegex.exec(text)) !== null) {
-      const block = match[1].trim();
-      const lines = block.split(/\r?\n/);
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const m = trimmed.match(/^(.+?)\s*([=+\-])\s*(.+)$/);
-        if (!m) {
-          console.warn('[InstructionParser] 无法解析变量行:', trimmed);
-          continue;
-        }
-        const [, rawKey, op, rawValue] = m;
-        const key = resolveAlias(rawKey);
-        if (!isKnownKey(key)) {
-          console.warn('[InstructionParser] 未知变量，跳过:', rawKey, '(resolved:', key, ')');
-          continue;
-        }
-        updates.push({ key, op, value: coerceValue(key, rawValue.trim()) });
-      }
-    }
-
-    const variableRegex = /<variable>([\s\S]*?)<\/variable>/g;
-    while ((match = variableRegex.exec(text)) !== null) {
-      try {
-        let content = match[1].trim();
-        // Robustly extract all JSON objects using brace matching
-        let jsonBlocks = [];
-        let braceCount = 0;
-        let inString = false;
-        let escapeNext = false;
-        let startIdx = -1;
-        for (let i = 0; i < content.length; i++) {
-          const char = content[i];
-          if (escapeNext) { escapeNext = false; continue; }
-          if (char === '\\') { escapeNext = true; continue; }
-          if (char === '"') { inString = !inString; continue; }
-          if (!inString) {
-            if (char === '{') {
-              if (braceCount === 0) startIdx = i;
-              braceCount++;
-            } else if (char === '}') {
-              braceCount--;
-              if (braceCount === 0 && startIdx !== -1) {
-                jsonBlocks.push(content.substring(startIdx, i + 1));
-                startIdx = -1;
-              }
-            }
+    // Keep legacy <var> and structured <variable> in their original order.
+    for (const block of blocks) {
+      if (block.tag === 'var') {
+        for (const line of block.content.split(/\r?\n/)) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const match = trimmed.match(/^(.+?)\s*([=+\-])\s*(.+)$/);
+          if (!match) {
+            console.warn('[InstructionParser] 无法解析变量行:', trimmed);
+            continue;
           }
+          this._pushParsedVariableUpdate(updates, { key: match[1].trim(), op: match[2], value: match[3].trim() });
         }
-        if (jsonBlocks.length === 0) jsonBlocks = [content];
-        
-        for (const jsonStr of jsonBlocks) {
-          if (!jsonStr.trim()) continue;
+      } else if (block.tag === 'variable') {
+        for (const json of this._extractJsonObjects(block.content) || [block.content]) {
           try {
-            const data = JSON.parse(jsonStr.trim());
-            
-            // Format A: The old {"updates": [...]} format
-            if (data.updates && Array.isArray(data.updates)) {
-              for (const u of data.updates) this._pushParsedVariableUpdate(updates, u);
-            } 
-            // Format B: The new single object format: {"path":"...", "op":"...", "value":...}
-            else {
-              this._pushParsedVariableUpdate(updates, data);
-            }
-          } catch (innerE) {
-            console.warn('[InstructionParser] 单个变量JSON解析错误:', innerE);
+            const data = JSON.parse(json);
+            const batch = Array.isArray(data?.updates) ? data.updates : [data];
+            for (const update of batch) this._pushParsedVariableUpdate(updates, update);
+          } catch (error) {
+            console.warn('[InstructionParser] 单个变量JSON解析错误:', error.message);
           }
         }
-      } catch (e) {
-        console.warn('[InstructionParser] 变量提取过程出错:', e);
       }
     }
-
     return updates;
   }
 
@@ -170,36 +123,36 @@ export class InstructionParser {
     return this.extractCombatStates(text)[0] || null;
   }
 
-  extractCombatStates(text) {
+  extractCombatStates(text, blocks = extractNarrativeInstructions(text)) {
     const states = [];
-    const regex = /<combat\s+state="(\w+)">([\s\S]*?)<\/combat>/g;
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-      try { states.push({ state: normalizeCombatState(match[1]), ...JSON.parse(match[2].trim()) }); }
-      catch (e) { console.warn('[InstructionParser] 战斗解析错误:', e); }
+    for (const block of blocks.filter(item => item.tag === 'combat')) {
+      const match = block.attributes.match(/^state="([\w-]+)"$/i);
+      if (!match) continue;
+      try { states.push({ ...JSON.parse(block.content), state: normalizeCombatState(match[1]) }); }
+      catch (error) { console.warn('[InstructionParser] 战斗解析错误:', error.message); }
     }
     return states;
   }
 
   extractMissionUpdate(text) { return this.extractMissionUpdates(text)[0] || null; }
 
-  extractMissionUpdates(text) { return this.extractJsonTags(text, 'mission', '任务'); }
+  extractMissionUpdates(text, blocks) { return this.extractJsonTags(text, 'mission', '任务', blocks); }
 
   extractRelationshipChange(text) { return this.extractRelationshipChanges(text)[0] || null; }
 
-  extractRelationshipChanges(text) {
-    return this.extractJsonTags(text, 'relationship', '关系')
+  extractRelationshipChanges(text, blocks) {
+    return this.extractJsonTags(text, 'relationship', '关系', blocks)
       .map(value => normalizeRelationshipInstruction(value))
       .filter(Boolean);
   }
 
   extractEventTrigger(text) { return this.extractEventTriggers(text)[0] || null; }
 
-  extractEventTriggers(text) { return this.extractJsonTags(text, 'event', '事件'); }
+  extractEventTriggers(text, blocks) { return this.extractJsonTags(text, 'event', '事件', blocks); }
 
   extractMemoryUpdate(text) { return this.extractMemoryUpdates(text)[0] || null; }
 
-  extractMemoryUpdates(text) { return this.extractJsonTags(text, 'memory', '记忆'); }
+  extractMemoryUpdates(text, blocks) { return this.extractJsonTags(text, 'memory', '记忆', blocks); }
 
   /**
    * 提取最终叙事模型附带的隐藏绘图契约。契约的完整校验由
@@ -215,14 +168,10 @@ export class InstructionParser {
     return stripVisualImageContracts(text, { streaming });
   }
 
-  extractJsonTags(text, tagName, label) {
+  extractJsonTags(text, tagName, label, blocks = extractNarrativeInstructions(text)) {
     const values = [];
-    const regex = new RegExp(`<${tagName}>[\\s\\S]*?<\\/${tagName}>`, 'g');
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-      const open = `<${tagName}>`;
-      const close = `</${tagName}>`;
-      const raw = match[0].slice(open.length, -close.length).trim();
+    for (const block of blocks.filter(item => item.tag === tagName)) {
+      const raw = block.content;
       // Try parsing as single JSON first
       try {
         values.push(JSON.parse(raw));
@@ -316,17 +265,22 @@ export class InstructionParser {
 
   _extractJsonObjects(str) {
     const results = [];
-    let depth = 0, start = -1;
+    let depth = 0, start = -1, inString = false, escaped = false;
     for (let i = 0; i < str.length; i++) {
-      if (str[i] === '{') {
+      const char = str[i];
+      if (escaped) { escaped = false; continue; }
+      if (char === '\\' && inString) { escaped = true; continue; }
+      if (char === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (char === '{') {
         if (depth === 0) start = i;
         depth++;
-      } else if (str[i] === '}') {
+      } else if (char === '}' && depth > 0) {
         depth--;
         if (depth === 0 && start >= 0) {
           results.push(str.slice(start, i + 1));
           start = -1;
-        } else if (depth < 0) depth = 0;
+        }
       }
     }
     return results.length ? results : null;

@@ -22,10 +22,10 @@ export function vectorDocuments(state, ancestors = new Set(), inheritedBeforeTur
   const memory = projectCorrectedMemory(state?._memory || {});
   const turn = Number(state?.['系统·回合数']) || 0;
   const documents = [], seen = new Set();
-  function add(id, text, sourceTurn = turn) {
+  function add(id, text, sourceTurn = turn, source = {}) {
     text = normalize(text);
     if (!text || seen.has(text) || sourceTurn > turn) return;
-    seen.add(text); documents.push({ id, text, turn: sourceTurn });
+    seen.add(text); documents.push({ id, text, turn: sourceTurn, source });
   }
   // The current snapshot supplies the scope. Never search arbitrary other saves
   // or IF heads, and never treat proposed actions as completed events.
@@ -36,15 +36,15 @@ export function vectorDocuments(state, ancestors = new Set(), inheritedBeforeTur
     if ((!ancestors.has(event.node_id) && !inherited) || event.turn > turn || /option|choice|plan|intent|prediction|retraction/.test(event.type)) continue;
     const text = typeof event.value === 'string' ? event.value : JSON.stringify(event.value);
     const corrected = projectCorrectedMemory({ ...state._memory, facts: text }).facts;
-    add(`event:${event.event_id}`, corrected, event.turn);
+    add(`event:${event.event_id}`, corrected, event.turn, { eventId: event.event_id, nodeId: event.node_id, fromTurn: event.turn, toTurn: event.turn });
   }
   for (const field of ['pins', 'facts', 'long_term', 'important_events', 'npc_notes', 'archived']) {
-    lines(memory[field]).forEach((text, i) => add(`${field}:${i}`, text));
+    lines(memory[field]).forEach((text, i) => add(`${field}:${i}`, text, turn, { field }));
   }
   for (const chapter of chapters(memory.chapters)) {
     if (Number(chapter.to) > turn) continue;
     const text = projectNarrativeForMemory(String(chapter.raw || chapter.summary || ''));
-    for (let offset = 0; offset < text.length; offset += MAX_TEXT) add(`chapter:${chapter.id}:${offset}`, text.slice(offset, offset + MAX_TEXT), Number(chapter.to) || 0);
+    for (let offset = 0; offset < text.length; offset += MAX_TEXT) add(`chapter:${chapter.id}:${offset}`, text.slice(offset, offset + MAX_TEXT), Number(chapter.to) || 0, { fromTurn: chapter.from ?? null, toTurn: chapter.to ?? null });
   }
   return documents.slice(-MAX_DOCUMENTS);
 }
@@ -166,7 +166,7 @@ export class VectorMemory {
       const hits = keyed.map(item => ({ ...item, score: 0.8 * cosine(queryVector, cached.get(item.key)) + 0.2 * item.lexical }))
         .filter(item => item.score >= 0.35).sort((a, b) => b.score - a.score).slice(0, 4);
       this.status = `本次召回 ${hits.length} 条 · 已索引 ${keyed.filter(item => cached.has(item.key)).length} / ${keyed.length} 条`;
-      return hits.map(({ text, turn }) => ({ text, turn }));
+      return hits.map(({ text, turn, source }) => ({ text, turn, source }));
     } catch { this.status = '向量检索不可用，已使用原有本地记忆'; return []; }
     finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
   }
