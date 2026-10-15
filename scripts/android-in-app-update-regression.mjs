@@ -49,6 +49,15 @@ function tap(node) {
   const bounds = node.bounds.match(/\d+/g).map(Number);
   run('shell', 'input', 'tap', String(Math.round((bounds[0] + bounds[2]) / 2)), String(Math.round((bounds[1] + bounds[3]) / 2)));
 }
+async function waitSystemUI(name, ready) {
+  const deadline = Date.now() + 20000;
+  do {
+    const controls = await systemUI(name);
+    if (ready(controls)) return controls;
+    await pause();
+  } while (Date.now() < deadline);
+  assert.fail('Android control did not become interactive; inspect ' + name);
+}
 async function openPanel(page) {
   await page.evaluate(async proof => {
     for (const modal of document.querySelectorAll('game-modal')) modal.close();
@@ -76,7 +85,7 @@ try {
   await openPanel(page);
   await page.screenshot({ path: path.join(output, 'in-app-update-ready.png') });
   await page.getByRole('button', { name: '立即安装', exact: true }).click();
-  let controls = await systemUI('in-app-install-permission');
+  let controls = await waitSystemUI('in-app-install-permission', nodes => nodes.some(node => node.checkable === 'true' && node.clickable === 'true' && node.checked === 'false' && node.enabled === 'true'));
   assert.ok(controls.some(node => node.package === 'com.android.settings'), 'Expected the real install permission settings');
   const toggle = controls.find(node => node.checkable === 'true' && node.clickable === 'true' && node.checked === 'false');
   tap(toggle);
@@ -85,7 +94,7 @@ try {
   run('shell', 'am', 'start', '-n', `${appId}/.MainActivity`);
   await page.getByRole('button', { name: '立即安装', exact: true }).waitFor();
   await page.getByRole('button', { name: '立即安装', exact: true }).click();
-  controls = await systemUI('in-app-system-installer');
+  controls = await waitSystemUI('in-app-system-installer', nodes => nodes.some(node => /^(Update|Install|更新|安装)$/i.test(node.text) && node.enabled === 'true'));
   assert.ok(controls.some(node => /packageinstaller/.test(node.package)), 'Expected Android package installer');
   const update = controls.find(node => /^(Update|Install|更新|安装)$/i.test(node.text) && node.enabled === 'true');
   await disconnect();
