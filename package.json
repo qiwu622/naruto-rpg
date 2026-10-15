@@ -1,6 +1,6 @@
 {
   "name": "naruto-rpg",
-  "version": "3.7.0",
+  "version": "3.7.1",
   "description": "火影忍者 AI 文字跑团 RPG — 网页端版本（Discord 登录 + 云存档）",
   "main": "server/index.js",
   "type": "module",
@@ -34,7 +34,7 @@
     "probe:compare": "node scripts/preset-adapter-compare.mjs",
     "test:settings-ui": "playwright test",
     "test:stream-reading": "playwright test tests/ui/stream-reading.spec.mjs",
-    "test:deployment": "node scripts/deployment-script-regression.mjs && node scripts/service-worker-cache-regression.mjs && node scripts/build-version-regression.mjs",
+    "test:deployment": "node scripts/deployment-script-regression.mjs && node scripts/service-worker-cache-regression.mjs && node scripts/build-version-regression.mjs && node scripts/build-version-browser-regression.mjs",
     "test:android-app": "node scripts/android-app-regression.mjs && node scripts/android-update-regression.mjs && node scripts/android-file-export-regression.mjs && node scripts/android-ai-fetch-regression.mjs && node scripts/app-cloud-regression.mjs && node scripts/android-multiplayer-regression.mjs",
     "test:app-cloud": "node scripts/app-cloud-regression.mjs && node scripts/app-cloud-ui-regression.mjs",
     "validate-project-timeline": "node canon-rebuild-output/scripts/validate-project-timeline-v2.mjs",

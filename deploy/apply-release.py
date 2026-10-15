@@ -81,6 +81,7 @@ class Installer:
     elif relative in self.ops and not self.frontend_only: target=self.ops[relative]
     else: continue
     if digest(target) != record['sha256']: raise RuntimeError('Receipt exists but installed files have changed')
+   self.verify_authenticated_entry()
    return False
   if json.loads((self.work/'static/version.json').read_text())['build'] != self.build: raise RuntimeError('Wrong static build')
   if 'data-release-version="'+m['version']+'"' not in (self.work/'static/announcements.html').read_text(): raise RuntimeError('Website announcement version mismatch')
@@ -116,6 +117,9 @@ class Installer:
   # Only code files are managed. JSON accounts/save indexes, blobs, SQLite,
   # credentials and server/data are never candidates for replacement/deletion.
   targets = {self.backend/relative[8:] for relative in self.manifest['files'] if relative.startswith('backend/')}
+  # Express serves the authenticated / and /index.html from this separate
+  # directory. Treat it as part of the production frontend, including rollback.
+  if self.mode == 'production': targets.add(self.backend/'public/index.html')
   for p in (self.backend/'server').rglob('*'):
    if p.is_file() and managed_server(p.relative_to(self.backend).as_posix()): targets.add(p)
   for p in (self.backend/'js').rglob('*'):
@@ -181,6 +185,10 @@ class Installer:
     self.copy_atomic(self.work/relative,target); self.changed.append(str(target))
    elif relative in self.ops:
     target = self.ops[relative]; self.copy_atomic(self.work/relative,target); self.changed.append(str(target))
+  if self.mode == 'production':
+   target = self.backend/'public/index.html'
+   self.copy_atomic(self.work/'static/index.html',target)
+   live.add(str(target)); self.changed.append(str(target))
   for target in self.originals:
    path = Path(target)
    if path.is_relative_to(self.backend) and target not in live:
@@ -201,6 +209,12 @@ class Installer:
   os.rename(self.next_static,self.static); self.static_applied = True
   self.run(['systemctl','reload','nginx'])
 
+ def verify_authenticated_entry(self):
+  if self.mode == 'production' and not self.frontend_only:
+   expected = self.manifest['files']['static/index.html']['sha256']
+   if digest(self.backend/'public/index.html') != expected:
+    raise RuntimeError('Production authenticated entry differs from the published frontend')
+
  def verify_public(self):
   base = 'https://www.qiwu.asia'+(':8080' if self.mode == 'staging' else '')+'/'
   for name in ['login.html','version.json','js/app.js','js/ui/save-library-panel.js','js/core/save-library-cloud.js','js/data/worldbook/activation.js']:
@@ -217,6 +231,7 @@ class Installer:
    elif relative in self.ops and not self.frontend_only: target=self.ops[relative]
    else: continue
    if digest(target) != record['sha256']: raise RuntimeError('Installed file mismatch: '+relative)
+  self.verify_authenticated_entry()
   if not self.wait_ready(): raise RuntimeError('Final readiness check failed')
 
  def execute_frontend(self):

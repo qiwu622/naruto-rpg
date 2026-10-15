@@ -1011,7 +1011,7 @@ class NarutoRPGApp {
       const result = await inspectRuntimeBuild();
       globalThis.__NARUTO_BUILD_DIAGNOSTIC__ = result;
       console.info(`[Build] loaded=${result.loadedBuild || 'dev'} latest=${result.latestBuild || 'unknown'} stale=${result.stale}`);
-      if (result.stale) showStaleBuildNotice(result);
+      showStaleBuildNotice(result);
     } catch (error) {
       console.warn('[Build] version.json check failed:', error.message);
     }
