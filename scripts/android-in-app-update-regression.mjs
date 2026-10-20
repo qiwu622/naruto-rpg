@@ -71,6 +71,14 @@ async function openPanel(page) {
   await page.getByRole('button', { name: '立即安装', exact: true }).waitFor({ timeout: 15000 });
 }
 try {
+  // An interrupted fixture may leave a resumable task pointing at its now-closed
+  // ephemeral HTTP port. Clear that test task before preparing a fresh fixture.
+  const initial = await connect();
+  await initial.evaluate(async () => {
+    const { getNativeUpdater } = await import('/js/core/app-update.js');
+    await getNativeUpdater().cancel();
+  });
+  await disconnect();
   const instrumentation = run('shell', 'am', 'instrument', '-w', '-r', '-e', 'class',
     'asia.qiwu.narutorpg.NativeUpdaterTest#prepareInstallerFixture', `${appId}.test/androidx.test.runner.AndroidJUnitRunner`);
   await writeFile(path.join(output, 'installer-fixture.txt'), instrumentation);

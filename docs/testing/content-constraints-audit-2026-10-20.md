@@ -1,5 +1,7 @@
 # 内容删改与硬约束排查
 
+> 发布跟进：用户随后授权更新，以下本地验证成果已随 v3.7.2 发布；见 [发布验证](release-v3.7.2.md)。下文的“未发布”描述保留为当时的验证记录。
+
 日期：2026-10-20。下表记录修复前的隔离复现；用户确认后已完成本地修复，见 `content-preservation-2026-10-20.md`。未部署；此前 NovelAI、物品数量及世界书原文保留修复均保留。
 
 复现脚本：`.probe-tmp/content-constraints-audit.mjs`；结果：`reports/content-constraints-audit/2026-10-20.json`。均为合成数据，不调用外部模型、修改玩家存档或读取密钥。

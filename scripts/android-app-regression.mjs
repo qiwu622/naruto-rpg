@@ -124,6 +124,9 @@ assert.equal(isMultiplayerEntryVisible(), true, 'multiplayer remains available o
 const releaseManifest = JSON.parse(fs.readFileSync(new URL('../app/android/update.json', import.meta.url), 'utf8'));
 assert.equal(releaseManifest.version, ANDROID_APP_VERSION);
 assert.equal(releaseManifest.versionCode, ANDROID_APP_VERSION_CODE);
+const loginTemplate = fs.readFileSync(new URL('../public/login.html', import.meta.url), 'utf8');
+assert.ok(loginTemplate.includes(`${ANDROID_APP_VERSION} · 本地游玩`), 'website download label must match the Android version');
+assert.ok(loginTemplate.includes(`${ANDROID_APP_VERSION} 更新公告`), 'website download announcement must match the Android version');
 assert.equal(releaseManifest.apkUrl, ANDROID_APP_DOWNLOAD_URL);
 
 const gradle = fs.readFileSync(new URL('../android/app/build.gradle', import.meta.url), 'utf8');
