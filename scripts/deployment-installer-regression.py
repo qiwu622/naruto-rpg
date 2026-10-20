@@ -1,11 +1,32 @@
 from pathlib import Path
 import hashlib, importlib.util, json, shutil, subprocess, tempfile, urllib.parse
+from unittest.mock import patch, MagicMock
 
 root=Path(__file__).resolve().parent.parent
 spec=importlib.util.spec_from_file_location('release',root/'deploy/apply-release.py')
 module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 passed=0
+
+# No live connections: check TCP routing and real default TLS policy separately.
+connection = module.LocalOriginHTTPSConnection('www.qiwu.asia', 8080, timeout=20)
+assert connection._context.verify_mode == module.ssl.CERT_REQUIRED
+assert connection._context.check_hostname is True
+with patch.object(module.socket, 'create_connection', return_value=MagicMock()) as tcp, patch.object(module.ssl.SSLContext, 'wrap_socket', return_value=MagicMock()) as tls:
+ connection.connect()
+ assert tcp.call_args.args[0] == ('127.0.0.1', 8080)
+ assert tls.call_args.kwargs['server_hostname'] == 'www.qiwu.asia'
+connection = module.LocalOriginHTTPSConnection('attacker.invalid', 443)
+with patch.object(module.socket, 'create_connection') as tcp:
+ try: connection.connect(); raise AssertionError('Unexpected verification host accepted')
+ except RuntimeError: pass
+ tcp.assert_not_called()
+passed+=1; print('PASS release verification uses loopback TCP, public TLS SNI/hostname and certificate validation; unknown hosts are rejected')
+with patch.object(module.urllib.request, 'build_opener') as factory:
+ module.open_release_url('https://www.qiwu.asia/login.html', timeout=20)
+ assert factory.call_args.args[0].proxies == {}
+ factory.return_value.open.assert_called_once_with('https://www.qiwu.asia/login.html', timeout=20)
+passed+=1; print('PASS release verification ignores inherited outbound proxies')
 
 def fixture(root, fail_public=False, frontend_only=False, mode='staging'):
  backend=root/'backend'; stage=root/'stage'; prod=root/'prod'; work=root/'release'
@@ -50,6 +71,7 @@ def fixture(root, fail_public=False, frontend_only=False, mode='staging'):
    return ((stage if mode=='staging' else prod)/relative).read_bytes()
   def geturl(self): return 'https://www.qiwu.asia:8080/login.html' if self.url.endswith('/') else self.url
  module.urllib.request.urlopen=lambda request,timeout:Response(request.full_url if hasattr(request,'full_url') else request)
+ module.open_release_url=lambda request,timeout:Response(request.full_url if hasattr(request,'full_url') else request)
  class FixtureInstaller(module.Installer):
   starts=0
   dependency_runs=0

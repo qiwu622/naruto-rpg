@@ -5,7 +5,7 @@ Both Windows and WSL deployers call this installer. A successful receipt makes
 retries idempotent even when SSH disconnects before the result reaches a client.
 """
 from pathlib import Path
-import argparse, fcntl, hashlib, json, os, shutil, signal, subprocess, time, urllib.request
+import argparse, fcntl, hashlib, http.client, json, os, shutil, signal, socket, ssl, subprocess, time, urllib.request
 
 BACKEND = Path('/opt/naruto-rpg')
 STATIC = {'staging': Path('/var/www/naruto-rpg-staging'), 'production': Path('/var/www/naruto-rpg')}
@@ -22,6 +22,28 @@ OPS = {
 }
 def digest(path): return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
 def managed_server(relative): return relative.startswith('server/') and not relative.startswith(('server/data/', 'server/db/saves/')) and relative.endswith(('.js', '.sql'))
+
+class LocalOriginHTTPSConnection(http.client.HTTPSConnection):
+ """Verify this server through nginx with the public Host and TLS SNI.
+
+ Public-address hairpin routing can be unavailable on the host. Only the TCP
+ destination changes; certificate/hostname checks and normal redirects remain.
+ """
+ def _connect_origin(self, address, *args, **kwargs):
+  if address[0] != 'www.qiwu.asia': raise RuntimeError('Unexpected release verification host')
+  return socket.create_connection(('127.0.0.1', address[1]), *args, **kwargs)
+
+ def connect(self):
+  self._create_connection = self._connect_origin
+  return super().connect()
+
+class LocalOriginHTTPSHandler(urllib.request.HTTPSHandler):
+ def https_open(self, request):
+  return self.do_open(LocalOriginHTTPSConnection, request, context=ssl.create_default_context())
+
+def open_release_url(request, timeout=20):
+ # Deployment verification must not inherit an outbound proxy either.
+ return urllib.request.build_opener(urllib.request.ProxyHandler({}), LocalOriginHTTPSHandler()).open(request, timeout=timeout)
 
 class Installer:
  def __init__(self, work, mode, build, frontend_only=False):
@@ -219,10 +241,10 @@ class Installer:
   base = 'https://www.qiwu.asia'+(':8080' if self.mode == 'staging' else '')+'/'
   for name in ['login.html','version.json','js/app.js','js/ui/save-library-panel.js','js/core/save-library-cloud.js','js/data/worldbook/activation.js']:
    request = urllib.request.Request(base+name+'?release='+self.build,headers={'Cache-Control':'no-cache'})
-   with urllib.request.urlopen(request,timeout=20) as response:
+   with open_release_url(request,timeout=20) as response:
     if response.status != 200 or hashlib.sha256(response.read()).hexdigest() != self.manifest['files']['static/'+name]['sha256']: raise RuntimeError('Public resource mismatch: '+name)
   if self.mode == 'staging':
-   with urllib.request.urlopen(base,timeout=20) as response:
+   with open_release_url(base,timeout=20) as response:
     if response.geturl().split('?')[0] != base+'login.html' or response.headers.get('X-Staging') != 'true': raise RuntimeError('Staging login protection missing')
    if digest(STATIC['production']/'index.html') != self.production_before: raise RuntimeError('Production frontend unexpectedly changed')
   for relative,record in self.manifest['files'].items():
