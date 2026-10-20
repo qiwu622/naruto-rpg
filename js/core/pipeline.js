@@ -398,6 +398,7 @@ class MessagePipeline {
     let modelRawResponse = '';
     let importedProjectedResponse = '';
     let importedValidationResponse = '';
+    const importedEnvelopeWarnings = new Set();
     let importedValidationStage = '';
     const receiptStartedAt = performance.now();
     const receiptStages = createTurnStageTracker();
@@ -676,9 +677,14 @@ class MessagePipeline {
       importedValidationResponse = fullResponse;
       fullResponse = repairImportedPresetOutputEnvelope(fullResponse, importedPresetProfile);
       importedValidationResponse = fullResponse;
-      assertImportedPresetOutputEnvelope(fullResponse, importedPresetProfile, {
-        draftResponse: instructionParser.cleanupResponse(fullResponse)
-      });
+      {
+        const envelope = assertImportedPresetOutputEnvelope(fullResponse, importedPresetProfile);
+        const warnings = envelope.warnings.filter(warning => !importedEnvelopeWarnings.has(warning));
+        warnings.forEach(warning => importedEnvelopeWarnings.add(warning));
+        if (warnings.length) eventBus.emit('pipeline:warning', {
+          warning: `预设展示格式有差异，已保留正文继续：${warnings.join('；')}`
+        });
+      }
       receiptStages.finish('narrative', 'success');
 
       // 只保留主叙事模型本回合显式输出的可展示推演摘要。
@@ -741,28 +747,37 @@ class MessagePipeline {
       if (updaterEnabledTurn && !agentSelfUpdater) fullResponse = this._stripUpdaterOwnedTags(fullResponse);
       else {
         mainDailyResult = parseShinobiDailyContract(fullResponse, { required: true });
-        if (mainDailyResult.valid) shinobiDaily = mainDailyResult.daily;
+        if (mainDailyResult.valid) {
+          shinobiDaily = mainDailyResult.daily;
+          if (mainDailyResult.warnings?.length) eventBus.emit('pipeline:warning', {
+            warning: `日报排版提示（内容已完整保留）：${mainDailyResult.warnings.join('；')}`
+          });
+        }
       }
 
       // Image-contract extraction and updater-tag stripping both rewrite the
-      // response.  Revalidate imported single-root/wrapper contracts after
-      // those rewrites so a truncated updater tag cannot consume the preset's
-      // closing envelope and then reach the commit boundary unnoticed.
+      // response. Inspect the resulting presentation envelope for diagnostics;
+      // malformed machine data is checked separately by the updater/commit path.
       importedValidationStage = 'post-machine-processing';
       importedValidationResponse = fullResponse;
       fullResponse = repairImportedPresetOutputEnvelope(fullResponse, importedPresetProfile);
       importedValidationResponse = fullResponse;
-      assertImportedPresetOutputEnvelope(fullResponse, importedPresetProfile, {
-        draftResponse: instructionParser.cleanupResponse(fullResponse)
-      });
+      {
+        const envelope = assertImportedPresetOutputEnvelope(fullResponse, importedPresetProfile);
+        const warnings = envelope.warnings.filter(warning => !importedEnvelopeWarnings.has(warning));
+        warnings.forEach(warning => importedEnvelopeWarnings.add(warning));
+        if (warnings.length) eventBus.emit('pipeline:warning', {
+          warning: `预设展示格式有差异，已保留正文继续：${warnings.join('；')}`
+        });
+      }
 
       acceptedArtifact = createNarrativeArtifact(fullResponse, {
         evidenceRefs: acceptedArtifact.evidenceRefs
       });
       const instructionText = renderNarrativeInstructions(acceptedArtifact);
-      const displayResponse = toPersistedNarrative(acceptedArtifact).replace(/极其|共犯/g, '');
+      const displayResponse = toPersistedNarrative(acceptedArtifact);
       receiptDraftResponse = displayResponse;
-      const factualResponse = projectNarrativeForMemory(fullResponse).replace(/极其|共犯/g, '');
+      const factualResponse = projectNarrativeForMemory(fullResponse);
       const instructions = instructionParser.parse(instructionText);
       if (!updaterEnabledTurn) {
         assertMainOutputContract({

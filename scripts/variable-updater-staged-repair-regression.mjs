@@ -33,7 +33,7 @@ const manifest = `<update_manifest>${JSON.stringify({
 const stateOutput = `${thinking}\n${manifest}\n<variable>{"path":"progression.exp","op":"add","value":3}</variable>\n<memory>{"summary":"训练完成，获得3点经验。"}</memory>`;
 const daily = value => `<shinobi_daily>${JSON.stringify(value)}</shinobi_daily>`;
 const validDaily = daily(SHINOBI_DAILY_EXAMPLE);
-const invalidDaily = daily({ ...SHINOBI_DAILY_EXAMPLE, headline: { ...SHINOBI_DAILY_EXAMPLE.headline, title: '木叶交通' } });
+const invalidDaily = daily({ ...SHINOBI_DAILY_EXAMPLE, headline: { ...SHINOBI_DAILY_EXAMPLE.headline, title: null } });
 const params = {
   mainConfig: { backend: 'tavern', model: 'mock-main', variableUpdater: {
     enabled: true, backend: 'inherit', model: 'mock-updater', streaming: false

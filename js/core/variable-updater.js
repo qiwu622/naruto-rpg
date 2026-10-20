@@ -1591,8 +1591,12 @@ export async function runVariableUpdater({
       error.safeOutput = error.recovery.output;
       throw error;
     }
+    const warnings = [...(validation.warnings || []), ...(dailyResult.warnings || [])];
+    if (dailyResult.warnings?.length) eventBus.emit('pipeline:warning', {
+      warning: `日报排版提示（内容已完整保留）：${dailyResult.warnings.join('；')}`
+    });
     recordVariableUpdaterAttempt({ stage, model: updaterConfig.model, rawOutput: variableTags,
-      warnings: validation.warnings, finishReason });
+      warnings, finishReason });
     onShinobiDaily?.(dailyResult.daily);
     return cleaned;
   } catch (error) {

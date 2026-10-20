@@ -116,15 +116,15 @@ await test('one turn has one single-line summary', () => {
   assert.match(summaries[0], /^#7 二次模型第一行 二次模型第二行$/);
 });
 
-await test('NPC note overflow is retained in the relationship buffer', () => {
+await test('all NPC notes remain complete in storage', () => {
   for (let i = 0; i < 12; i++) {
     memorySystem.apply({ npc_notes: { 卡卡西: `互动${i}` } });
   }
 
   const memory = stateManager.getSub('_memory');
-  assert.equal(memory.npc_notes.split('\n').length, 10);
-  assert.match(memory._relationship_buffer, /互动0/);
-  assert.match(memory._relationship_buffer, /互动1/);
+  assert.equal(memory.npc_notes.split('\n').length, 12);
+  assert.match(memory.npc_notes, /互动0/);
+  assert.match(memory.npc_notes, /互动1/);
 });
 
 await test('retrieval injects active and recalled entities only', () => {
@@ -181,7 +181,7 @@ await test('a full archive retains the newest overflow fact', () => {
   const memory = stateManager.getSub('_memory');
   assert.match(memory.facts, /最新事实/);
   assert.match(memory.archived, /事实0/);
-  assert.doesNotMatch(memory.archived, /^旧归档0(?:\n|$)/);
+  assert.match(memory.archived, /^旧归档0(?:\n|$)/);
 });
 
 await test('chapters only tag entities present in their source turns', () => {

@@ -121,15 +121,15 @@ await test('InstructionParser uses the same safe final and streaming boundary', 
   assert.equal(partialText, '');
 });
 
-await test('private markup cannot be smuggled through legal machine-tag JSON', () => {
+await test('JSON strings retain literal markup while outer private scopes stay isolated', () => {
   const literal = createNarrativeArtifact(`<final>公开正文</final><memory>{"summary":"摘要<audit_internal>秘密审校</audit_internal>","facts":["<private>NPC秘密</private>"]}</memory>`);
   assert.equal(literal.displayText, '公开正文');
-  assert.equal(renderNarrativeInstructions(literal), '', 'tainted machine block must be rejected as a whole');
+  assert.equal(instructionParser.parse(renderNarrativeInstructions(literal)).memory.summary, '摘要<audit_internal>秘密审校</audit_internal>');
 
   const escaped = createNarrativeArtifact(`<final>公开正文</final><memory>{"summary":"保留：\\u003cprivate\\u003e秘密\\u003c/private\\u003e公开事实","facts":[]}</memory>`);
   const parsed = instructionParser.parse(renderNarrativeInstructions(escaped));
-  assert.equal(parsed.memory.summary, '保留：公开事实');
-  assert.doesNotMatch(JSON.stringify(parsed), /秘密|private|audit_internal/);
+  assert.equal(parsed.memory.summary, '保留：<private>秘密</private>公开事实');
+  assert.equal(renderNarrativeInstructions(createNarrativeArtifact('<private><memory>{"summary":"隐藏数据"}</memory></private>')), '');
 });
 
 await test('review prompt receives ordinary future plot evidence and a safe candidate', () => {

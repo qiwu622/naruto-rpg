@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'naruto-rpg-';
-const CACHE_NAME = `${CACHE_PREFIX}v3.7.1`;
+const CACHE_NAME = `${CACHE_PREFIX}v3.7.2`;
 const REVALIDATED_DESTINATIONS = new Set(['document', 'script', 'style', 'worker', 'sharedworker']);
 const REVALIDATED_PATH = /\.(?:html?|m?js|css|json|webmanifest)$/i;
 

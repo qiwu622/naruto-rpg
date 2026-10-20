@@ -136,7 +136,7 @@ test('invalid memory references return usable choices without widening the audie
     && error.message.includes('Allowed event_refs: event_visible_A'));
 });
 
-test('daily artifact reuses the strict daily validator and grounds every slot publicly', () => {
+test('daily artifact accepts advisory formatting and grounds every supplied slot publicly', () => {
   const item = dailyItem();
   const normalized = assertShinobiDailyArtifactItem(item, {
     expectedObligationId: item.obligation_id,
@@ -144,6 +144,10 @@ test('daily artifact reuses the strict daily validator and grounds every slot pu
   });
   assert.equal(normalized.daily.schema, 'naruto.shinobi-daily/v1');
   assert.equal(normalized.source_refs.world.length, 4);
+  const varied = dailyItem();
+  varied.daily.world.pop(); varied.source_refs.world.pop();
+  varied.daily.headline.title = '木叶晨报';
+  assert.equal(assertShinobiDailyArtifactItem(varied, { worldPublicRefs: PUBLIC_REFS }).daily.world.length, 3);
 
   const privateSource = dailyItem();
   privateSource.source_refs.headline = ['public:shared_but_not_world_public'];
@@ -168,12 +172,11 @@ test('daily repair reports nested quote, private sources and body format togethe
   item.source_refs.missions[2] = ['public:another_private_event'];
   assert.throws(() => assertShinobiDailyArtifactItem(item, { worldPublicRefs: PUBLIC_REFS }), error => {
     assert.equal(error.code, 'SCHEMA_VIOLATION');
-    assert.match(error.message, /未定义字段 source_refs/u);
+    assert.ok(!error.message.includes('未定义字段 source_refs'), 'extra display fields are advisory');
     assert.match(error.message, /source_refs\/quote.*一维字符串数组/u);
     assert.match(error.message, /source_refs\/world\/1/u);
     assert.match(error.message, /source_refs\/missions\/2/u);
     assert.match(error.message, /不得只换成无关引用/u);
-    assert.ok(error.details.allowed_paths.includes('/daily'));
     assert.ok(error.details.allowed_paths.includes('/source_refs'));
     return true;
   });

@@ -1034,7 +1034,7 @@ class StateManager {
 
     for (const key of Object.keys(s)) {
       if (key.startsWith('物品·') && key.endsWith('·数量')) {
-        clamp(key, 0, 99);
+        clamp(key, 0, Infinity);
         if (s[key] > 0) continue;
         const prefix = key.slice(0, -'·数量'.length);
         for (const sibling of Object.keys(s)) {

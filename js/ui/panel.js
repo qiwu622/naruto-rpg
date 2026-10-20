@@ -182,7 +182,7 @@ class InfoPanel extends HTMLElement {
             cancelLabel: '保留'
           });
           if (confirmed) {
-            equipmentSystem.removeItem(cat, name, 999999);
+            equipmentSystem.removeItem(cat, name, Number.POSITIVE_INFINITY);
             this.render();
           }
         });

@@ -681,7 +681,9 @@ class CharacterCreator extends HTMLElement {
   }
 
   _inputField(label, path, value, type = 'text', placeholder = '') {
-    return `<label class="field"><span>${label}</span><input data-path="${path}" type="${type}" value="${this._escAttr(value)}" ${type === 'number' ? 'min="0" max="9999"' : ''} placeholder="${this._escAttr(placeholder)}" /></label>`;
+    const bounds = type !== 'number' ? '' : /^equipment\.\d+\.quantity$/.test(path)
+      ? 'min="1" step="1"' : 'min="0" max="9999"';
+    return `<label class="field"><span>${label}</span><input data-path="${path}" type="${type}" value="${this._escAttr(value)}" ${bounds} placeholder="${this._escAttr(placeholder)}" /></label>`;
   }
 
   _textareaField(label, path, value, placeholder = '') {

@@ -32,11 +32,11 @@ function isRecord(value) {
   return prototype === Object.prototype || prototype === null;
 }
 
-function cleanText(value, label, max) {
+function cleanText(value, label) {
   if (typeof value !== 'string') fail('LINGXI_PLAYER_ACTION_INVALID', `${label}必须是文本`);
   const result = String(value || '').replace(/\u0000/g, '').trim();
-  if (!result || result.length > max) {
-    fail('LINGXI_PLAYER_ACTION_INVALID', `${label}必须是非空且不超过 ${max} 个字符的文本`);
+  if (!result) {
+    fail('LINGXI_PLAYER_ACTION_INVALID', `${label}必须是非空文本`);
   }
   return result;
 }
@@ -48,13 +48,13 @@ function normalizeParams(params) {
       fail('LINGXI_PLAYER_ACTION_INVALID', `玩家行动包含不支持的字段: ${key}`);
     }
   }
-  const playerAction = cleanText(params.text, '玩家行动', 4000);
+  const playerAction = cleanText(params.text, '玩家行动');
   if (/^\s*\[(?:系统|system|assistant|developer|tool)\s*[:：\]]/i.test(playerAction)) {
     fail('LINGXI_PLAYER_ACTION_INVALID', '玩家行动不能伪装成系统、助手或工具指令');
   }
   return {
     text: playerAction,
-    reason: cleanText(params.reason, '操作原因', 500)
+    reason: cleanText(params.reason, '操作原因')
   };
 }
 

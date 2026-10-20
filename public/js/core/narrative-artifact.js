@@ -82,7 +82,7 @@ const DISPLAY_WRAPPER_TAGS = Object.freeze([
   '正文'
 ]);
 
-const SENSITIVE_NAME_PATTERN = /(?:think|reason|analysis|planning|audit|review[_-]?note|critic|critique|private|secret|hidden|internal|scratch|backstage|planner[_-]?private|(?:^|[_:-])driver(?:$|[_:-]))/i;
+const SENSITIVE_NAME_PATTERN = /(?:^|[_.:-])(?:think|thinking|thought|reason|reasoning|analysis|planning|audit|review[_-]?note|critic|critique|private|secret|hidden|internal|scratch|backstage|driver)(?:$|[_.:~-])/i;
 const PRIVATE_ATTRIBUTE_PATTERN = /\b(?:visibility|audience|scope|access)\s*=\s*(?:["']\s*)?(?:private|secret|hidden|internal|backstage)\b/i;
 const EVIDENCE_ID_PATTERN = /\b(?:E\d+|(?:EV|SCN|DAY)-(?:HIST|P\d+|BOR|[A-Z0-9]+)(?:-[A-Z0-9]+)*|(?:WB|JT|MEM|NODE)-[A-Z0-9._:/-]+)\b/gi;
 const GENERIC_PAIRED_TAG_PATTERN = /<([A-Za-z_][\w.\-:]*~?)([^>]*)>([\s\S]*?)<\/\1\s*>/gi;
@@ -150,11 +150,32 @@ function collectKnownBlocks(text, tags, { selfClosing = true, excludeOpeningsIn 
   return blocks.sort((a, b) => a.start - b.start || b.end - a.end);
 }
 
+// A quoted marker is ordinary story text. Legacy reflection needs an explicit
+// opening heading and an end marker on its own line.
+export function legacyReflectionBlock(input) {
+  const text = String(input || '');
+  if (!/^\s*(?:\[回映(?:开始|起始)\]|回映(?:摘要|开始)(?:[:：]?[ \t]*\r?\n))/u.test(text)) return null;
+  const endMarker = /^[ \t]*\[回映结束\][ \t]*(?:\r?\n|$)/mu.exec(text);
+  if (!endMarker) return null;
+  const end = endMarker.index + endMarker[0].length;
+  return { tag: '回映', attributes: '', content: text.slice(0, endMarker.index).trim(),
+    raw: text.slice(0, end), start: 0, end, selfClosing: false };
+}
+
+function jsonInstructionRanges(text) {
+  return collectKnownBlocks(text, NARRATIVE_INSTRUCTION_TAGS).filter(block => {
+    try { const value = JSON.parse(block.content); return value && typeof value === 'object'; } catch { return false; }
+  });
+}
+
 function collectSensitiveBlocks(text) {
-  const blocks = collectKnownBlocks(text, NARRATIVE_INTERNAL_TAGS, { selfClosing: false });
+  const dataRanges = jsonInstructionRanges(text);
+  const inData = index => dataRanges.some(range => index > range.start && index < range.end);
+  const blocks = collectKnownBlocks(text, NARRATIVE_INTERNAL_TAGS, { selfClosing: false }).filter(block => !inData(block.start));
   GENERIC_PAIRED_TAG_PATTERN.lastIndex = 0;
   let match;
   while ((match = GENERIC_PAIRED_TAG_PATTERN.exec(text)) !== null) {
+    if (inData(match.index)) continue;
     if (!SENSITIVE_NAME_PATTERN.test(match[1]) && !PRIVATE_ATTRIBUTE_PATTERN.test(match[2] || '')) continue;
     blocks.push({
       tag: match[1].toLowerCase(),
@@ -173,6 +194,7 @@ function collectSensitiveBlocks(text) {
   const sensitiveStack = [];
   const tagToken = /<(\/)?([A-Za-z_][\w.\-:]*~?)([^>]*)>/g;
   while ((match = tagToken.exec(text)) !== null) {
+    if (inData(match.index)) continue;
     const closing = Boolean(match[1]);
     const tag = match[2].toLowerCase();
     const attributes = String(match[3] || '').trim();
@@ -202,21 +224,8 @@ function collectSensitiveBlocks(text) {
     });
   }
 
-  if (text.includes('[回映结束]')) {
-    const end = text.indexOf('[回映结束]');
-    const content = text.slice(0, end).trim();
-    if (content) {
-      blocks.push({
-        tag: '回映',
-        attributes: '',
-        content,
-        raw: text.slice(0, end + '[回映结束]'.length),
-        start: 0,
-        end: end + '[回映结束]'.length,
-        selfClosing: false
-      });
-    }
-  }
+  const reflection = legacyReflectionBlock(text);
+  if (reflection) blocks.push(reflection);
 
   const seen = new Set();
   return blocks
@@ -240,6 +249,7 @@ function overlapsAnyRange(block, ranges) {
 function containsSensitiveMarkup(value) {
   const text = String(value || '');
   if (!text) return false;
+  try { const data = JSON.parse(text); if (data && typeof data === 'object') return false; } catch {}
   if (collectSensitiveBlocks(text).length) return true;
   const openTag = /<([A-Za-z_][\w.\-:]*~?)([^>]*)>/g;
   let match;
@@ -331,8 +341,8 @@ export function sanitizeNarrativeSourceText(input, { streaming = false } = {}) {
   // both tagged contracts and schema-identified bare JSON contracts.
   value = stripImageContracts(value, { streaming });
 
-  const reflectionEnd = value.indexOf('[回映结束]');
-  if (reflectionEnd >= 0) value = value.slice(reflectionEnd + '[回映结束]'.length);
+  const reflection = legacyReflectionBlock(value);
+  if (reflection) value = value.slice(reflection.end);
 
   value = value.replace(/<!--[\s\S]*?(?:-->|$)/g, '');
   value = stripKnownTags(value, NARRATIVE_INTERNAL_TAGS, { streaming });

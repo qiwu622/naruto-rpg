@@ -3,7 +3,6 @@
 // back into the resize loop. The bridge immediately reports the natural size.
 const MIN_FRAME_HEIGHT = 1;
 const MAX_FRAME_HEIGHT = 2400;
-const MAX_ACTION_LENGTH = 1000;
 const INTERACTION_SETTLE_MS = 120;
 const interactionSettleTimers = new WeakMap();
 
@@ -143,7 +142,7 @@ function bridgeScript(nonce) {
     if (blockedControl(identity + ' ' + direct)) return;
     if (!direct && !actionControl(identity)) return;
     const action = String(direct || target.textContent || '').replace(/\s+/g, ' ').trim();
-    if (!action || action.length > ${MAX_ACTION_LENGTH}) return;
+    if (!action) return;
     post({ type: 'naruto:preset-action', action, append: event.shiftKey === true });
   }, true);
   const schedule = () => {
@@ -294,7 +293,7 @@ export function mountPresetOutputSandbox(container, source, {
     const now = Date.now();
     if (now - lastActionAt < 120) return;
     lastActionAt = now;
-    const action = String(event.data.action || '').replace(/\s+/g, ' ').trim().slice(0, MAX_ACTION_LENGTH);
+    const action = String(event.data.action || '').replace(/\s+/g, ' ').trim();
     if (action) onAction?.(action, { append: event.data.append === true });
   };
 

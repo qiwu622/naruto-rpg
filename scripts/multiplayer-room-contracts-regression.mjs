@@ -752,7 +752,7 @@ test('COMMITTED publication is member-bound and rejected on early, cross-POV or 
   }, '/commit');
 
   const invalidDaily = clone(SHINOBI_DAILY_EXAMPLE);
-  invalidDaily.issue = '无效刊号';
+  invalidDaily.issue = null;
   expectInvalid(inspectActionTurnMemberProjection, {
     ...projection({ status: 'COMMITTED', opponent: committedOpponent }),
     commit: committedPublication({ daily: invalidDaily })

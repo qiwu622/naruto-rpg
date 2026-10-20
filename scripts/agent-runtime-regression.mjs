@@ -477,7 +477,7 @@ await test('agent fallback commits through the main transport and agent model wh
   }
 });
 
-await test('post-cleanup imported envelope guard rejects a truncated machine tail before commit', async () => {
+await test('imported presentation differences keep prose and repair actual machine data independently', async () => {
   const {
     MAIN_PRESET_STORAGE_KEY,
     invalidateMainPresetCache
@@ -547,7 +547,7 @@ await test('post-cleanup imported envelope guard rejects a truncated machine tai
 
   globalThis.generateRaw = async () => {
     generationCalls++;
-    return rawModelResponse;
+    return generationCalls === 1 ? rawModelResponse : completeUpdaterOutput();
   };
 
   const host = new MessagePipeline({
@@ -560,16 +560,14 @@ await test('post-cleanup imported envelope guard rejects a truncated machine tai
   host._formatDiceBlock = () => '';
 
   try {
-    const outcome = await host.process('继续').then(() => null, error => error);
-    assert.ok(outcome instanceof Error, '根节点闭合被清理吞掉时必须拒绝回合');
-    assert.equal(outcome.code, 'IMPORTED_PRESET_OUTPUT_INCOMPLETE');
-    assert.match(outcome.message, /dream_plot|dream_after_format/);
-    assert.equal(generationCalls, 1, '失败应发生在二次 updater 请求之前');
-    assert.equal(stateManager.get('系统·回合数'), 7, '不完整 envelope 不得提交任何状态');
-    assert.equal(globalThis.__NARUTO_PRESET_DEBUG__?.rawResponse, rawModelResponse,
-      '失败诊断必须保留模型返回的逐字完整原文');
-    assert.equal(globalThis.__NARUTO_PRESET_DEBUG__?.stage, 'post-machine-processing');
-    assert.equal(host.chatHistory.length, 0, '诊断原文不得进入聊天历史');
+    const outcome = await host.process('继续');
+    assert.ok(outcome, 'usable prose must commit after a valid independent updater');
+    assert.equal(generationCalls, 2, 'presentation differences do not force main-model regeneration');
+    assert.equal(stateManager.get('系统·回合数'), 8);
+    assert.ok(host.chatHistory.some(message => message.role === 'assistant' && message.content.includes('安全正文。')));
+    assert.ok(host.chatHistory.every(message => !message.content.includes('未闭合的记忆尾部')),
+      'incomplete instructions never become factual prose');
+
   } finally {
     if (originalGenerateRaw === undefined) delete globalThis.generateRaw;
     else globalThis.generateRaw = originalGenerateRaw;
@@ -1112,7 +1110,7 @@ await test('continuity updater tags are appended and mark agent-self-update', as
     'single-root imported XML must remain the outer response envelope');
 });
 
-await test('continuity updater marks ownership only after machine-tail insertion succeeds', async () => {
+await test('continuity updater inserts valid updates even when the presentation tail is missing', async () => {
   const pipeline = new AgentPipeline({
     pipeline: {
       getTurnEvidenceView: () => ({ current_state: {}, evidence: [] }),
@@ -1129,8 +1127,9 @@ await test('continuity updater marks ownership only after machine-tail insertion
   const incomplete = '<dream_plot><dream_body>正文</dream_body></dream_plot>';
   const result = await pipeline._appendContinuityUpdates({}, '继续', incomplete, [], null);
 
-  assert.equal(result, incomplete);
-  assert.equal(pipeline.didAgentProduceUpdaterTags(), false);
+  assert.ok(result.startsWith(incomplete));
+  assert.ok(result.includes('<memory>'));
+  assert.equal(pipeline.didAgentProduceUpdaterTags(), true);
 });
 
 await test('continuity updater cannot suppress the standard updater with malformed or incomplete output', async () => {

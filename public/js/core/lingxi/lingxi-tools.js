@@ -1436,8 +1436,8 @@ export function createLingXiTools({
       },
       async execute(input = {}) {
         if (typeof stagePlayerAction !== 'function') throw new Error('普通玩家行动提案功能暂不可用');
-        const playerAction = text(input.text, 4000);
-        const reason = text(input.reason, 500);
+        const playerAction = text(input.text, Infinity);
+        const reason = text(input.reason, Infinity);
         if (!playerAction || !reason) throw new TypeError('text 与 reason 不能为空');
         const proposal = await stagePlayerAction({ text: playerAction, reason });
         return stagedWriteResult(proposal, '剧情尚未推进，主模型也尚未调用。请在差异卷轴中核对玩家行动与时间线影响后点击“确认修改”。');

@@ -188,6 +188,54 @@ function novelDimension(value, fallback) {
   return Math.min(2048, Math.max(64, rounded));
 }
 
+function novelImageType(bytes) {
+  if (bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((byte, i) => bytes[i] === byte)) return 'image/png';
+  if (bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return 'image/jpeg';
+  if (bytes.length >= 12 && String.fromCharCode(...bytes.subarray(0, 4)) === 'RIFF'
+    && String.fromCharCode(...bytes.subarray(8, 12)) === 'WEBP') return 'image/webp';
+  return '';
+}
+
+async function readNovelAIImage(response, provider) {
+  if (!(response instanceof Blob) || !response.size) throw imageError('PROVIDER_ERROR', 'NovelAI 没有返回图片数据');
+  // Allow the existing 32 MiB image limit plus Base64/JSON overhead.
+  if (response.size > 48 * 1024 * 1024) throw imageError('PROVIDER_ERROR', 'NovelAI 返回的图片响应过大');
+  const prefix = new Uint8Array(await response.slice(0, 256).arrayBuffer());
+  if (prefix[0] === 0x50 && prefix[1] === 0x4b) return extractFirstImageFromZip(response);
+  let mimeType = novelImageType(prefix);
+  if (mimeType) {
+    if (response.size > 32 * 1024 * 1024) throw imageError('PROVIDER_ERROR', 'NovelAI 返回的图片过大');
+    return response.slice(0, response.size, mimeType);
+  }
+
+  const start = new TextDecoder().decode(prefix).trimStart();
+  if (start.startsWith('<')) throw imageError('PROVIDER_ERROR', 'NovelAI 接口返回了网页而非图片，请检查 API 地址及登录状态');
+  if (!start.startsWith('{') && !start.startsWith('[') && !/\bjson\b/i.test(response.type)) {
+    throw imageError('PROVIDER_ERROR', 'NovelAI 返回了无法识别的图片数据，可能是响应不完整或接口地址不正确');
+  }
+  let result;
+  try { result = JSON.parse(await response.text()); }
+  catch { throw imageError('PROVIDER_ERROR', 'NovelAI 返回的 JSON 图片响应无效或不完整'); }
+  const detail = result?.error?.message || result?.message || result?.error;
+  if (detail) {
+    let message = Array.isArray(detail) ? detail.join('; ') : typeof detail === 'string' ? detail : '';
+    const token = normalizeImageApiKey(provider?.apiKey, 'novelai');
+    if (token) message = message.split(token).join('[REDACTED]');
+    message = message.replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]').slice(0, 300);
+    throw imageError('PROVIDER_ERROR', `NovelAI 生图失败${message ? `: ${message}` : ''}`);
+  }
+  // Official JSON format: { images: [{ image: '<base64>', index, seed }] }.
+  const images = Array.isArray(result) ? result : result?.images;
+  if (!Array.isArray(images) || !images.length) throw imageError('PROVIDER_ERROR', 'NovelAI 没有返回可用图片');
+  const encoded = typeof images[0] === 'string' ? images[0] : images[0]?.image;
+  if (typeof encoded !== 'string' || !encoded.trim()) throw imageError('PROVIDER_ERROR', 'NovelAI 返回的图片数据为空或格式不正确');
+  const image = decodeBase64(encoded);
+  if (image.size > 32 * 1024 * 1024) throw imageError('PROVIDER_ERROR', 'NovelAI 返回的图片过大');
+  mimeType = novelImageType(new Uint8Array(await image.slice(0, 12).arrayBuffer()));
+  if (!mimeType) throw imageError('PROVIDER_ERROR', 'NovelAI JSON 中的数据不是有效图片');
+  return image.slice(0, image.size, mimeType);
+}
+
 export class NovelAIImageAdapter {
   constructor(transport) { this.transport = transport; this.type = 'novelai'; }
 
@@ -295,10 +343,10 @@ export class NovelAIImageAdapter {
         }
       }
     };
-    const archive = await this.transport.blob(provider, '/ai/generate-image', {
+    const response = await this.transport.blob(provider, '/ai/generate-image', {
       method: 'POST', body, signal, accept: 'application/zip'
     });
-    const blob = await extractFirstImageFromZip(archive);
+    const blob = await readNovelAIImage(response, provider);
     return {
       images: [await generatedImage(blob)],
       metadata: { seed, model, sampler, noiseSchedule }

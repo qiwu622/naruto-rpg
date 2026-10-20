@@ -45,11 +45,12 @@ try {
     };
     document.body.append(document.createElement('worldbook-editor'));
   });
+  const authoredContent = 'BLUE_SENTINEL。始终有效的世界规则。\n角色喜欢火辣菜肴，成人礼服采用性感剪裁。\n\n附注原样保留。  ';
   const imported = {
     entries: {
       0: { uid: 0, comment: '关闭条目', key: ['关闭密钥'], content: 'DISABLED_SENTINEL。' + '禁止注入的内容。'.repeat(1600), constant: true, disable: true },
       1: { uid: 1, comment: '绿灯条目', key: ['青叶密钥'], content: 'GREEN_SENTINEL。' + '等待关键词的内容。'.repeat(1600), constant: false, disable: false },
-      2: { uid: 2, comment: '蓝灯条目', key: [], content: 'BLUE_SENTINEL。始终有效的世界规则。', constant: true, disable: false }
+      2: { uid: 2, comment: '蓝灯条目', key: [], content: authoredContent, constant: true, disable: false }
     }
   };
   await page.locator('#file-import').setInputFiles({ name: 'activation-fixture.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(imported)) });
@@ -62,6 +63,11 @@ try {
   check('matching a disabled entry still does not enable it', () => assert.equal(JSON.stringify(triggered).includes('DISABLED_SENTINEL'), false));
   check('a primary key activates a green entry when budget permits', () => assert.equal(JSON.stringify(triggered).includes('GREEN_SENTINEL'), true));
   const stored = await page.evaluate(() => KNOWLEDGE_BASE.getCustomEntries());
+  check('import preserves authored text and matching prompt does not filter its vocabulary', () => {
+    assert.equal(stored[2].content, authoredContent);
+    assert.ok(noMatch.includes('角色喜欢火辣菜肴，成人礼服采用性感剪裁。'));
+    assert.ok(noMatch.includes('附注原样保留。'));
+  });
   check('import persists off, green and blue instead of erasing their modes', () => {
     assert.equal(stored[0].enabled, false);
     assert.equal(stored[1].activation.mode, 'keyword');
@@ -72,6 +78,7 @@ try {
   const displayedMode = await page.locator('#entry-mode').inputValue();
   check('editor shows imported blue mode', () => assert.equal(displayedMode, 'always'));
   assert.equal(await page.locator('#entry-content').isVisible(), true);
+  assert.equal(await page.locator('#entry-content').inputValue(), authoredContent);
   await page.locator('#entry-mode').selectOption('keyword');
   assert.equal(await page.evaluate(() => promptFor('我在空地等待').includes('BLUE_SENTINEL')), false);
   check('switching blue to keyless green removes it from the very next prompt', () => {});

@@ -1,6 +1,6 @@
 import { stateManager } from '../core/state-manager.js';
 import { eventBus } from '../core/event-bus.js';
-import { listMemoryFacts, MAX_MEMORY_CORRECTION_TEXT } from '../core/memory-corrections.js';
+import { listMemoryFacts } from '../core/memory-corrections.js';
 import { escHtml, escAttr } from '../utils/format.js';
 import { icon } from '../utils/icons.js';
 import { memoryFactsEditorStyles } from '../../css/components/memory-facts-editor.css.js';
@@ -20,6 +20,7 @@ export class MemoryFactsEditor extends HTMLElementBase {
     this._query = '';
     this._field = 'all';
     this._page = 0;
+    this._sourcePage = 0;
     this._editing = null;
     this._busy = false;
     this._error = '';
@@ -36,7 +37,7 @@ export class MemoryFactsEditor extends HTMLElementBase {
     this.addEventListener('input', this._input);
     this.addEventListener('change', this._change);
     this._subscriptions = eventBus.createDisposeBag();
-    for (const event of ['memory:corrected', 'state:restored']) {
+    for (const event of ['memory:corrected', 'state:restored', 'memory:updated']) {
       this._subscriptions.on(event, () => {
         if (this._busy) return;
         this._editing = null;
@@ -99,19 +100,39 @@ export class MemoryFactsEditor extends HTMLElementBase {
         <div data-memory-results></div>
         </div>
         ${this._historyHtml()}
+        <details class="mf-history-wrap" data-memory-originals><summary>${decoration('archive')}原始记忆记录（${this._viewState?._memory?.source_records?.length || 0}）</summary>
+          <p class="mf-hint">原始记录完整随存档保存，摘要和本轮检索不会覆盖它。此处按需展开全文；旧版本已丢失的片段无法追溯恢复。</p>
+          <div data-memory-source-results></div>
+        </details>
       </section>`;
+    this.querySelector('[data-memory-originals]')?.addEventListener('toggle', event => {
+      if (event.target.open) this._renderSources();
+    });
     this._renderResults();
+  }
+
+  _renderSources() {
+    const container = this.querySelector('[data-memory-source-results]');
+    if (!container) return;
+    const records = Array.isArray(this._viewState?._memory?.source_records) ? this._viewState._memory.source_records : [];
+    const pages = Math.max(1, Math.ceil(records.length / PAGE_SIZE));
+    this._sourcePage = Math.max(0, Math.min(this._sourcePage, pages - 1));
+    const indexes = Array.from({ length: Math.min(PAGE_SIZE, Math.max(0, records.length - this._sourcePage * PAGE_SIZE)) }, (_, i) => records.length - 1 - this._sourcePage * PAGE_SIZE - i);
+    container.innerHTML = indexes.map(index => `<article class="mf-card"><p class="mf-meta">第 ${Number(records[index].turn) || 0} 回合 · ${escHtml(records[index].source || '旧档')}</p>
+      <button type="button" class="btn ghost btn-xs" data-action="source-original" data-source-index="${index}">展开完整原文</button>
+      <pre data-original-content="${index}" hidden style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:28rem;overflow:auto;"></pre></article>`).join('')
+      + `<nav class="mf-pagination" aria-label="原始记忆分页"><button type="button" class="btn ghost btn-xs" data-action="source-previous" ${this._sourcePage === 0 ? 'disabled' : ''}>上一页</button><span>${this._sourcePage + 1} / ${pages}</span><button type="button" class="btn ghost btn-xs" data-action="source-next" ${this._sourcePage + 1 >= pages ? 'disabled' : ''}>下一页</button></nav>`;
   }
 
   _historyHtml() {
     const history = (Array.isArray(this._viewState?._memory?.corrections) ? this._viewState._memory.corrections : [])
-      .filter(rule => rule && typeof rule.id === 'string' && ACTION_LABELS[rule.action]).slice(0, 100);
+      .filter(rule => rule && typeof rule.id === 'string' && ACTION_LABELS[rule.action]);
     if (!history.length) return '';
     return `<details class="mf-history-wrap"><summary>${decoration('timeline')}<span>修订记录（${history.length}）</span><span class="mf-history-chevron" aria-hidden="true">${icon('chevron-down', 15)}</span></summary>
       <p class="mf-hint">撤销会同时撤销该事实之后的纠正、否定和置顶。不会回退此后的剧情与新记忆；要恢复当时的全部进度，请读取修订前的时间线节点。</p>
       <div class="mf-history">${history.slice().reverse().map(rule => `<div class="mf-history-item">
         <div class="mf-meta">${ACTION_LABELS[rule.action]} · 第 ${Number(rule.createdTurn) || 0} 回合</div>
-        <p class="mf-history-text"><span class="mf-history-before">${escHtml(String(rule.targetText || '').slice(0, 2000))}</span>${rule.action === 'correct' ? `<span class="mf-history-after">→ ${escHtml(String(rule.replacement || '').slice(0, 2000))}</span>` : ''}</p>
+        <p class="mf-history-text"><span class="mf-history-before">${escHtml(String(rule.targetText || ''))}</span>${rule.action === 'correct' ? `<span class="mf-history-after">→ ${escHtml(String(rule.replacement || ''))}</span>` : ''}</p>
         <button type="button" class="btn ghost btn-xs" data-action="undo" data-correction-id="${escAttr(rule.id)}">${decoration('refresh-cw', 14)}撤销此修订</button>
       </div>`).join('')}</div></details>`;
   }
@@ -134,7 +155,7 @@ export class MemoryFactsEditor extends HTMLElementBase {
         <p class="mf-text">${escHtml(fact.text)}</p>
         <div class="mf-meta">${fact.pinned ? `<span class="mf-pinned">${decoration('check', 12)}已置顶</span><span aria-hidden="true">·</span>` : ''}${fact.nodeId
           ? `第 ${Number.isInteger(fact.turn) ? fact.turn : '?'} 回合留存` : '来源未知 · 旧记忆未保留来源'}</div>
-        ${edit ? `<label class="mf-edit-label">纠正内容<textarea data-memory-draft aria-label="纠正内容" maxlength="${MAX_MEMORY_CORRECTION_TEXT}">${escHtml(this._editing.text)}</textarea></label>
+        ${edit ? `<label class="mf-edit-label">纠正内容<textarea data-memory-draft aria-label="纠正内容">${escHtml(this._editing.text)}</textarea></label>
           <div class="mf-actions"><button type="button" class="btn btn-xs" data-action="save" data-fact-id="${escAttr(fact.id)}">${decoration('check', 14)}保存纠正</button>
           <button type="button" class="btn ghost btn-xs" data-action="cancel">取消</button></div>`
           : `<div class="mf-actions">
@@ -177,6 +198,20 @@ export class MemoryFactsEditor extends HTMLElementBase {
     if (!button || !this.contains(button) || button.disabled || this._busy) return;
     const action = button.dataset.action;
     const factId = button.dataset.factId;
+    if (action === 'source-previous' || action === 'source-next') {
+      this._sourcePage += action === 'source-next' ? 1 : -1;
+      this._renderSources(); return;
+    }
+    if (action === 'source-original') {
+      const index = Number(button.dataset.sourceIndex);
+      const record = this._viewState?._memory?.source_records?.[index];
+      const element = this.querySelector(`[data-original-content="${index}"]`);
+      if (!record || !element) return;
+      if (element.hidden) element.textContent = JSON.stringify(record.update, null, 2);
+      element.hidden = !element.hidden;
+      button.textContent = element.hidden ? '展开完整原文' : '收起原文';
+      return;
+    }
     if (action === 'previous' || action === 'next') {
       this._page += action === 'next' ? 1 : -1;
       this._renderResults();

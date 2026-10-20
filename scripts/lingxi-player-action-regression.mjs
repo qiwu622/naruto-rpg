@@ -94,6 +94,21 @@ await test('player action preview has no pipeline side effect and approval submi
   assert.equal(receipt.tool, LINGXI_PLAYER_ACTION_TOOL);
 });
 
+await test('long player actions and reasons reach approval and execution without clipping', async () => {
+  const manager = new MemoryManager(baseState());
+  const calls = [];
+  const broker = brokerFor(new PlayerActionAdapter({ stateManager: manager, executePlayerAction: async text => {
+    calls.push(text); manager.state._meta.current_node_id = 'node_8'; manager.state['系统·回合数'] = 8;
+    return { accepted: true, nodeId: 'node_8' };
+  } }));
+  const action = '我仔细说明接下来的行动细节。'.repeat(500) + 'ACTION_TAIL';
+  const reason = '操作原因。'.repeat(150) + 'REASON_TAIL';
+  const proposal = await broker.stageAction(LINGXI_PLAYER_ACTION_TOOL, { text: action, reason });
+  assert.equal(proposal.params.text, action); assert.equal(proposal.params.reason, reason);
+  await broker.approveFromUserEvent(trustedEvent, { proposalId: proposal.id, confirmation: 'yes' });
+  assert.deepEqual(calls, [action]);
+});
+
 await test('player action requires the trusted approval broker', async () => {
   const manager = new MemoryManager(baseState());
   const calls = [];

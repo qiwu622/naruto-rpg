@@ -344,7 +344,7 @@ function normalizeEquipment(entry = {}) {
   return {
     category: allowed.includes(entry.category) ? entry.category : 'tools',
     name: text(entry.name),
-    quantity: Math.max(1, Math.round(number(entry.quantity, 1, 1, 9999))),
+    quantity: Math.max(1, Math.round(number(entry.quantity, 1, 1, Infinity))),
     quality: text(entry.quality, '普通'),
     description: text(entry.description),
     equippedSlot: ['weapon', 'armor', 'accessory1', 'accessory2'].includes(entry.equippedSlot) ? entry.equippedSlot : ''

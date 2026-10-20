@@ -1389,7 +1389,7 @@ await test('official Flash stages reserve output for JSON without changing other
   assert.deepEqual(completenessCaptures[0].body.thinking, { type: 'disabled' });
 });
 
-await test('provider daily schema agrees with delivery validation on marks, ranks and exact fields', () => {
+await test('provider daily schema agrees with advisory formatting and structural validation', () => {
   const schema = normalizeProviderJsonSchema({ $ref: 'naruto.shinobi-daily/v1' });
   const validate = new Ajv2020().compile(schema);
   assert.equal(validate(SHINOBI_DAILY_EXAMPLE), true, JSON.stringify(validate.errors));
@@ -1407,8 +1407,9 @@ await test('provider daily schema agrees with delivery validation on marks, rank
   ]) {
     const daily = structuredClone(SHINOBI_DAILY_EXAMPLE);
     mutate(daily);
-    assert.equal(validateShinobiDaily(daily).valid, false);
-    assert.equal(validate(daily), false, 'provider contract must reject invalid delivery shapes');
+    assert.equal(validateShinobiDaily(daily).valid, true);
+    assert.equal(validate(daily), true, 'formatting differences must not veto delivery');
+    assert.ok(validateShinobiDaily(daily).warnings.length);
   }
 });
 

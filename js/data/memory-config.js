@@ -12,10 +12,10 @@ export const MEMORY_CONFIG_DEFAULTS = {
   deepModel: 'main',          // 'main' | 'updater' — 整理用哪个模型配置
   // 分层窗口
   chapterWindow: 10,          // 每 N 回合固化一章
-  maxTurnSummaries: 8,        // 回合小结保留条数
+  maxTurnSummaries: 8,        // 活跃回合小结窗口，原始记录完整保存
   promptBudget: 7200,         // 注入总预算(字符)
-  factsLimit: 90,             // facts 上限
-  archivedLimit: 600,         // 归档上限
+  factsLimit: 90,             // 活跃事实窗口，溢出完整归档
+  archivedLimit: 600,         // 归档数量提醒，不删除内容
   // 检索
   recallEnabled: true,        // <recall> 协议
   recallLifetime: 3,          // 召回单有效回合数

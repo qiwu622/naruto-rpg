@@ -166,7 +166,7 @@ try {
   await editor.getByRole('button', { name: '否定', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('memory-facts-editor')._busy === false);
   assert.equal(await editor.locator('.mf-card').count(), 0);
-  await editor.locator('summary').click();
+  await editor.locator('summary').filter({ hasText: '修订记录' }).click();
   await editor.getByRole('button', { name: '撤销此修订', exact: true }).first().click();
   await editor.locator('.mf-text').filter({ hasText: '木叶图书馆' }).waitFor();
   await editor.getByRole('searchbox').fill('');

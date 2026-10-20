@@ -26,6 +26,9 @@ function hasOwn(record, key) {
 const UNSAFE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const SUPPORTED_SNAPSHOT_VERSIONS = new Set(['3.0', '4.0', '5.0']);
 const OMIT_PERSISTED_VALUE = Symbol('omit-persisted-value');
+// Memory JSON contains authored text, including literal examples of URLs.
+// Media-field rules must not silently empty an entire memory string.
+const isMemoryTextPath = path => /(?:^|\.)(?:_memory|memory)(?:\.|\[|$)/.test(path);
 const FORBIDDEN_IMAGE_REFERENCE = /(?:data:image\/[^,\s;]+(?:;[^,\s]*)*;base64,|blob:)/i;
 export const TIMELINE_NODE_PAYLOAD_ENCODING = 'gzip-json-v1';
 
@@ -39,7 +42,7 @@ function isBinaryValue(value) {
 
 function sanitizePersistenceValue(value, path, visiting) {
   if (value === null || typeof value === 'boolean') return value;
-  if (typeof value === 'string') return FORBIDDEN_IMAGE_REFERENCE.test(value) ? '' : value;
+  if (typeof value === 'string') return !isMemoryTextPath(path) && FORBIDDEN_IMAGE_REFERENCE.test(value) ? '' : value;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
     return OMIT_PERSISTED_VALUE;
@@ -123,7 +126,7 @@ export function findForbiddenTimelineMedia(value, rootPath = 'timeline') {
   const stack = [{ value, path: rootPath }];
   while (stack.length) {
     const current = stack.pop();
-    if (typeof current.value === 'string' && FORBIDDEN_IMAGE_REFERENCE.test(current.value)) {
+    if (typeof current.value === 'string' && !isMemoryTextPath(current.path) && FORBIDDEN_IMAGE_REFERENCE.test(current.value)) {
       return current.path;
     }
     if (!current.value || typeof current.value !== 'object') continue;

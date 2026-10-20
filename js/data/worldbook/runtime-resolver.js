@@ -121,6 +121,9 @@ function eraStateIsActive(state, currentDate) {
 }
 
 function projectCharacterRuntime(entry, currentDate) {
+  // Imported/player-authored entries already contain the intended prompt text.
+  // Do not replace their body with an inferred subset of profile sections.
+  if (entry?.source?.kind === 'custom') return entry;
   const profile = entry?.character_profile;
   if (!profile) return entry;
   const activeEraStates = (profile.era_states || [])
@@ -173,7 +176,7 @@ function defaultCustomLoader(storageKey) {
 
 /**
  * 唯一允许进入模型提示词的旧世界书解析器。
- * 审计目录中的 V2 原始条目保留来源与隔离片段；这里永远只返回 runtime projection。
+ * V2 审计目录保留完整原文与来源；这里只投影当前受众可用的条目，正文不按词过滤。
  */
 export class WorldbookV2Resolver {
   constructor({

@@ -9,7 +9,6 @@ import { projectNarrativeForMemory } from '../core/narrative-memory.js';
 import { recordMemoryRecallTrace } from '../core/memory-recall-trace.js';
 
 const KEEP_TURN_SUMMARIES_AFTER_COMPRESSION = 3;
-const TURN_SUMMARY_LIMIT = 900;
 const ROLLING_SUMMARY_LIMIT = 4000;
 const COMPRESSED_SUMMARY_LIMIT = 6000;
 
@@ -36,7 +35,6 @@ const MEMORY_VERSION = 2;
 const DEEP_INPUT_CHAR_LIMIT = 12000;
 const DEEP_OUTPUT_MAX_TOKENS = 3000;
 const COMPRESSION_INPUT_CHAR_LIMIT = 6000;
-const NPC_NOTE_LIMIT_PER_NPC = 10;
 
 class MemorySystem {
   constructor() {
@@ -405,6 +403,7 @@ class MemorySystem {
     const keep = lines.slice(-KEEP_TURN_SUMMARIES_AFTER_COMPRESSION);
     if (!overflow.length) return;
     const block = overflow.join('\n');
+    this._recordSourceUpdate(memory, { turn_summaries: block }, 'local-compression');
     const previous = memory.compressed_summary ? `${memory.compressed_summary}\n` : '';
     memory.compressed_summary = `${previous}[阶段摘要${(memory.compression_count || 0) + 1}]\n${block}`.slice(-COMPRESSED_SUMMARY_LIMIT);
     memory.turn_summaries = keep.join('\n');
@@ -482,7 +481,7 @@ class MemorySystem {
   async _aiUpgradeChapter(client) {
     const memory = this._loadMemory();
     const chapters = this._parseChapterData(projectCorrectedMemory(memory).chapters);
-    const target = chapters.find(c => c.raw);
+    const target = chapters.find(c => c.raw && !c.ai_summarized);
     if (!target) return false;
     const boundary = this._captureAsyncBoundary(memory);
 
@@ -500,10 +499,10 @@ class MemorySystem {
         const ch = freshChapters.find(c => c.id === target.id);
         if (!ch || !ch.raw) return false;
         const lines = out.trim().split('\n').filter(Boolean);
-        ch.title = lines[0].slice(0, 20);
-        const aiSummary = lines.slice(1).join(' ').trim().slice(0, CHAPTER_SUMMARY_LIMIT);
+        ch.title = lines[0];
+        const aiSummary = lines.slice(1).join('\n').trim();
         if (aiSummary) ch.summary = aiSummary;
-        delete ch.raw;
+        ch.ai_summarized = true;
         fresh.chapters = JSON.stringify(freshChapters);
         this._saveMemory(fresh);
         return true;
@@ -517,7 +516,7 @@ class MemorySystem {
   async _aiUpgradeVolume(client) {
     const memory = this._loadMemory();
     const volumes = this._parseChapterData(projectCorrectedMemory(memory).volumes);
-    const target = volumes.find(v => v.raw);
+    const target = volumes.find(v => v.raw && !v.ai_summarized);
     if (!target) return false;
     const boundary = this._captureAsyncBoundary(memory);
 
@@ -534,8 +533,8 @@ class MemorySystem {
         const freshVols = this._parseChapterData(fresh.volumes);
         const v = freshVols.find(x => x.id === target.id);
         if (!v || !v.raw) return false;
-        v.summary = out.trim().slice(0, VOLUME_SUMMARY_LIMIT);
-        delete v.raw;
+        v.summary = out.trim();
+        v.ai_summarized = true;
         fresh.volumes = JSON.stringify(freshVols);
         this._saveMemory(fresh);
         return true;
@@ -571,7 +570,7 @@ class MemorySystem {
       title: `${now} · ${location}`,
       summary: bufferText.replace(/\s+/g, ' ').slice(0, CHAPTER_SUMMARY_LIMIT),
       entities: [...entityNames].slice(0, 30),
-      raw: bufferText.slice(0, 6000),
+      raw: bufferText,
       ts: Date.now()
     };
     existingChapters.push(chapter);
@@ -580,7 +579,7 @@ class MemorySystem {
 
   _consolidateVolumeLocal(chapters, existingVolumes) {
     const last10 = chapters.slice(-VOLUME_CHAPTER_WINDOW);
-    const raw = last10.map(c => `[第${c.id}章] ${c.summary}`).join('\n').slice(0, 4000);
+    const raw = last10.map(c => `[第${c.id}章] ${c.summary}`).join('\n');
     const vols = existingVolumes || [];
     vols.push({
       id: vols.length + 1,
@@ -773,14 +772,15 @@ class MemorySystem {
   }
 
   _applyDeepConsolidate(parsed, memory, currentTurn, reviewed = {}) {
+    this._recordSourceUpdate(memory, parsed, 'deep');
     let changed = false;
     const lines = value => String(value || '').split('\n').filter(Boolean);
     const replaceReviewed = (field, input, output) => {
       const seen = new Set(input || []);
       memory[field] = [...new Set([...lines(memory[field]).filter(line => !seen.has(line)), ...output])].join('\n');
     };
-    if (Array.isArray(parsed.facts) && parsed.facts.length && parsed.facts.length <= 50) {
-      replaceReviewed('facts', reviewed.facts, parsed.facts.slice(0, 40).map(s => this._singleLine(s).slice(0, 180)).filter(Boolean));
+    if (Array.isArray(parsed.facts) && parsed.facts.length) {
+      replaceReviewed('facts', reviewed.facts, parsed.facts.map(s => this._singleLine(s)).filter(Boolean));
       this._syncLineMeta(memory, 'facts');
       changed = true;
     }
@@ -796,8 +796,8 @@ class MemorySystem {
       const summarizedNames = new Set();
       for (const [name, data] of Object.entries(npcDigest)) {
         if (!reviewedNames.has(name)) continue;
-        const hist = String(data?.history || '').slice(0, 120);
-        const recent = String(data?.recent || '').slice(0, 40);
+        const hist = String(data?.history || '');
+        const recent = String(data?.recent || '');
         if (hist) relHist[name] = { summary: hist, updated: Date.now() };
         if (hist || recent) {
           summarizedNames.add(name);
@@ -843,16 +843,15 @@ class MemorySystem {
         const resolution = String(c?.resolution || '');
         memory.important_events += `\n${this._timeLabel()} 线索结算: ${title}${resolution ? ' — ' + resolution : ''}`;
       }
-      memory.important_events = memory.important_events.split('\n').filter(Boolean).slice(-30).join('\n');
+      memory.important_events = memory.important_events.split('\n').filter(Boolean).join('\n');
       changed = true;
     }
-    if (Array.isArray(parsed.pins) && parsed.pins.length <= 10) {
-      const unseenPins = lines(memory.pins).filter(line => !(reviewed.pins || []).includes(line));
-      replaceReviewed('pins', reviewed.pins, parsed.pins.slice(0, Math.max(0, 8 - unseenPins.length)).map(s => this._singleLine(s).slice(0, 180)).filter(Boolean));
+    if (Array.isArray(parsed.pins)) {
+      replaceReviewed('pins', reviewed.pins, parsed.pins.map(s => this._singleLine(s)).filter(Boolean));
       changed = true;
     }
     if (parsed.era_note) {
-      memory.compressed_summary = `${memory.compressed_summary || ''}\n[时期小结 T${currentTurn}] ${String(parsed.era_note).slice(0, 80)}`.slice(-COMPRESSED_SUMMARY_LIMIT);
+      memory.compressed_summary = `${memory.compressed_summary || ''}\n[时期小结 T${currentTurn}] ${String(parsed.era_note)}`.slice(-COMPRESSED_SUMMARY_LIMIT);
       changed = true;
     }
     if (changed) {
@@ -876,6 +875,7 @@ class MemorySystem {
       return stateManager.getSub('_memory') || {};
     }
     const memory = this._loadMemory();
+    this._recordSourceUpdate(memory, update, source);
     this._refreshCorrectedSummaries(memory);
 
     this._appendLines(memory, 'facts', Array.isArray(update.facts) ? update.facts : []);
@@ -885,7 +885,7 @@ class MemorySystem {
     this._appendClues(memory, Array.isArray(update.clues) ? update.clues : []);
     this._appendLines(memory, 'important_events', [...(Array.isArray(update.events) ? update.events : []), ...(Array.isArray(update.important_events) ? update.important_events : [])], 40);
 
-    if (update.summary) memory.recent_summary = String(update.summary).trim().slice(0, TURN_SUMMARY_LIMIT);
+    if (update.summary) memory.recent_summary = String(update.summary);
     if (userInput || aiResponse || update.summary) {
       this.recordTurnSummary(memory, { userInput, aiResponse, summary: update.summary, source, tags: update.turn_tags || update.tags || [] });
     }
@@ -894,8 +894,8 @@ class MemorySystem {
       const turn = Number(stateManager.get('系统·回合数')) || 0;
       const lines = memory.npc_notes ? memory.npc_notes.split('\n').filter(Boolean) : [];
       for (const [npc, note] of Object.entries(update.npc_notes)) {
-        const name = this._singleLine(npc).slice(0, 60);
-        const text = this._singleLine(note).slice(0, 240);
+        const name = this._singleLine(npc);
+        const text = this._singleLine(note);
         if (name && text) lines.push(`${name}: [T${turn}] ${text}`);
       }
       const perNpc = {};
@@ -927,6 +927,7 @@ class MemorySystem {
     this._refreshCorrectedSummaries(memory);
     const summary = this.buildFallbackSummary(userInput, aiResponse, { includePrevious: false });
     memory.recent_summary = this._appendRollingSummary(memory.recent_summary || '', summary);
+    this._recordSourceUpdate(memory, { summary }, 'local');
     this.recordTurnSummary(memory, { userInput, aiResponse, summary, source: 'local' });
     this._trim(memory);
     memory.meta = memory.meta || { updated_at: null, sources: {} };
@@ -957,9 +958,9 @@ class MemorySystem {
     const entry = {
       turn,
       time: this._timeLabel(),
-      summary: text.slice(0, TURN_SUMMARY_LIMIT),
+      summary: text,
       source,
-      tags: Array.isArray(tags) ? tags.slice(0, 6) : []
+      tags: Array.isArray(tags) ? [...tags] : []
     };
     const summaries = this._turnSummaryLines(memory.turn_summaries);
     const turnPrefix = `#${entry.turn} `;
@@ -1044,6 +1045,27 @@ class MemorySystem {
 
   /* ────────── 持久化 ────────── */
 
+  getSourceRecords(memory = stateManager.getSub('_memory')) {
+    return Array.isArray(memory?.source_records) ? memory.source_records : [];
+  }
+
+  _recordSourceUpdate(memory, update, source) {
+    let records = this.getSourceRecords(memory);
+    if (!Array.isArray(memory.source_records)) {
+      const baseline = Object.fromEntries(Object.entries(memory).filter(([key, value]) =>
+        key !== 'source_records' && key !== 'meta' && value !== '' && value !== '[]' && value !== '{}'));
+      records = Object.keys(baseline).length
+        ? [{ turn: Number(stateManager.get('系统·回合数')) || 0, source: 'legacy', update: JSON.parse(JSON.stringify(baseline)) }]
+        : [];
+    }
+    const record = { turn: Number(stateManager.get('系统·回合数')) || 0, source,
+      update: JSON.parse(JSON.stringify(update)) };
+    const previous = records.at(-1);
+    if (!previous || previous.turn !== record.turn || previous.source !== source
+      || JSON.stringify(previous.update) !== JSON.stringify(record.update)) records = [...records, record];
+    memory.source_records = records;
+  }
+
   _refreshCorrectedSummaries(memory) {
     if (!memory?.corrections?.length) return;
     const effective = projectCorrectedMemory(memory);
@@ -1059,6 +1081,7 @@ class MemorySystem {
     const raw = stateManager.getSub('_memory');
     if (!raw) return this._emptyMemory();
     return {
+      ...raw,
       ...(Array.isArray(raw.corrections) ? { corrections: raw.corrections } : {}),
       pins: raw.pins || '',
       facts: raw.facts || '',
@@ -1089,6 +1112,7 @@ class MemorySystem {
 
   _emptyMemory() {
     return {
+      source_records: [],
       pins: '', facts: '', clues: '', long_term: '', archived: '',
       recent_summary: '', turn_summaries: '', compressed_summary: '',
       compression_count: 0, important_events: '', npc_notes: '',
@@ -1101,6 +1125,7 @@ class MemorySystem {
 
   _saveMemory(memory) {
     stateManager.setSub('_memory', {
+      ...memory,
       ...(Array.isArray(memory.corrections) ? { corrections: memory.corrections } : {}),
       pins: memory.pins || '',
       facts: memory.facts || '',
@@ -1152,9 +1177,8 @@ class MemorySystem {
     const existing = memory[field] ? memory[field].split('\n').filter(Boolean) : [];
     for (const item of values) {
       const text = this._memoryText(item).trim();
-      if (text && !existing.includes(text)) existing.push(text.slice(0, 180));
+      if (text && !existing.includes(text)) existing.push(text);
     }
-    if (Number.isFinite(limit) && existing.length > limit) existing.splice(0, existing.length - limit);
     memory[field] = existing.join('\n');
     if (field === 'facts' || field === 'long_term') this._syncLineMeta(memory, field, existing);
   }
@@ -1168,16 +1192,16 @@ class MemorySystem {
     }
     for (const clue of clues) {
       const item = typeof clue === 'string'
-        ? { title: clue.slice(0, 40), detail: clue.slice(0, 180), status: '未解', source: 'ai' }
+        ? { title: clue, detail: clue, status: '未解', source: 'ai' }
         : {
-            title: String(clue?.title || clue?.id || '未命名线索').slice(0, 40),
-            detail: String(clue?.detail || clue?.description || '').slice(0, 180),
-            status: String(clue?.status || '未解').slice(0, 20),
+            title: String(clue?.title || clue?.id || '未命名线索'),
+            detail: String(clue?.detail || clue?.description || ''),
+            status: String(clue?.status || '未解'),
             source: clue?.source || 'ai'
           };
       existingClueMap.set(item.title, JSON.stringify(item));
     }
-    existing = [...existingClueMap.values()].slice(-40);
+    existing = [...existingClueMap.values()];
     memory.clues = existing.join('\n');
   }
 
@@ -1217,39 +1241,12 @@ class MemorySystem {
         if (entArr.some(e => item.includes(e))) matched.push(item);
         else rest.push(item);
       }
-      memory.archived = [...rest, ...matched].slice(-cfg.archivedLimit).join('\n');
+      memory.archived = [...rest, ...matched].join('\n');
     };
     archiveOlder('facts', cfg.factsLimit);
     archiveOlder('long_term', 60);
-    const pinsLines = memory.pins ? memory.pins.split('\n').filter(Boolean) : [];
-    memory.pins = pinsLines.slice(-8).join('\n');
-    const cluesLines = memory.clues ? memory.clues.split('\n').filter(Boolean) : [];
-    memory.clues = cluesLines.slice(-40).join('\n');
-    const tsLines = this._turnSummaryLines(memory.turn_summaries);
-    memory.turn_summaries = tsLines.slice(-cfg.maxTurnSummaries).join('\n');
-    const ieLines = memory.important_events ? memory.important_events.split('\n').filter(Boolean) : [];
-    memory.important_events = ieLines.slice(-30).join('\n');
-
-    // NPC 笔记溢出 → 累积到关系buffer,供深度整理生成简史
-    const npcTrimLines = memory.npc_notes ? memory.npc_notes.split('\n').filter(Boolean) : [];
-    const perNpcTrim = {};
-    for (const l of npcTrimLines) {
-      const idx = l.indexOf(': ');
-      if (idx > 0) { const n = l.slice(0, idx); const note = l.slice(idx + 2); if (!perNpcTrim[n]) perNpcTrim[n] = []; perNpcTrim[n].push(note); }
-    }
-    const overflowLines = [];
-    const keptNpcLines = [];
-    for (const [npcName, notes] of Object.entries(perNpcTrim)) {
-      if (notes.length > NPC_NOTE_LIMIT_PER_NPC) {
-        overflowLines.push(npcName + ': ' + notes.slice(0, notes.length - NPC_NOTE_LIMIT_PER_NPC).join(' | '));
-      }
-      keptNpcLines.push(...notes.slice(-NPC_NOTE_LIMIT_PER_NPC).map(note => `${npcName}: ${note}`));
-    }
-    memory.npc_notes = keptNpcLines.join('\n');
-    if (overflowLines.length) {
-      memory._relationship_buffer = [memory._relationship_buffer, ...overflowLines]
-        .filter(Boolean).join('\n').slice(-12000);
-    }
+    // Active fact windows may be archived, never evicted. All other records
+    // stay complete; prompt injection independently selects relevant entries.
   }
 
   _appendRollingSummary(prefix, text) {

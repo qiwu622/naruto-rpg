@@ -1,5 +1,6 @@
 import { deepClone, generateId } from '../utils/format.js';
 
+// Compatibility names: advisory thresholds only, never storage limits.
 export const MAX_MEMORY_CORRECTIONS = 100;
 export const MAX_MEMORY_CORRECTION_TEXT = 2000;
 
@@ -33,20 +34,18 @@ function factId(field, text) {
 function boundedText(value, label) {
   if (typeof value !== 'string' || !value.trim()) throw new TypeError(`${label}不能为空`);
   const text = value.trim();
-  if (text.length > MAX_MEMORY_CORRECTION_TEXT) throw new TypeError(`${label}不能超过 ${MAX_MEMORY_CORRECTION_TEXT} 字符`);
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text)) throw new TypeError(`${label}含有无效控制字符`);
   return text;
 }
 
 // Invalid imported rules are inert. Never execute user text as a regular expression.
 function correctionRules(memory) {
-  return (Array.isArray(memory?.corrections) ? memory.corrections : []).slice(0, MAX_MEMORY_CORRECTIONS)
+  return (Array.isArray(memory?.corrections) ? memory.corrections : [])
     .filter(rule => isRecord(rule) && ACTIONS.has(rule.action) && FACT_FIELDS.includes(rule.field)
       && typeof rule.id === 'string' && rule.id.length > 0 && rule.id.length <= 160
       && typeof rule.targetText === 'string' && rule.targetText.trim().length > 0
-      && rule.targetText.length <= MAX_MEMORY_CORRECTION_TEXT
       && (rule.action !== 'correct' || (typeof rule.replacement === 'string'
-        && rule.replacement.trim().length > 0 && rule.replacement.length <= MAX_MEMORY_CORRECTION_TEXT)));
+        && rule.replacement.trim().length > 0)));
 }
 
 function transformText(text, rules) {
@@ -57,7 +56,6 @@ function transformText(text, rules) {
     // A model may persist the already-corrected line on a later turn. Protect
     // complete replacements before replacing remaining old fragments.
     result = result.split(rule.replacement).map(part => part.split(rule.targetText).join(rule.replacement)).join(rule.replacement);
-    if (result.length > 24_000) return null;
   }
   return result;
 }
@@ -89,7 +87,7 @@ function sourceForFact(ledger, text) {
 function ruleAnchors(rules) {
   const anchors = new Map();
   for (const rule of rules) {
-    const text = typeof rule.originalText === 'string' && rule.originalText.length <= MAX_MEMORY_CORRECTION_TEXT
+    const text = typeof rule.originalText === 'string'
       ? rule.originalText : rule.targetText;
     const id = typeof rule.factId === 'string' && rule.factId.length <= 160 ? rule.factId : factId(rule.field, text);
     if (!anchors.has(id)) anchors.set(id, { id, field: rule.field, text });
@@ -155,7 +153,6 @@ export function prepareMemoryCorrection(state, request = {}) {
     const replacement = action === 'correct' ? boundedText(request.text, '纠正内容').replace(/\s*\r?\n\s*/g, ' ') : '';
     if (action === 'correct' && replacement === targetText) throw new Error('纠正内容与当前记忆相同');
     if (action === 'pin' && fact.pinned) return deepClone(state);
-    if (rules.length >= MAX_MEMORY_CORRECTIONS) throw new Error(`最多保留 ${MAX_MEMORY_CORRECTIONS} 条纠错，请先撤销不再需要的规则`);
     const originalText = rawFactEntries(state._memory || {}, rules).find(item => item.id === fact.id)?.text || targetText;
     const invalidatedDerived = {};
     if (action !== 'pin') {
@@ -186,7 +183,11 @@ export function prepareMemoryCorrection(state, request = {}) {
 
 /** Build an effective view only. Persisting this projection would destroy undo history. */
 export function projectCorrectedMemory(memory, ledger = null) {
-  const projected = deepClone(isRecord(memory) ? memory : {});
+  // The immutable source journal is not part of retrieval/correction work.
+  // Do not clone the full archive each time a prompt projection is built.
+  const { source_records, ...working } = isRecord(memory) ? memory : {};
+  const projected = deepClone(working);
+  if (Array.isArray(source_records)) projected.source_records = source_records;
   const rules = correctionRules(memory);
   if (!rules.length) return projected;
   for (const field of TEXT_FIELDS) {
@@ -271,9 +272,7 @@ export function projectCorrectedLedger(ledger, memory) {
     const value = transformValue(event.value, rules);
     const evidence = transformValue(event.evidence, rules);
     const predicate = typeof event.predicate === 'string' ? transformText(event.predicate, rules) : event.predicate;
-    if ((value === null && event.value !== null) || (evidence === null && event.evidence !== null) || predicate === null
-      || (typeof predicate === 'string' && predicate.length > 160)
-      || JSON.stringify(value)?.length > 24_000) return [];
+    if ((value === null && event.value !== null) || (evidence === null && event.evidence !== null) || predicate === null) return [];
     return [{ ...event, value, evidence, predicate }];
   });
   const retained = new Set(projected.events.map(event => event.event_id));

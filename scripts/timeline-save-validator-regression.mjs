@@ -126,11 +126,11 @@ test('timeline import validation rejects locally gzipped node payloads', () => {
 test('timeline import validation rejects an invalid persisted shinobi daily', () => {
   const save = createWideSave(1);
   save.nodes[0].shinobi_daily = structuredClone(SHINOBI_DAILY_EXAMPLE);
-  save.nodes[0].shinobi_daily.missions[0].rank = 'S';
+  save.nodes[0].shinobi_daily.missions[0].rank = null;
   const result = inspectTimelineSave(save);
   assert.equal(result.valid, false);
   assert.match(result.errors.join('; '), /node_0: shinobi_daily 忍界日报无效/);
-  assert.match(result.errors.join('; '), /rank 必须是 D/);
+  assert.match(result.errors.join('; '), /rank 必须是字符串/);
 });
 
 console.log(`\n${passed} timeline save validator regression tests passed.`);

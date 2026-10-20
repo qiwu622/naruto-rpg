@@ -52,7 +52,7 @@ class MemoryPanel extends HTMLElement {
             <label>启用深度整理</label>
             <div>
               <input type="checkbox" name="memDeepEnabled" ${cfg.deepEnabled ? 'checked' : ''}>
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">默认关闭。开启后系统会在后台定期调用模型清理旧记忆，固化重要情节。</div>
+              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">默认关闭。开启后系统会在后台定期调用模型整理摘要。原始记忆完整留存，不会因整理而删除。</div>
             </div>
             <label>整理周期(回合)</label>
             <div>
@@ -65,7 +65,7 @@ class MemoryPanel extends HTMLElement {
                 <option value="main" ${cfg.deepModel === 'main' ? 'selected' : ''}>主模型</option>
                 <option value="updater" ${cfg.deepModel === 'updater' ? 'selected' : ''}>二次变量模型</option>
               </select>
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">指定哪一个模型进行清洗，二次模型能节约主模型的开销。</div>
+              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">指定哪一个模型整理摘要，二次模型能节约主模型的开销。</div>
             </div>
           </div>
           <div style="margin-top:12px;">
@@ -81,25 +81,25 @@ class MemoryPanel extends HTMLElement {
               <input type="number" name="memChapterWindow" min="5" max="30" value="${cfg.chapterWindow}">
               <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">每次整合历史摘要所涉及的最小回合跨度。</div>
             </div>
-            <label>回合小结上限</label>
+            <label>近期小结窗口</label>
             <div>
               <input type="number" name="memMaxTurnSummaries" min="4" max="20" value="${cfg.maxTurnSummaries}">
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">未固化的零散回合小结允许保留的最大条数。</div>
+              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">超过此窗口会整理为章节；原始记录完整保留。</div>
             </div>
             <label>注入预算(字符)</label>
             <div>
               <input type="number" name="memPromptBudget" min="3000" max="20000" value="${cfg.promptBudget}">
               <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">提供给 AI 的记忆上下文最大字符数(Token容量保护)。</div>
             </div>
-            <label>facts 上限</label>
+            <label>活跃事实窗口</label>
             <div>
               <input type="number" name="memFactsLimit" min="30" max="300" value="${cfg.factsLimit}">
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">“事实碎片”的最大条数，超出后旧碎片会被打包压缩。</div>
+              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">超出窗口的事实移入归档并保留全文，仍可检索。</div>
             </div>
-            <label>归档上限</label>
+            <label>归档数量提醒</label>
             <div>
               <input type="number" name="memArchivedLimit" min="100" max="2000" value="${cfg.archivedLimit}">
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">历史存档区最大容纳的记录量。</div>
+              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">仅作数量提醒，超出也不删除；完整记录随存档保存。</div>
             </div>
             <label>启用 &lt;recall&gt; 协议</label>
             <div>
@@ -216,6 +216,7 @@ class MemoryPanel extends HTMLElement {
         `<div style="font-size:11px;line-height:1.7;">` +
         `<div>当前回合: <b>${stats.turn}</b> · 上次整理: <b>${stats.lastDeepTurn}</b></div>` +
         `<div>facts: ${stats.factsCount}条 / ${c.facts}字 · 归档: ${stats.archivedCount}条 / ${c.archived}字</div>` +
+        (stats.archivedCount > getMemoryConfig().archivedLimit ? `<div role="status">归档数量超过建议值，全部原文仍完整保留；可调整检索预算。</div>` : '') +
         `<div>clues: ${stats.cluesCount} · pins: ${stats.pinsCount} · NPC: ${stats.npcCount}</div>` +
         `<div>章节: ${stats.chapterCount} · 卷: ${stats.volumeCount} · 待归章缓冲: ${stats.pendingBuffer}字</div>` +
         `<div>recent: ${c.recent}字 · compressed: ${c.compressed}字</div>` +
@@ -271,7 +272,7 @@ class MemoryPanel extends HTMLElement {
     if (!Modal) return;
     const ok = await Modal.confirm({
       title: '深度整理',
-      message: '将立即调用主模型清洗记忆库(不阻塞游戏,失败静默放弃)。是否继续?',
+      message: '将调用所选模型整理记忆摘要；原始记录完整保留。是否继续?',
       okLabel: '开始整理',
       cancelLabel: '取消'
     });

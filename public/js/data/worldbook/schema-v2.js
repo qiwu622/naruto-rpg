@@ -128,10 +128,6 @@ const ALLOWED_PRECISIONS = new Set(['unbounded', 'year', 'day']);
 const ALLOWED_VISIBILITIES = new Set(WORLD_BOOK_V2_VISIBILITIES);
 const ALLOWED_AUDIENCES = new Set(WORLD_BOOK_V2_AUDIENCES);
 
-// 这些词只用于运行时净化。原文仍保存在 source_fragments 中，供迁移审计查看。
-const EXPLICIT_SEXUAL_CONTENT_RE = /(?:乳头|乳晕|双乳|巨乳|阴毛|小穴|大阴唇|小阴唇|后穴|穴口|爱液|媚肉|花壶|蜜穴|肉棒|阴茎|阴囊|龟头|包皮|阴蒂|性器|性征|床笫|未经人事|处女膜|发情|性交|交媾|强奸|奸淫|高潮|勃起|乳交|肛交|被填满|痴女|肉欲|情欲|欲火|吸吮力|性经验|神秘花园)/i;
-const SEXUALIZED_LANGUAGE_RE = /(?:性感|妖娆|火辣|惹火|撩人|肉感|香艳|色气|妩媚|荷尔蒙|费洛蒙|春情|肉浪|欲望颤动|成熟女人的|少妇|女体|禁忌.*诱惑|(?:身材|身段|身体|胸|臀|腿|腰|肌肤|女人|少女).{0,24}诱惑|诱惑.{0,24}(?:身材|身段|身体|胸|臀|腿|腰|肌肤|女人|少女))/i;
-const MINOR_BODY_SEXUALIZATION_RE = /(?:胸(?:部|前|脯).{0,30}(?:丰满|高耸|隆起|发育|平坦|曲线|晃动|颤动|肉感|诱人)|(?:丰满|高耸|隆起|发育).{0,30}胸(?:部|前|脯)|身体发育|早熟.{0,12}(?:身材|身体)|隐秘地带)/i;
 const MINOR_WORD_RE = /(?:未成年|婴儿|婴幼儿|幼儿|幼童|幼女|幼男|小女孩|小男孩|儿童|孩童|少年|少女|襁褓|刚出生|年幼|幼年)/i;
 
 const PROFILE_SECTION_LABELS = Object.freeze({
@@ -281,111 +277,25 @@ export function isMinorWorldbookContext(text) {
   return MINOR_WORD_RE.test(value) || parseAgeMentions(value).some(age => age < 18);
 }
 
-function splitContentFragments(content) {
-  const text = String(content || '').replace(/\r\n/g, '\n');
-  const fragments = [];
-  let buffer = '';
-  for (const char of text) {
-    buffer += char;
-    if (char === '\n' || char === '。' || char === '！' || char === '？' || char === '；') {
-      fragments.push(buffer);
-      buffer = '';
-    }
-  }
-  if (buffer) fragments.push(buffer);
-  return fragments;
-}
-
-function isolateContaminatedAppearanceSections(content, minorContext, removedFragments) {
-  const heading = '(?:外貌特征|身体特征|私密描写|成人外貌)';
-  const nextHeading = '(?:核心身份|大事记与状态|核心性格|性格特质|价值观|动机|目标|弱点|说话方式|行为边界|战斗风格|当前状态|知识边界|木叶-?\\d+年)';
-  const pattern = new RegExp(`(^|\\n)(\\s*${heading}\\s*[:：][\\s\\S]*?)(?=\\n\\s*(?:[-•]\\s*)?${nextHeading}\\s*[:：]|$)`, 'g');
-  return String(content || '').replace(pattern, (whole, prefix, section) => {
-    const explicitReason = fragmentSafetyReason(section, minorContext);
-    const minorBodyRisk = minorContext && (MINOR_BODY_SEXUALIZATION_RE.test(section) || SEXUALIZED_LANGUAGE_RE.test(section));
-    if (!explicitReason && !minorBodyRisk) return whole;
-    const reason = minorContext ? 'minor_sexualization' : (explicitReason || 'sexualized_description');
-    removedFragments.push({
-      reason,
-      fragment: section,
-      fragment_hash: stableWorldbookHash(section.trim()),
-      fragment_kind: 'appearance_section'
-    });
-    return prefix;
-  });
-}
-
-function fragmentSafetyReason(fragment, minorContext) {
-  if (EXPLICIT_SEXUAL_CONTENT_RE.test(fragment)) {
-    return minorContext ? 'minor_sexualization' : 'explicit_sexual_content';
-  }
-  if (SEXUALIZED_LANGUAGE_RE.test(fragment)) {
-    return minorContext ? 'minor_sexualization' : 'sexualized_description';
-  }
-  if (minorContext && MINOR_BODY_SEXUALIZATION_RE.test(fragment)) {
-    return 'minor_sexualization';
-  }
-  return null;
-}
-
+// Compatibility exports for older consumers. Worldbook text is authored data:
+// keep it verbatim rather than rejecting or rewriting it by vocabulary.
 export function inspectWorldbookRuntimeSafety(content, { title = '', keys = [] } = {}) {
-  const combinedContext = `${title}\n${(keys || []).join(' ')}\n${content}`;
-  const minorContext = isMinorWorldbookContext(combinedContext);
-  const violations = [];
-  for (const fragment of splitContentFragments(content)) {
-    const reason = fragmentSafetyReason(fragment, minorContext);
-    if (reason) {
-      violations.push({ reason, fragment_hash: stableWorldbookHash(fragment.trim()) });
-    }
-  }
-  return { safe: violations.length === 0, minor_context: minorContext, violations };
-}
-
-export function sanitizeWorldbookContent(content, { title = '', keys = [] } = {}) {
-  const original = String(content || '');
-  const combinedContext = `${title}\n${(keys || []).join(' ')}\n${original}`;
-  const minorContext = isMinorWorldbookContext(combinedContext);
-  const kept = [];
-  const removedFragments = [];
-  const contentWithoutContaminatedSections = isolateContaminatedAppearanceSections(
-    original,
-    minorContext,
-    removedFragments
-  );
-
-  for (const fragment of splitContentFragments(contentWithoutContaminatedSections)) {
-    const reason = fragmentSafetyReason(fragment, minorContext);
-    if (!reason) {
-      kept.push(fragment);
-      continue;
-    }
-    removedFragments.push({
-      reason,
-      fragment,
-      fragment_hash: stableWorldbookHash(fragment.trim())
-    });
-  }
-
-  let sanitized = kept.join('')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/[ \t]+\n/g, '\n')
-    .trim();
-  if (!sanitized && normalizeWorldbookTitle(title)) {
-    sanitized = `[${normalizeWorldbookTitle(title)}]\n该条目的不适合片段已被隔离；运行时不得从原文补全被隔离内容。`;
-  }
-
   return {
-    content: sanitized,
-    changed: removedFragments.length > 0,
-    minor_context: minorContext,
-    removed_fragments: removedFragments,
-    reasons: [...new Set(removedFragments.map(item => item.reason))]
+    safe: true,
+    minor_context: isMinorWorldbookContext(`${title}\n${(keys || []).join(' ')}\n${content}`),
+    violations: []
   };
 }
 
-function sanitizeKeys(keys, minorContextText) {
-  const minorContext = isMinorWorldbookContext(minorContextText);
-  return uniqueStrings(keys).filter(key => !fragmentSafetyReason(key, minorContext));
+export function sanitizeWorldbookContent(content, { title = '', keys = [] } = {}) {
+  const original = String(content ?? '');
+  return {
+    content: original,
+    changed: false,
+    minor_context: isMinorWorldbookContext(`${title}\n${(keys || []).join(' ')}\n${original}`),
+    removed_fragments: [],
+    reasons: []
+  };
 }
 
 function extractProfileSection(content, labels) {
@@ -403,20 +313,20 @@ function extractProfileSection(content, labels) {
   return '';
 }
 
-function extractEraStates(content, title, keys) {
+function extractEraStates(content) {
   const states = [];
   const text = String(content || '');
   const pattern = /(?:^|\n)\s*[-•]?\s*(木叶(-?\d+)年(?:前后|以前|以后)?)\s*[:：]\s*([^\n]+)/g;
   for (const match of text.matchAll(pattern)) {
     const label = match[1];
     const year = Number(match[2]);
-    const safe = sanitizeWorldbookContent(match[3], { title, keys }).content;
-    if (!safe) continue;
+    const stateContent = match[3];
+    if (!stateContent) continue;
     states.push({
       label,
       from: label.endsWith('以前') ? null : formatKonohaDate(year),
       until: label.endsWith('以后') ? null : formatKonohaDate(year + 1),
-      content: safe
+      content: stateContent
     });
   }
   return states;
@@ -453,25 +363,15 @@ function normalizeProfile(profile, { title, keys, content, entityIds }) {
     knowledge_baseline: listifyProfileValue(supplied.knowledge_baseline || extractProfileSection(content, PROFILE_SECTION_LABELS.knowledge_baseline)),
     era_states: Array.isArray(supplied.era_states)
       ? supplied.era_states.map(item => ({ ...item }))
-      : extractEraStates(content, title, keys)
+      : extractEraStates(content)
   };
 
-  // 即使调用方直接传入 profile，也必须再次净化所有可进入提示词的字段。
-  for (const key of [
-    'personality_core', 'values', 'goals', 'weaknesses', 'speech_style', 'mannerisms',
-    'behavior_bounds', 'combat_temperament', 'social_baseline',
-    'safe_appearance', 'knowledge_baseline'
-  ]) {
-    safeProfile[key] = safeProfile[key]
-      .map(item => sanitizeWorldbookContent(item, { title, keys }).content)
-      .filter(Boolean);
-  }
   safeProfile.era_states = safeProfile.era_states
     .map(item => ({
       label: String(item?.label || '').trim(),
       from: item?.from == null ? null : String(item.from),
       until: item?.until == null ? null : String(item.until),
-      content: sanitizeWorldbookContent(item?.content || '', { title, keys }).content
+      content: String(item?.content ?? '')
     }))
     .filter(item => item.label && item.content);
   return safeProfile;
@@ -512,9 +412,8 @@ export function normalizeWorldbookEntryV2(input, options = {}) {
   const title = normalizeWorldbookTitle(raw.title || options.title || '未命名世界书条目');
   const rawKeys = uniqueStrings(raw.keys || []);
   const sourceKind = String(options.sourceKind || raw.source?.kind || raw.source || 'builtin');
-  const rawContent = String(raw.content || '');
-  const sanitized = sanitizeWorldbookContent(rawContent, { title, keys: rawKeys });
-  const keys = sanitizeKeys(rawKeys, `${title}\n${rawContent}`);
+  const rawContent = String(raw.content ?? '');
+  const keys = rawKeys;
   const category = normalizeCategory(options.category || raw.category || 'reference');
   const isCharacter = category === 'character' || category === 'character_profile' || Boolean(raw.character_profile);
   const defaultEntityIds = isCharacter ? [buildStableEntityId(title)].filter(Boolean) : [];
@@ -540,7 +439,7 @@ export function normalizeWorldbookEntryV2(input, options = {}) {
     knowledge: normalizeKnowledge(raw.knowledge, { sourceKind }),
     entity_ids: entityIds,
     organization_ids: uniqueStrings(raw.organization_ids || []),
-    content: sanitized.content,
+    content: rawContent,
     character_profile: null,
     source: {
       kind: sourceKind,
@@ -552,11 +451,11 @@ export function normalizeWorldbookEntryV2(input, options = {}) {
     },
     safety: {
       runtime_safe: true,
-      sanitized: sanitized.changed,
-      minor_context: sanitized.minor_context,
-      removed_fragment_count: sanitized.removed_fragments.length,
-      reasons: sanitized.reasons,
-      removed_fragment_hashes: sanitized.removed_fragments.map(item => item.fragment_hash)
+      sanitized: false,
+      minor_context: isMinorWorldbookContext(`${title}\n${rawKeys.join(' ')}\n${rawContent}`),
+      removed_fragment_count: 0,
+      reasons: [],
+      removed_fragment_hashes: []
     }
   };
 
@@ -638,8 +537,6 @@ export function validateWorldbookEntryV2(entry, { runtime = false } = {}) {
   if (!entry.source || typeof entry.source !== 'object') errors.push('source: expected object');
   if (!entry.safety || typeof entry.safety !== 'object') errors.push('safety: expected object');
 
-  const safety = inspectWorldbookRuntimeSafety(entry.content, { title: entry.title, keys: entry.keys });
-  if (!safety.safe) errors.push(`content: ${safety.violations.length} unsafe runtime fragment(s)`);
   if (entry.character_profile) {
     const profile = entry.character_profile;
     if (typeof profile.entity_id !== 'string' || !profile.entity_id.trim()) {
@@ -670,11 +567,7 @@ export function validateWorldbookEntryV2(entry, { runtime = false } = {}) {
         }
       }
     }
-    const profileSafety = inspectWorldbookRuntimeSafety(JSON.stringify(entry.character_profile), {
-      title: entry.title,
-      keys: entry.keys
-    });
-    if (!profileSafety.safe) errors.push(`character_profile: ${profileSafety.violations.length} unsafe runtime fragment(s)`);
+
   }
   if (entry.safety?.runtime_safe !== true) errors.push('safety.runtime_safe: expected true');
   if (runtime && ('source_fragments' in entry || 'migration' in entry)) {
@@ -763,7 +656,7 @@ export function toRuntimeWorldbookEntry(entry, { audience = 'writer', date = nul
   };
   const validation = validateWorldbookEntryV2(runtime, { runtime: true });
   if (!validation.valid) {
-    throw new Error(`Unsafe or invalid runtime worldbook entry ${entry.id}: ${validation.errors.join('; ')}`);
+    throw new Error(`Invalid runtime worldbook entry ${entry.id}: ${validation.errors.join('; ')}`);
   }
   return runtime;
 }

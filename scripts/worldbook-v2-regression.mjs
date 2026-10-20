@@ -48,7 +48,7 @@ for (const entry of WORLD_BOOK_V2_ENTRIES) {
   assert.equal(entry.source_fragments.length, entry.migration.input_fragment_count);
 }
 
-// 每个旧片段都可按文件、导出名和下标原样追溯；净化只影响 runtime_content。
+// 每个旧片段都可按文件、导出名和下标原样追溯，运行时保留原文。
 const provenance = new Map();
 for (const entry of WORLD_BOOK_V2_ENTRIES) {
   for (const fragment of entry.source_fragments) {
@@ -80,13 +80,12 @@ assert.deepEqual(
   WORLD_BOOK_V2_ENTRIES.map(entry => [entry.title, entry.id, entry.migration.disposition])
 );
 
-const forbiddenRuntime = /(?:乳头|乳晕|双乳|巨乳|阴毛|小穴|大阴唇|小阴唇|后穴|穴口|爱液|媚肉|花壶|蜜穴|肉棒|阴茎|阴囊|龟头|包皮|阴蒂|性器|床笫|发情|性交|交媾|强奸|奸淫|高潮|勃起|乳交|肛交|痴女|肉欲|情欲|性感|妖娆|火辣|惹火|撩人|肉感|少妇)/i;
-assert.ok(WORLD_BOOK_V2_MIGRATION_REPORT.sanitized_entry_count > 0, 'polluted legacy fragments should be detected');
-assert.ok(WORLD_BOOK_V2_MIGRATION_REPORT.removed_fragment_count > 0, 'unsafe fragments should be removed');
+assert.equal(WORLD_BOOK_V2_MIGRATION_REPORT.sanitized_entry_count, 0, 'migration must not filter worldbook text');
+assert.equal(WORLD_BOOK_V2_MIGRATION_REPORT.removed_fragment_count, 0);
 for (const entry of WORLD_BOOK_V2_RUNTIME_ENTRIES) {
-  assert.equal(forbiddenRuntime.test(entry.content), false, `unsafe runtime content: ${entry.title}`);
-  assert.equal(forbiddenRuntime.test(JSON.stringify(entry.character_profile || {})), false, `unsafe runtime profile: ${entry.title}`);
-  assert.equal('source_fragments' in entry, false, 'runtime projection must hide original fragments');
+  const source = WORLD_BOOK_V2_ENTRIES.find(item => item.id === entry.id);
+  assert.equal(entry.content, source.content, `runtime body changed: ${entry.title}`);
+  assert.equal('source_fragments' in entry, false, 'runtime projection must hide audit metadata');
   assert.equal('migration' in entry, false, 'runtime projection must hide migration internals');
   assert.deepEqual(Object.keys(entry.source), ['kind'], 'runtime source must expose provenance kind only');
   const validation = validateWorldbookEntryV2(entry, { runtime: true });
@@ -96,13 +95,11 @@ const serializedRuntime = JSON.stringify(WORLD_BOOK_V2_RUNTIME_ENTRIES);
 assert.equal(serializedRuntime.includes('original_content'), false);
 assert.equal(serializedRuntime.includes('original_fragment'), false);
 
-const minorFixture = `[测试角色]\n核心性格：谨慎、善良，遇到同伴受伤时会主动帮忙。\n当前状态：12岁，仍在忍校学习。\n外貌特征：黑色短发，穿整洁的训练服。她尚未发育的小穴被描写得十分露骨。\n行为边界：不会无理由伤害同学。`;
-const sanitizedMinor = sanitizeWorldbookContent(minorFixture, { title: '测试角色', keys: ['测试角色'] });
-assert.equal(sanitizedMinor.changed, true);
-assert.ok(sanitizedMinor.reasons.includes('minor_sexualization'));
-assert.match(sanitizedMinor.content, /谨慎、善良/);
-assert.match(sanitizedMinor.content, /不会无理由伤害同学/);
-assert.doesNotMatch(sanitizedMinor.content, forbiddenRuntime);
+const authored = '  核心性格：谨慎、善良，喜欢火辣菜肴。\r\n外貌特征：成人礼服采用性感剪裁。\r\n\r\n';
+const preserved = sanitizeWorldbookContent(authored, { title: '自定义档案', keys: ['礼服'] });
+assert.equal(preserved.content, authored);
+assert.equal(preserved.changed, false);
+assert.deepEqual(preserved.removed_fragments, []);
 
 const narutoProfile = WORLD_BOOK_V2_ENTRIES.find(entry => entry.title === '漩涡鸣人·性格细节')?.character_profile;
 assert.ok(narutoProfile, 'legacy character persona must become a structured profile');
@@ -125,11 +122,12 @@ const secretFixture = normalizeWorldbookEntryV2({
 assert.equal(toRuntimeWorldbookEntry(secretFixture, { audience: 'writer' }), null);
 assert.ok(toRuntimeWorldbookEntry(secretFixture, { audience: 'planner' }));
 
+const customContent = '核心性格：沉稳，信守承诺。\n外貌特征：成人礼服采用性感剪裁。';
 const customMigration = migrateCustomWorldbookEntriesV1ToV2([{
   title: '玩家自定义角色',
   keys: ['自定义角色'],
   enabled: false,
-  content: '核心性格：沉稳，信守承诺。\n当前状态：16岁。\n露骨内容：她的小穴不应进入运行时。'
+  content: customContent
 }]);
 assert.equal(customMigration.entries.length, 1);
 const custom = customMigration.entries[0];
@@ -138,11 +136,11 @@ assert.equal(custom.status, 'legacy_trusted_public');
 assert.equal(custom.activation.mode, 'keyword');
 assert.equal(custom.knowledge.visibility, 'public');
 assert.ok(custom.knowledge.audience.includes('writer'));
-assert.match(custom.source_fragments[0].original_content, /小穴/, 'custom original must remain auditable');
+assert.equal(custom.source_fragments[0].original_content, customContent);
 assert.equal(toRuntimeWorldbookEntry(custom, { audience: 'writer' }), null);
 const customRuntime = toRuntimeWorldbookEntry({ ...custom, enabled: true }, { audience: 'writer' });
 assert.ok(customRuntime);
-assert.doesNotMatch(customRuntime.content, forbiddenRuntime);
+assert.equal(customRuntime.content, customContent);
 assert.equal('source_fragments' in customRuntime, false);
 
 const stateAwareResolver = new WorldbookV2Resolver({ customLoader: () => [] });
@@ -217,4 +215,4 @@ const descriptiveKeywords = stateAwareResolver.resolve({
 });
 assert.deepEqual(descriptiveKeywords.character_mentions, [], 'profile aliases and keywords are not trusted identities');
 
-console.log(`worldbook-v2-regression: OK (${records.length} legacy fragments -> ${WORLD_BOOK_V2_ENTRIES.length} V2 entries, ${WORLD_BOOK_V2_MIGRATION_REPORT.removed_fragment_count} unsafe fragments isolated)`);
+console.log(`worldbook-v2-regression: OK (${records.length} legacy fragments -> ${WORLD_BOOK_V2_ENTRIES.length} V2 entries, ${WORLD_BOOK_V2_MIGRATION_REPORT.removed_fragment_count} content fragments removed)`);

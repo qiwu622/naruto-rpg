@@ -157,9 +157,9 @@ export const SHINOBI_DAILY_ARTIFACT_ITEM_JSON_SCHEMA = immutableContractValue({
       required: DAILY_SOURCE_KEYS,
       properties: {
         headline: { $ref: '#/$defs/refList' },
-        world: { type: 'array', minItems: 4, maxItems: 4, items: { $ref: '#/$defs/refList' } },
-        flavor: { type: 'array', minItems: 3, maxItems: 3, items: { $ref: '#/$defs/refList' } },
-        missions: { type: 'array', minItems: 4, maxItems: 4, items: { $ref: '#/$defs/refList' } },
+        world: { type: 'array', items: { $ref: '#/$defs/refList' } },
+        flavor: { type: 'array', items: { $ref: '#/$defs/refList' } },
+        missions: { type: 'array', items: { $ref: '#/$defs/refList' } },
         quote: { $ref: '#/$defs/refList' }
       }
     }
@@ -516,7 +516,8 @@ export function assertShinobiDailyArtifactItem(value, options = {}) {
   const sourceRefs = {};
   for (const key of ['headline', 'quote']) sourceRefs[key] = check(() =>
     assertPublicRefList(value.source_refs[key], `/source_refs/${key}`, publicRefs));
-  for (const [key, length] of [['world', 4], ['flavor', 3], ['missions', 4]]) {
+  for (const key of ['world', 'flavor', 'missions']) {
+    const length = Array.isArray(value.daily?.[key]) ? value.daily[key].length : 0;
     const refs = value.source_refs[key];
     check(() => assertArray(refs, { path: `/source_refs/${key}`, label: 'public source ref matrix', min: length, max: length }));
     if (Array.isArray(refs) && refs.length === length) sourceRefs[key] = refs.map((list, index) => check(() =>

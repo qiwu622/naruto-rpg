@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="zh-CN" data-release-version="3.7.1">
+<html lang="zh-CN" data-release-version="3.7.2">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#101113">
-  <meta name="description" content="忍者手记 v3.7.1 更新公告与历史版本说明。">
-  <title>更新公告 · 忍者手记 v3.7.1</title>
+  <meta name="description" content="忍者手记 v3.7.2 更新公告与历史版本说明。">
+  <title>更新公告 · 忍者手记 v3.7.2</title>
   <style>
     :root { color-scheme:dark; --ink:#101113; --paper:#ede6d9; --muted:#aaa49c; --gold:#d7b17a; }
     * { box-sizing:border-box; }
@@ -56,26 +56,36 @@
   <div class="wrap">
     <header class="top"><a class="brand" href="/">忍者手记</a><a class="pill" href="/">进入游戏 ↗</a></header>
     <section class="hero" aria-labelledby="title">
-      <p class="eyebrow">RELEASE NOTES · 2026-10-15</p>
-      <h1 id="title">v3.7.1 · 更新公告</h1>
+      <p class="eyebrow">RELEASE NOTES · 2026-10-20</p>
+      <h1 id="title">v3.7.2 · 更新公告</h1>
       <p>每一次更新，都记录在这里。查看本次变化、升级说明与历史版本。</p>
       <div class="links"><a class="pill primary" href="https://www.qiwu.asia/app/android/naruto-rpg.apk">安卓安装包</a><a class="pill" href="https://github.com/qiwu622/naruto-rpg/releases">GitHub 下载</a><a class="pill" href="#history">历史公告 ↓</a></div>
     </section>
     <div class="layout">
-      <nav aria-label="本次更新目录"><p>本次更新</p><a href="#section-1">本次修复</a>
+      <nav aria-label="本次更新目录"><p>本次更新</p><a href="#section-1">本次更新</a>
 <a href="#section-2">升级说明</a></nav>
-      <article aria-label="v3.7.1 更新内容"><p><strong>2026-10-15 · 网页热修复</strong></p>
-<h2 id="section-1">本次修复</h2>
+      <article aria-label="v3.7.2 更新内容"><p><strong>2026-10-20 · 记忆原文保留与兼容性修复</strong></p>
+<h2 id="section-1">本次更新</h2>
 <ul>
-<li><strong>刷新后不再反复提示旧版本</strong>：修正正式站登录后的页面入口与发布版本不同步的问题。</li>
-<li><strong>更新提示更简洁</strong>：手机端改为小横条，支持关闭；修复部分网址点击刷新不重新加载的问题。</li>
+<li><strong>记忆完整留存</strong>：取消写入截断和数量淘汰；整理后保留原文，记忆卷宗可分页查看原始记录。</li>
+<li><strong>减少无效失败</strong>：思考/展示容器、日报字数与条数改为软提示，不再因排版差异卡住合法变量更新。</li>
+<li><strong>内容不再误删</strong>：修复正文标签、引用标记和词语误删；世界书保留导入原文，长选项与行动完整发送。</li>
+<li><strong>生图与物品修复</strong>：修复 NovelAI 压缩响应和图片识别，取消物品数量 99 上限。</li>
+<li><strong>安卓同步更新</strong>：继续复用网页代码，可在客户端内查看公告、下载并覆盖安装。</li>
 </ul>
 <h2 id="section-2">升级说明</h2>
-<p class="callout">在原浏览器刷新即可，<strong>无需清除网站数据、卸载或重新开档</strong>，本地存档继续保留。</p>
-<p class="callout">本次仅更新网页，安卓安装包仍为 v3.7.0；此前变量、时间、记忆和大档优化已包含在 v3.7.0 中。</p>
-<p><a href="https://www.qiwu.asia/announcements.html" target="_blank" rel="noopener noreferrer">网站公告</a> · <a href="https://github.com/qiwu622/naruto-rpg/releases/tag/v3.7.1" target="_blank" rel="noopener noreferrer">GitHub</a></p></article>
+<p class="callout">网页在原浏览器刷新；安卓覆盖安装，<strong>不要卸载、清除网站数据或重新开档</strong>。</p>
+<p class="callout">原存档继续保留，新写入记忆完整保存；旧版本已删失且无备份的内容无法自动恢复。向量记忆仍默认关闭。</p>
+<p><a href="https://www.qiwu.asia/announcements.html" target="_blank" rel="noopener noreferrer">网站公告</a> · <a href="https://www.qiwu.asia/app/android/naruto-rpg.apk" target="_blank" rel="noopener noreferrer">安卓下载</a> · <a href="https://github.com/qiwu622/naruto-rpg/releases/tag/v3.7.2" target="_blank" rel="noopener noreferrer">GitHub</a></p></article>
     </div>
     <section class="history" id="history"><h2>历史版本</h2><p class="muted">本次完整公告与之前版本的更新记录。</p>
+    <details><summary><span>v3.7.1</span><time>2026-10-15</time></summary>
+      <div class="history-content"><ul>
+<li>修复正式站登录后仍返回旧构建入口，导致“有新版本”刷新后反复出现：发布、校验与失败回退同时覆盖登录后的 HTML 入口及静态资源。</li>
+<li>更新提示改为适配手机的简短横条，可暂时关闭，同一版本在当前会话内不重复提示；修复带页面锚点时重复刷新可能停留在旧页面的问题，保留原网址、开局参数与本地存档。</li>
+<li>网页热修复：正式站与测试站在原浏览器刷新后生效，无需清除网站数据或重新开档。安卓安装包继续使用 v3.7.0。</li>
+</ul></div>
+    </details>
     <details><summary><span>v3.7.0</span><time>2026-10-15</time></summary>
       <div class="history-content"><ul>
 <li>变量更新统一标签提取与执行顺序，修复大小写、混合标签、JSON 字符串花括号及自检示例吞掉真实指令造成的漏写；自检文字保持软提示，明确截断不作为完整结果提交。</li>

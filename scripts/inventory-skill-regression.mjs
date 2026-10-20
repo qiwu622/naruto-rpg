@@ -5,7 +5,7 @@ import { stateManager } from '../js/core/state-manager.js';
 import { instructionParser } from '../js/core/instruction-parser.js';
 import { MessagePipeline } from '../js/core/pipeline.js';
 import { buildVariableUpdaterMessages } from '../js/core/variable-updater.js';
-import { generateMainVarInstructions } from '../js/data/var-schema.js';
+import { generateMainVarInstructions, resolveAlias } from '../js/data/var-schema.js';
 import { DEFAULT_VARIABLE_UPDATER_PRESET } from '../js/data/variable-updater-preset.js';
 import { resolveCanonTechnique } from '../js/data/canon-database.js';
 import { equipmentSystem } from '../js/systems/equipment-system.js';
@@ -38,6 +38,28 @@ test('status aliases resolve when written through StateManager', () => {
   stateManager.update([{ key: '状态·生命力', op: '=', value: 12 }]);
   assert.equal(stateManager.get('属性·当前生命力'), 12);
   assert.equal(Object.prototype.hasOwnProperty.call(stateManager.state, '状态·生命力'), false);
+});
+
+test('inventory quantities above 99 survive updates, consumptions and save restoration', () => {
+  for (const category of ['道具', '消耗品', '武器', '防具', '忍具', '素材', '食物', '卷轴', '其他']) {
+    const key = `物品·${category}·批量物品·数量`;
+    stateManager.update([{ key, op: '=', value: 12000 }, { key, op: '+', value: 300 }]);
+    assert.equal(stateManager.get(resolveAlias(key)), 12300, category);
+  }
+  stateManager.restore(stateManager.snapshot());
+  assert.equal(stateManager.get('物品·道具·批量物品·数量'), 12300);
+  equipmentSystem.addItem('consumables', '兵粮丸', 1000001);
+  assert.equal(equipmentSystem.getConsumables()['兵粮丸'].quantity, 1000001);
+  assert.equal(equipmentSystem.useItem('兵粮丸'), true);
+  assert.equal(equipmentSystem.getConsumables()['兵粮丸'].quantity, 1000000);
+  assert.equal(equipmentSystem.removeItem('consumables', '兵粮丸', Number.POSITIVE_INFINITY), true);
+  assert.equal(equipmentSystem.getConsumables()['兵粮丸'], undefined);
+});
+
+test('opening inventory quantities are not capped at 9999', () => {
+  const draft = createOpeningDraft('custom', { equipment: [{ name: '苦无', category: 'tools', quantity: 1000000 }] });
+  assert.equal(draft.equipment[0].quantity, 1000000);
+  assert.equal(buildOpeningState(draft)['物品·道具·苦无·数量'], 1000000);
 });
 
 test('reducing item quantity to zero removes leftover item fields', () => {

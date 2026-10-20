@@ -96,7 +96,7 @@ function setDailyField(value, field, text) {
   parent[leaf] = text;
 }
 
-await test('daily prompts expose every enforced field limit even without an example', () => {
+await test('daily prompts expose every advisory field range even without an example', () => {
   for (const producer of ['main', 'secondary']) {
     const prompt = buildShinobiDailyPrompt({ producer, includeExample: false });
     for (const [field, min, max] of dailyTextLimits) {
@@ -111,22 +111,22 @@ await test('daily prompts expose every enforced field limit even without an exam
     assert.match(prompt, /flavor\[\][^\n]*mark、title、text/);
     assert.match(prompt, /missions\[\][^\n]*rank、task、pay、status/);
     assert.match(prompt, /quote[^\n]*text、who/);
-    assert.match(prompt, /world 恰好 4 条/);
-    assert.match(prompt, /flavor 恰好 3 条/);
-    assert.match(prompt, /missions 恰好 4 条/);
+    assert.match(prompt, /world 建议 4 条/);
+    assert.match(prompt, /flavor 建议 3 条/);
+    assert.match(prompt, /missions 建议 4 条/);
     assert.match(prompt, /控制字符/);
   }
 });
 
-await test('all daily text bounds remain enforced and ordinary boundary values are accepted', () => {
+await test('daily text lengths are advisory and boundary values remain accepted', () => {
   const specialFormats = new Set(['schema', 'issue', 'flavor[].mark', 'missions[].rank']);
   for (const [field, min, max] of dailyTextLimits) {
     for (const size of [min - 1, max + 1]) {
       const value = structuredClone(SHINOBI_DAILY_EXAMPLE);
       setDailyField(value, field, '字'.repeat(size));
       const result = validateShinobiDaily(value);
-      assert.equal(result.valid, false, `${field} must reject ${size} characters`);
-      assert.ok(result.errors.some(error => error.includes(field.replace('[]', '[0]'))), result.errors.join('; '));
+      assert.equal(result.valid, true, `${field} must keep ${size} characters`);
+      assert.ok(result.warnings.some(error => error.includes(field.replace('[]', '[0]'))), result.warnings.join('; '));
     }
     if (specialFormats.has(field)) continue;
     for (const size of [min, max]) {
@@ -138,12 +138,13 @@ await test('all daily text bounds remain enforced and ordinary boundary values a
   }
 });
 
-await test('the reported four-character headline is still rejected with a disclosed correction', () => {
+await test('the reported four-character headline is accepted with an advisory', () => {
   const value = structuredClone(SHINOBI_DAILY_EXAMPLE);
   value.headline.title = '木叶晨报';
   const result = validateShinobiDaily(value);
-  assert.equal(result.valid, false);
-  assert.deepEqual(result.errors, ['日报.headline.title 长度必须为 8-64 个字符']);
+  assert.equal(result.valid, true);
+  assert.ok(result.warnings.some(warning => warning.includes('headline.title')));
+  assert.equal(result.daily.headline.title, '木叶晨报');
   assert.ok(buildShinobiDailyPrompt({ includeExample: false }).includes('headline.title：8-64 个字符'));
 });
 
@@ -179,12 +180,12 @@ await test('few-shot outputs are complete and pass the production contracts', ()
   }
 });
 
-await test('the tagged contract parses exactly once and normalizes whitespace', () => {
+await test('the tagged contract parses exactly once and preserves original whitespace', () => {
   const value = structuredClone(SHINOBI_DAILY_EXAMPLE);
   value.headline.title = '  木叶任务发布所完成春季委托名录复核  ';
   const result = parseShinobiDailyContract(`正文\n${contract(value)}`, { required: true });
   assert.equal(result.valid, true, result.errors.join('; '));
-  assert.equal(result.daily.headline.title, '木叶任务发布所完成春季委托名录复核');
+  assert.equal(result.daily.headline.title, value.headline.title);
   assert.match(result.raw, /^<shinobi_daily>/);
 
   const duplicate = parseShinobiDailyContract(`${contract(value)}\n${contract(value)}`, { required: true });
@@ -212,22 +213,22 @@ await test('daily contracts inside private reasoning blocks never become public 
   assert.equal(publicContract.valid, true, publicContract.errors.join('; '));
 });
 
-await test('invalid counts, mission order, extra fields and markup are rejected', () => {
+await test('counts, order, extension fields and literal markup are advisory', () => {
   const wrongCount = structuredClone(SHINOBI_DAILY_EXAMPLE);
   wrongCount.world.pop();
-  assert.match(validateShinobiDaily(wrongCount).errors.join('\n'), /恰好包含 4 条/);
+  assert.match(validateShinobiDaily(wrongCount).warnings.join('\n'), /建议 4 条/);
 
   const wrongRank = structuredClone(SHINOBI_DAILY_EXAMPLE);
   [wrongRank.missions[0], wrongRank.missions[1]] = [wrongRank.missions[1], wrongRank.missions[0]];
-  assert.match(validateShinobiDaily(wrongRank).errors.join('\n'), /rank 必须是 D/);
+  assert.match(validateShinobiDaily(wrongRank).warnings.join('\n'), /rank 与建议顺序不同/);
 
   const extra = structuredClone(SHINOBI_DAILY_EXAMPLE);
   extra.html = '<style>body{display:none}</style>';
-  assert.match(validateShinobiDaily(extra).errors.join('\n'), /未定义字段 html/);
+  assert.match(validateShinobiDaily(extra).warnings.join('\n'), /未定义字段 html/);
 
   const markup = structuredClone(SHINOBI_DAILY_EXAMPLE);
   markup.headline.title = '<img src=x onerror=alert(1)>木叶任务发布所公告';
-  assert.match(validateShinobiDaily(markup).errors.join('\n'), /不得包含 HTML/);
+  assert.match(validateShinobiDaily(markup).warnings.join('\n'), /按纯文本展示/);
 });
 
 await test('daily JSON is hidden from visible and persisted narrative projections', () => {
@@ -432,7 +433,7 @@ await test('main and secondary prompts enforce one fixed data-only renderer cont
   const withoutExample = buildShinobiDailyPrompt({ producer: 'secondary', includeExample: false });
   for (const prompt of [main, secondary]) {
     assert.match(prompt, /固定前端数据源/);
-    assert.match(prompt, /world 恰好 4 条/);
+    assert.match(prompt, /world 建议 4 条/);
     assert.match(prompt, /D、C、B、A/);
     assert.match(prompt, /不得泄露私密意图/);
     assert.match(prompt, /仅示范结构与写法/);

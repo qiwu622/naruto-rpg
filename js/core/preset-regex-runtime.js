@@ -8,8 +8,6 @@ import { isNarrativeChoiceTag } from './narrative-memory.js';
 const DEFAULT_MAX_INPUT_LENGTH = 1_500_000;
 const DEFAULT_MAX_OUTPUT_LENGTH = 2_500_000;
 const DEFAULT_MAX_SCRIPTS = 256;
-const DEFAULT_MAX_ACTIONS = 64;
-const DEFAULT_MAX_ACTION_LENGTH = 1000;
 // Deliberately limited to real HTML elements. Preset protocol wrappers such as
 // <content>, <story_scene> and <options> must remain XML-like regex triggers.
 const HTML_REPLACEMENT_PATTERN = /```\s*html\b|<!doctype\s+html|<html\b|<style\b|<script\b|<(?:a|abbr|address|article|aside|audio|b|blockquote|br|button|canvas|code|col|colgroup|data|datalist|dd|del|details|dialog|div|dl|dt|em|fieldset|figcaption|figure|footer|form|h[1-6]|header|hr|i|iframe|img|input|ins|kbd|label|legend|li|main|mark|meter|nav|ol|optgroup|option|output|p|picture|pre|progress|q|s|samp|section|select|slot|small|source|span|strong|sub|summary|sup|svg|table|tbody|td|template|textarea|tfoot|th|thead|time|tr|track|u|ul|video|wbr)\b/i;
@@ -243,11 +241,6 @@ function stripProjectMachineBlocks(value, {
   return output;
 }
 
-function capText(value, maxLength) {
-  const text = String(value || '');
-  return text.length > maxLength ? text.slice(0, maxLength) : text;
-}
-
 export function applyPresetRegexScripts(input, scripts, {
   channel = 'display',
   placement = 2,
@@ -264,15 +257,16 @@ export function applyPresetRegexScripts(input, scripts, {
   const warnings = [];
   const appliedScripts = [];
   const scriptTrace = [];
-  let text = capText(input, maxInputLength);
+  let text = String(input || '');
+  if (text.length > maxInputLength) warnings.push(`正则输入超过建议长度 ${maxInputLength}，仍保留完整内容`);
   if (stripProjectMachines) text = stripProjectMachineBlocks(text, {
     stripRawHtmlInternals,
     preserveComments
   });
 
-  const candidates = (Array.isArray(scripts) ? scripts : []).slice(0, maxScripts);
+  const candidates = Array.isArray(scripts) ? scripts : [];
   if (Array.isArray(scripts) && scripts.length > maxScripts) {
-    warnings.push(`正则脚本超过 ${maxScripts} 条，已忽略其余脚本`);
+    warnings.push(`正则脚本超过 ${maxScripts} 条，仍会处理全部脚本，可能耗时较长`);
   }
 
   let hasHtml = false;
@@ -349,8 +343,7 @@ export function applyPresetRegexScripts(input, scripts, {
       text = replaceWithTavernGroups(text, regex, script, macroContext);
       if (stripProjectMachines) text = stripProjectMachineBlocks(text);
       if (text.length > maxOutputLength) {
-        text = text.slice(0, maxOutputLength);
-        warnings.push(`${script.name || script.scriptName || `正则 ${index + 1}`}：输出超过安全上限，已截断`);
+        warnings.push(`${script.name || script.scriptName || `正则 ${index + 1}`}：输出超过建议长度 ${maxOutputLength}，仍保留完整内容`);
       }
       appliedScripts.push(String(script.id || script.name || script.scriptName || index));
       if (HTML_REPLACEMENT_PATTERN.test(replacement)) hasHtml = true;
@@ -519,7 +512,7 @@ function normalizeActionText(value) {
   const placeholderBrackets = text.match(/^\[([^\]\n]+)\]$/);
   if (placeholderBrackets?.[1]) text = placeholderBrackets[1].trim();
   if (!text || /^(?:无|none|null)$/i.test(text)) return '';
-  return text.slice(0, DEFAULT_MAX_ACTION_LENGTH);
+  return text;
 }
 
 function extractPresentationActions(safeResponse) {
@@ -530,7 +523,6 @@ function extractPresentationActions(safeResponse) {
       const action = normalizeActionText(candidate);
       if (!action || actions.includes(action)) continue;
       actions.push(action);
-      if (actions.length >= DEFAULT_MAX_ACTIONS) return Object.freeze(actions);
     }
   }
   return Object.freeze(actions);
@@ -676,7 +668,7 @@ function segmentFromBlock(block, {
       : Number(block?.start || 0),
     source: safeSource,
     fallbackText,
-    prefix: sanitizeNarrativeDisplayText(prefix).slice(0, 200),
+    prefix: sanitizeNarrativeDisplayText(prefix),
     preserveComments: preserveComments === true
   };
 }
@@ -838,7 +830,7 @@ function miemiePresentationSegments(rawResponse) {
   for (const [tag, label] of Object.entries(labels)) {
     for (const block of collectExactTagBlocks(text, tag)) {
       const time = tag === 'wlog'
-        ? String(block.attributes.match(/\btime\s*=\s*(["'])(.*?)\1/iu)?.[2] || '').trim().slice(0, 200)
+        ? String(block.attributes.match(/\btime\s*=\s*(["'])(.*?)\1/iu)?.[2] || '').trim()
         : '';
       segments.push(segmentFromBlock(block, {
         role: tag === 'htmlcontent' ? 'sandbox' : 'status',
@@ -939,7 +931,7 @@ function appendCompatibilityStyle(value, cssText) {
 function attributeText(attributes, name) {
   const escaped = escapeRegExp(name);
   const match = String(attributes || '').match(new RegExp(`\\b${escaped}\\s*=\\s*(["'])([\\s\\S]*?)\\1`, 'i'));
-  return sanitizeNarrativeDisplayText(match?.[2] || '').slice(0, 1000);
+  return sanitizeNarrativeDisplayText(match?.[2] || '');
 }
 
 function normalizedActionCandidates(value) {
@@ -971,7 +963,7 @@ function foxStaticActionSource(source, segmentSource) {
     const raw = String(line || '').trim();
     if (!raw) continue;
     const groupMatch = raw.match(/^\s*[【[]([^】\]]{1,40})[】\]]\s*/u);
-    const group = sanitizeNarrativeDisplayText(groupMatch?.[1] || '').slice(0, 80);
+    const group = sanitizeNarrativeDisplayText(groupMatch?.[1] || '');
     const action = normalizeActionText(raw);
     if (!action) continue;
     const display = sanitizeNarrativeDisplayText(raw.replace(/^\s*[【[][^】\]]{1,40}[】\]]\s*/u, '')) || action;
@@ -1018,8 +1010,7 @@ function izumiStaticDanmuSource(source, fallbackText) {
   const rows = String(fallbackText || '')
     .split(/\r?\n|[|｜]/)
     .map(row => sanitizeNarrativeDisplayText(row))
-    .filter(Boolean)
-    .slice(0, 24);
+    .filter(Boolean);
   if (!rows.length) return null;
   const items = rows
     .map(row => `<span class="danmaku-content-multicolor-rgb">${escapePresentationHtml(row)}</span>`)
@@ -1317,21 +1308,12 @@ function buildDedicatedPresetPresentation(rawResponse, cleanResponse, scripts, o
 }
 
 export function buildPresetPresentation(rawResponse, cleanResponse, scripts, options = {}) {
-  const configuredInputLimit = Number(options.maxInputLength);
-  const inputLimit = Number.isFinite(configuredInputLimit) && configuredInputLimit >= 0
-    ? configuredInputLimit
-    : DEFAULT_MAX_INPUT_LENGTH;
-  const safeResponse = stripProjectMachineBlocks(capText(rawResponse, inputLimit), {
+  const safeResponse = stripProjectMachineBlocks(String(rawResponse || ''), {
     stripRawHtmlInternals: true
   });
-  const fallbackText = safeFallbackText(capText(cleanResponse, inputLimit), safeResponse);
+  const fallbackText = safeFallbackText(String(cleanResponse || ''), safeResponse);
   if (options.adapterId) {
-    const dedicated = buildDedicatedPresetPresentation(
-      capText(rawResponse, inputLimit),
-      capText(cleanResponse, inputLimit),
-      scripts,
-      options
-    );
+    const dedicated = buildDedicatedPresetPresentation(rawResponse, cleanResponse, scripts, options);
     if (dedicated) return dedicated;
   }
   const actions = extractPresentationActions(safeResponse);
@@ -1350,7 +1332,9 @@ export function buildPresetPresentation(rawResponse, cleanResponse, scripts, opt
     stripRawHtmlInternals: false
   });
   const appliedScripts = Object.freeze([...sourceResult.appliedScripts, ...displayResult.appliedScripts]);
-  const warnings = Object.freeze([...sourceResult.warnings, ...displayResult.warnings]);
+  const warnings = Object.freeze([...sourceResult.warnings, ...displayResult.warnings,
+    ...(actions.length > 64 ? ['选项超过建议的 64 条，仍保留全部选项'] : []),
+    ...(actions.some(action => action.length > 1000) ? ['选项文字较长，已保留完整行动内容'] : [])]);
   const scriptTrace = Object.freeze([...sourceResult.scriptTrace, ...displayResult.scriptTrace]);
   const safeDisplayText = stripProjectMachineBlocks(displayResult.text);
   if (appliedScripts.length === 0) {

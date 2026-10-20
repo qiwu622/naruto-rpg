@@ -1026,6 +1026,43 @@ await test('image errors retain actionable detail and distinguish proxy network 
   await assert.rejects(() => offline.json(provider, '/test'), e => e.code === 'PROXY_NETWORK' && /网站.*代理/.test(e.message));
 });
 
+await test('NovelAI accepts the official JSON image response even when the media type is mislabeled', async () => {
+  const source = pngBlob(512, 768);
+  const image = await blobBase64(source);
+  for (const type of ['application/json', 'application/octet-stream', 'application/zip']) {
+    let requests = 0;
+    const adapter = new NovelAIImageAdapter(new ImageTransport({ async fetchImpl() {
+      requests++;
+      return new Response(JSON.stringify({ images: [{ image, index: 0, seed: 7 }] }), {
+        status: 201, headers: { 'Content-Type': type }
+      });
+    } }));
+    const result = await adapter.generate({
+      provider: { type: 'novelai', apiUrl: 'https://image.novelai.net', apiKey: 'fixture' },
+      prompt: 'landscape'
+    });
+    assert.equal(requests, 1, 'format decoding must not repeat a paid generation');
+    assert.equal(result.images[0].width, 512);
+    assert.equal(result.images[0].height, 768);
+    assert.deepEqual(Buffer.from(await result.images[0].blob.arrayBuffer()), Buffer.from(await source.arrayBuffer()));
+  }
+});
+
+await test('NovelAI accepts a direct image and reports JSON/HTML errors instead of ZIP directory errors', async () => {
+  const provider = { type: 'novelai', apiUrl: 'https://image.novelai.net', apiKey: 'fixture' };
+  const direct = new NovelAIImageAdapter(new RecordingTransport(async () => pngBlob(640, 832)));
+  assert.equal((await direct.generate({ provider, prompt: 'landscape' })).images[0].width, 640);
+  for (const [type, content, expected] of [
+    ['application/json', JSON.stringify({ error: 'Not enough Anlas' }), /Not enough Anlas/],
+    ['text/html', '<!doctype html><html><title>Sign in</title></html>', /网页|HTML/],
+    ['application/json', JSON.stringify({ images: [] }), /没有.*图片|无.*图片/]
+  ]) {
+    const transport = new RecordingTransport(async () => new Blob([content], { type }));
+    await assert.rejects(() => new NovelAIImageAdapter(transport).generate({ provider, prompt: 'landscape' }), expected);
+    assert.equal(transport.calls.length, 1);
+  }
+});
+
 await test('NovelAI adapter sends V4-compatible parameters and extracts a deflated ZIP image', async () => {
   const archive = zipBlob([{
     name: 'image_0.png', method: 8,

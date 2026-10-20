@@ -382,14 +382,10 @@ test('project machine tail is inserted inside dream_after_format before the XML 
   assert.ok(inserted.indexOf(tail) < inserted.indexOf('</dream_after_format>'));
   assert.ok(inserted.indexOf('</dream_after_format>') < inserted.indexOf('</dream_plot>'));
   assert.equal(insertProjectMachineTail(response, ''), response);
-  assert.throws(
-    () => insertProjectMachineTail(
-      '<simple_thinking>思考</simple_thinking><dream_plot><dream_body>正文</dream_body></dream_plot>',
-      tail,
-      profile
-    ),
-    /dream_after_format/
-  );
+  const incomplete = insertProjectMachineTail(
+    '<simple_thinking>思考</simple_thinking><dream_plot><dream_body>正文</dream_body></dream_plot>', tail, profile);
+  assert.ok(incomplete.includes(tail), 'missing presentation tail never blocks machine updates');
+
 });
 
 test('declared single-root output rejects missing, duplicate, out-of-order, or root-external machine blocks', () => {

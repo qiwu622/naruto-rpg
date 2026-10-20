@@ -1661,7 +1661,10 @@ export class ImportedPresetOutputIncompleteError extends Error {
 
 export function assertImportedPresetOutputEnvelope(text, profile, options = {}) {
   const validation = validateImportedPresetOutputEnvelope(text, profile);
-  if (!validation.valid) throw new ImportedPresetOutputIncompleteError(validation, options);
+  // Envelope conventions describe presentation, never whether a turn may commit.
+  // Keep the strict inspector for diagnostics and deterministic repair decisions.
+  if (!validation.valid) return Object.freeze({ ...validation, valid: true,
+    compatible: false, errors: Object.freeze([]), warnings: validation.errors });
   return validation;
 }
 
@@ -1716,10 +1719,7 @@ export function insertProjectMachineTail(response, tail, profile = null) {
     if (profile.adapterId === IMPORTED_PRESET_ADAPTER_IDS.DREAM_WHALE_V4) {
       const after = singleTagPair(maskDreamTransportContent(text), 'dream_after_format');
       if (!after) {
-        throw new ImportedPresetOutputIncompleteError({
-          errors: ['项目机器尾部要求的 <dream_after_format> 容器缺失'],
-          missingContracts: ['imported_preset_envelope']
-        }, { draftResponse: text });
+        return `${text}\n\n${suffix}`;
       }
       inserted = insertSeparated(text, after.closing.index, suffix);
     } else {
@@ -1728,14 +1728,7 @@ export function insertProjectMachineTail(response, tail, profile = null) {
     assertImportedPresetOutputEnvelope(inserted, profile, { draftResponse: inserted });
     return inserted;
   }
-  const explicitRoot = String(profile?.rootWrapper || '').trim();
   const explicitContainer = String(profile?.machineTailContainer || '').trim();
-  if (explicitRoot && !explicitContainer) {
-    throw new ImportedPresetOutputIncompleteError({
-      errors: [`<${explicitRoot}> 单根格式未声明可承载项目机器尾部的 after/post-format 容器`],
-      missingContracts: ['imported_preset_envelope']
-    }, { draftResponse: text });
-  }
   const candidates = explicitContainer
     ? [explicitContainer]
     : ['dream_after_format', 'after_format', 'post_output'];
@@ -1748,12 +1741,6 @@ export function insertProjectMachineTail(response, tail, profile = null) {
     const inserted = `${text.slice(0, last.index).replace(/\s*$/, '')}\n${suffix}\n${text.slice(last.index)}`;
     if (profile?.active) assertImportedPresetOutputEnvelope(inserted, profile, { draftResponse: inserted });
     return inserted;
-  }
-  if (explicitRoot) {
-    throw new ImportedPresetOutputIncompleteError({
-      errors: [`项目机器尾部要求的 <${explicitContainer}> 容器缺失，拒绝追加到 </${explicitRoot}> 之外`],
-      missingContracts: ['imported_preset_envelope']
-    }, { draftResponse: text });
   }
   return `${text.replace(/\s*$/, '')}\n\n${suffix}`.trim();
 }

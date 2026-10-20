@@ -6,6 +6,7 @@ import {
   normalizeRelationshipInstruction
 } from '../data/var-schema.js';
 import {
+  legacyReflectionBlock,
   extractNarrativeInstructions,
   sanitizeNarrativeDisplayText,
   sanitizeNarrativePartialText
@@ -15,19 +16,6 @@ import {
   stripImageContracts as stripVisualImageContracts
 } from './image-studio/contracts.js';
 import { normalizeCombatState } from '../data/instruction-contract.js';
-
-function sanitizeInstructionData(value, depth = 0) {
-  if (depth > 24) return null;
-  if (typeof value === 'string') return sanitizeNarrativeDisplayText(value);
-  if (Array.isArray(value)) return value.map(item => sanitizeInstructionData(item, depth + 1));
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-      key,
-      sanitizeInstructionData(item, depth + 1)
-    ]));
-  }
-  return value;
-}
 
 export class InstructionParser {
   parse(text) {
@@ -49,14 +37,14 @@ export class InstructionParser {
     const relationships = this.extractRelationshipChanges(text, blocks);
     const events = this.extractEventTriggers(text, blocks);
     const memories = this.extractMemoryUpdates(text, blocks);
-    return sanitizeInstructionData({
+    return {
       variables: this.extractVarUpdates(text, blocks),
       combat: combats[0] || null, combats,
       mission: missions[0] || null, missions,
       relationship: relationships[0] || null, relationships,
       event: events[0] || null, events,
       memory: memories[0] || null, memories
-    });
+    };
   }
 
   extractVarUpdates(text, blocks = extractNarrativeInstructions(text)) {
@@ -199,7 +187,6 @@ export class InstructionParser {
   cleanupResponse(text) {
     if (!text) return '';
     return sanitizeNarrativeDisplayText(this.stripImageContracts(text))
-      .replace(/极其|共犯/g, '')
       .trim();
   }
 
@@ -238,12 +225,7 @@ export class InstructionParser {
     ]);
     if (legacy.matched) return legacy.content;
 
-    let think = '';
-    if (text.includes('[回映结束]')) {
-      const parts = text.split('[回映结束]');
-      if (parts.length > 1) think = parts[0].trim();
-    }
-    return think;
+    return legacyReflectionBlock(text)?.content || '';
   }
 
   extractVarThinkContent(text) {
@@ -255,7 +237,6 @@ export class InstructionParser {
   cleanupPartialResponse(text) {
     if (!text) return '';
     return sanitizeNarrativePartialText(this.stripImageContracts(text, { streaming: true }))
-      .replace(/极其|共犯/g, '')
       .trim();
   }
 

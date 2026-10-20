@@ -250,7 +250,7 @@ class ShadowStateManager {
     for (const key of Object.keys(this.state)) {
       if (!key.startsWith('物品·') || !key.endsWith('·数量')) continue;
       if (typeof this.state[key] !== 'number' || Number.isNaN(this.state[key])) continue;
-      this.state[key] = Math.max(0, Math.min(99, this.state[key]));
+      this.state[key] = Math.max(0, this.state[key]);
       if (this.state[key] <= 0) delete this.state[key];
     }
 

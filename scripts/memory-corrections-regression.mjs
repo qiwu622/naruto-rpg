@@ -264,21 +264,23 @@ test('unknown actions, stale facts, invalid text and unknown undo fail without m
     { action: 'delete', factId }, { action: 'correct', factId: 'missing', text: RIGHT },
     { action: 'correct', factId, text: '' }, { action: 'correct', factId, text: WRONG },
     { action: 'correct', factId, text: '\u0000bad' },
-    { action: 'correct', factId, text: '长'.repeat(MAX_MEMORY_CORRECTION_TEXT + 1) },
     { action: 'undo', correctionId: 'missing' }
   ]) assert.throws(() => prepareMemoryCorrection(state, options));
   assert.deepEqual(state, before);
 });
 
-test('capacity is bounded without silently dropping active corrections', () => {
+test('long corrections and counts over the recommendation keep complete history', () => {
   let state = { _memory: { facts: '原始事实' } };
   const factId = listMemoryFacts(state)[0].id;
   for (let index = 0; index < MAX_MEMORY_CORRECTIONS; index++) {
     state = prepareMemoryCorrection(state, { action: 'correct', factId, text: `版本[${index}]事实` });
   }
   assert.equal(state._memory.corrections.length, MAX_MEMORY_CORRECTIONS);
-  assert.throws(() => prepareMemoryCorrection(state, { action: 'correct', factId, text: '超限事实' }), /最多保留/);
-  assert.equal(undo(state)._memory.corrections.length, MAX_MEMORY_CORRECTIONS - 1);
+  const long = '长'.repeat(MAX_MEMORY_CORRECTION_TEXT + 1);
+  state = prepareMemoryCorrection(state, { action: 'correct', factId, text: long });
+  assert.equal(state._memory.corrections.length, MAX_MEMORY_CORRECTIONS + 1);
+  assert.equal(projectCorrectedMemory(state._memory).facts, long);
+  assert.equal(undo(state)._memory.corrections.length, MAX_MEMORY_CORRECTIONS);
 });
 
 test('prompt distinguishes correction data and serializes quoted user text', () => {

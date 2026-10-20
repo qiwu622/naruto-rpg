@@ -75,7 +75,7 @@ class MemoryManager {
     }
     for (const key of Object.keys(this.state)) {
       if (!key.startsWith('物品·') || !key.endsWith('·数量')) continue;
-      this.state[key] = Math.max(0, Math.min(99, Number(this.state[key]) || 0));
+      this.state[key] = Math.max(0, Number(this.state[key]) || 0);
       if (this.state[key] <= 0) delete this.state[key];
     }
   }
@@ -189,6 +189,23 @@ await test('gameplay adapters use dedicated approval tool names', () => {
     stateManager: manager,
     missionSystem: new MissionSystem({ stateManager: manager, eventBus })
   }).toolName, LINGXI_MISSION_ACTION_TOOL);
+});
+
+await test('equipment preview and approved use preserve inventory counts above 99', async () => {
+  const state = baseState();
+  state['物品·消耗品·兵粮丸·数量'] = 10000;
+  const manager = new MemoryManager(state);
+  const eventBus = new RecordingEventBus();
+  const adapter = new EquipmentActionAdapter({ stateManager: manager,
+    equipmentSystem: new EquipmentSystem({ stateManager: manager, eventBus }) });
+  const broker = brokerFor(adapter);
+  const proposal = await broker.stageAction(LINGXI_EQUIPMENT_ACTION_TOOL, { action: 'use', name: '兵粮丸', reason: '恢复查克拉' });
+  assert.equal(manager.get('物品·消耗品·兵粮丸·数量'), 10000, 'preview leaves live inventory intact');
+  assert.deepEqual(diffAt(proposal, '/物品·消耗品·兵粮丸·数量'), {
+    path: '/物品·消耗品·兵粮丸·数量', operation: 'replace', before: 10000, after: 9999
+  });
+  await broker.approveFromUserEvent(trustedEvent, { proposalId: proposal.id, confirmation: 'yes' });
+  assert.equal(manager.get('物品·消耗品·兵粮丸·数量'), 9999);
 });
 
 await test('equipment preview signs old bonus removal plus new bonus with zero live writes or events', async () => {

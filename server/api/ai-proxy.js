@@ -42,7 +42,9 @@ export const aiProxyAdmission = createAdmissionMiddleware({
 /** 仅转发白名单内的请求头，避免把 Cookie / 内部头泄露给上游 */
 const FORWARDABLE_REQUEST_HEADERS = ['content-type', 'accept', 'anthropic-version', 'anthropic-beta', 'user-agent'];
 /** 仅回传白名单内的响应头 */
-const FORWARDABLE_RESPONSE_HEADERS = ['content-type', 'cache-control', 'retry-after'];
+// Node's http/https client forwards compressed bytes unchanged. Keep their
+// encoding so the browser can decode gzip/br before consuming JSON or ZIP.
+const FORWARDABLE_RESPONSE_HEADERS = ['content-type', 'content-encoding', 'cache-control', 'retry-after'];
 
 function mediaTypeEntries(value) {
   const source = Array.isArray(value) ? value.join(',') : String(value || '');

@@ -1703,7 +1703,7 @@ class NarutoRPGApp {
   }
 
   async _submitPlayerAction(text) {
-    const playerAction = String(text || '').replace(/\u0000/g, '').trim().slice(0, 4000);
+    const playerAction = String(text || '').replace(/\u0000/g, '').trim();
     if (!playerAction) return { accepted: false, code: 'PLAYER_ACTION_INVALID' };
     if (stateManager.getSub('_combat')?.is_active) {
       return { accepted: false, code: 'COMBAT_ACTION_REQUIRED' };
