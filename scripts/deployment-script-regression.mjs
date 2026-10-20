@@ -77,7 +77,7 @@ if (process.platform !== 'win32') {
   assert.notEqual(denied.status,0);
   assert.match(denied.stdout + denied.stderr,/--confirm-production/);
   const test = run('python3',['scripts/deployment-installer-regression.py']);
-  assert.match(test,/12 groups passed/);
+  assert.match(test,/14 groups passed/);
 } else {
   const powershell = path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe');
   for (const mode of ['staging','production']) assert.ok(run(powershell,['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','deploy.ps1','-Mode',mode,'-DryRun','-SkipBuild']).includes('DRY_RUN_OK='+mode));
