@@ -172,7 +172,7 @@ await test('every local timeline import entry accepts gzip and uses the shared d
     readFile(new URL('../js/app.js', import.meta.url), 'utf8')
   ]);
   for (const source of sources) assert.match(source, /TIMELINE_FILE_ACCEPT/);
-  assert.match(sources[2], /decodeTimelineSaveFile\(file\)/);
+  assert.match(sources[2], /(?:decodeTimelineSaveFile|personalSaveLibrary\.importFile)\(file\)/);
   assert.doesNotMatch(sources[2], /const text = await file\.text\(\)/);
 });
 

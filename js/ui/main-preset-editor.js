@@ -39,58 +39,131 @@ class MainPresetEditor extends HTMLElement {
     const entries = this._preset.entries || [];
     this.shadowRoot.innerHTML = `
       <style>
-        :host { display: flex; position: fixed; inset: 0; background: rgba(7,10,14,0.95); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: calc(var(--z-fullscreen) + 1); font-family: 'Noto Sans SC',system-ui,sans-serif; color: #e8e4d9; justify-content: center; align-items: center; padding: 20px; }
+        :host {
+          display: flex; position: fixed; inset: 0; z-index: calc(var(--z-fullscreen) + 1);
+          justify-content: center; align-items: center; padding: 20px; box-sizing: border-box;
+          background: var(--ui-backdrop, rgba(3,5,8,0.84));
+          backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+          font-family: var(--font-body, 'Noto Sans SC',system-ui,sans-serif);
+          color: var(--ui-ink, #f0ece2);
+          color-scheme: var(--ui-color-scheme, dark);
+        }
         :host([embedded]) { position: relative; inset: auto; z-index: auto; width: 100%; height: 100%; padding: 0; background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; }
-        :host([embedded]) .mpe-container { max-width: none; max-height: none; border: 0; border-radius: 0; }
-        .mpe-container { width: 100%; max-width: 1000px; height: 100%; max-height: 85vh; background: #111418; border: 1px solid rgba(198,156,109,0.2); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
-        .mpe-header { padding: 14px 18px; border-bottom: 1px solid rgba(198,156,109,0.15); display: flex; justify-content: space-between; align-items: center; background: rgba(20,25,30,0.8); flex-shrink: 0; }
-        .mpe-title { font-size: 16px; font-weight: 700; color: #f4efe4; font-family: 'Noto Serif SC',serif; letter-spacing: 2px; }
+        :host([embedded]) .mpe-container { max-width: none; max-height: none; border: 0; border-radius: 0; box-shadow: none; }
+        .mpe-container {
+          width: 100%; max-width: 1040px; height: 100%; max-height: 86vh;
+          display: flex; flex-direction: column; overflow: hidden;
+          background: var(--ui-canvas, #0b0e13);
+          border: 1px solid var(--ui-border-strong, rgba(244,241,234,0.16));
+          border-radius: 14px;
+          box-shadow: var(--ui-shadow, 0 24px 64px rgba(0,0,0,0.55));
+        }
+        .mpe-header {
+          padding: 13px 18px; flex-shrink: 0;
+          display: flex; justify-content: space-between; align-items: center; gap: 12px;
+          background: var(--ui-surface-1, #12161d);
+          border-bottom: 1px solid var(--ui-border, rgba(244,241,234,0.09));
+        }
+        .mpe-title { font-size: 16px; font-weight: 700; color: var(--ui-ink, #f0ece2); font-family: var(--font-title, 'Noto Serif SC',serif); letter-spacing: 1px; }
         .mpe-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-        .btn { padding: 6px 14px; background: rgba(232,228,217,0.05); color: #e8e4d9; border: 1px solid rgba(232,228,217,0.15); border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.2s; white-space: nowrap; }
-        .btn:hover { background: rgba(232,228,217,0.1); border-color: rgba(198,156,109,0.5); }
-        .btn.primary { background: #eb613f; border-color: #eb613f; color: #fff; font-weight: bold; }
-        .btn.primary:hover { background: #d65130; }
-        .btn.danger { border-color: #ef5350; color: #ef5350; }
-        .btn.danger:hover { background: rgba(239,83,80,0.1); }
-        .btn.sm { padding: 3px 8px; font-size: 11px; }
-        .btn.ghost { background: transparent; border-color: transparent; color: #a39f98; }
-        .btn.ghost:hover { color: #eb613f; }
-        .mpe-bar { padding: 10px 14px; border-bottom: 1px solid rgba(232,228,217,0.05); display: flex; gap: 8px; align-items: center; flex-shrink: 0; background: rgba(0,0,0,0.15); flex-wrap: wrap; }
-        .mpe-name-input { flex: 1; min-width: 120px; padding: 6px 10px; background: #070a0e; border: 1px solid rgba(198,156,109,0.3); border-radius: 4px; color: #e8e4d9; font-size: 13px; outline: none; }
-        .mpe-name-input:focus { border-color: #eb613f; }
+        .btn {
+          padding: 6px 13px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500; letter-spacing: 0.02em;
+          background: var(--ui-surface-2, #181d26); color: var(--ui-ink, #f0ece2);
+          border: 1px solid var(--ui-border-strong, rgba(244,241,234,0.16));
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+          transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, color 0.16s ease, transform 0.12s ease; white-space: nowrap;
+        }
+        .btn:hover:not(:disabled) { background: var(--ui-surface-elevated, #1e2430); border-color: color-mix(in srgb, var(--ui-gold, #c69c6d) 50%, transparent); }
+        .btn:active:not(:disabled) { transform: translateY(1px); }
+        .btn.primary {
+          background: var(--ui-btn-primary-bg, #6c3326);
+          border-color: var(--ui-btn-primary-border, #9e5341); color: var(--ui-btn-primary-ink, #f6f1e7); font-weight: 500;
+          box-shadow: var(--ui-btn-primary-shadow, 0 1px 2px rgba(0,0,0,0.36), inset 0 1px 0 rgba(255,255,255,0.11));
+        }
+        .btn.primary:hover:not(:disabled) {
+          background: var(--ui-btn-primary-bg-hover, #7f3b2c);
+          border-color: var(--ui-btn-primary-border-hover, #b8624d);
+          box-shadow: var(--ui-btn-primary-shadow-hover, 0 2px 6px rgba(0,0,0,0.44), inset 0 1px 0 rgba(255,255,255,0.15));
+        }
+        .btn.primary:active:not(:disabled) {
+          background: var(--ui-btn-primary-bg-active, #5a2a1f);
+          box-shadow: var(--ui-btn-primary-shadow-active, inset 0 1px 2px rgba(0,0,0,0.38));
+        }
+        .btn.danger { border-color: color-mix(in srgb, var(--ui-state-danger, #e2645a) 45%, transparent); color: var(--ui-state-danger, #e2645a); }
+        .btn.danger:hover { background: color-mix(in srgb, var(--ui-state-danger, #e2645a) 10%, transparent); }
+        .btn.good { background: color-mix(in srgb, var(--ui-state-on, #58b97c) 12%, transparent); border-color: color-mix(in srgb, var(--ui-state-on, #58b97c) 38%, transparent); color: var(--ui-state-on, #58b97c); }
+        .btn.sm { padding: 4px 10px; font-size: 11px; border-radius: 6px; }
+        .btn.ghost { background: transparent; border-color: transparent; color: var(--ui-ink-muted, #aba69b); }
+        .btn.ghost:hover { color: var(--ui-accent, #eb613f); background: var(--ui-surface-2, #181d26); }
+        .mpe-bar {
+          padding: 10px 16px; display: flex; gap: 8px; align-items: center; flex-shrink: 0; flex-wrap: wrap;
+          background: var(--ui-surface-1, #12161d);
+          border-bottom: 1px solid var(--ui-border, rgba(244,241,234,0.09));
+        }
+        .mpe-name-input {
+          flex: 1; min-width: 120px; padding: 7px 11px; border-radius: 8px; font-size: 13px; outline: none;
+          background: var(--ui-surface-2, #181d26);
+          border: 1px solid var(--ui-border, rgba(244,241,234,0.12));
+          color: var(--ui-ink, #f0ece2);
+        }
+        .mpe-name-input:focus { border-color: var(--ui-accent, #eb613f); }
         .mpe-body { flex: 1; overflow-y: auto; overflow-anchor: none; padding: 8px 14px; }
         .mpe-body::-webkit-scrollbar { width: 6px; }
-        .mpe-body::-webkit-scrollbar-thumb { background: rgba(232,228,217,0.2); border-radius: 3px; }
-        .mpe-item { margin-bottom: 0; border-bottom: 1px solid rgba(255,255,255,0.03); overflow: hidden; transition: background 0.2s; border-left: 2px solid transparent; }
-        .mpe-item:hover { background: rgba(255,255,255,0.02); }
-        .mpe-item.expanded { background: rgba(0,0,0,0.2); border-left-color: #eb613f; }
-        .mpe-item-header { display: flex; align-items: center; gap: 8px; padding: 12px; cursor: pointer; user-select: none; transition: background 0.2s; }
-        .mpe-item-header:hover { background: rgba(255,255,255,0.02); }
-        .mpe-toggle { width: 34px; height: 18px; border-radius: 9px; background: rgba(255,255,255,0.1); position: relative; cursor: pointer; transition: 0.3s; border: none; flex-shrink: 0; }
-        .mpe-toggle.on { background: rgba(235,97,63,0.3); }
-        .mpe-toggle.on::after { left: 17px; background: #eb613f; }
-        .mpe-toggle::after { content: ''; position: absolute; width: 12px; height: 12px; border-radius: 50%; top: 3px; left: 3px; background: #a39f98; transition: 0.3s; }
-        .mpe-item-name { flex: 1; font-size: 13px; font-weight: 500; color: #e8e4d9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .mpe-item-name.disabled { color: #6e6a65; text-decoration: line-through; }
-        .mpe-item-role { font-size: 10px; color: #a39f98; padding: 2px 6px; border: 1px solid rgba(255,255,255,0.1); border-radius: 3px; flex-shrink: 0; }
-        .mpe-item-mode { font-size: 10px; color: #81c784; padding: 2px 6px; border: 1px solid rgba(129,199,132,0.25); border-radius: 3px; flex-shrink: 0; }
-        .mpe-item-idx { font-size: 10px; color: #555; width: 24px; text-align: center; flex-shrink: 0; }
-        .mpe-item-btns { display: flex; gap: 4px; flex-shrink: 0; opacity: 0; transition: opacity 0.2s; }
+        .mpe-body::-webkit-scrollbar-thumb { background: var(--ui-border-strong, rgba(244,241,234,0.20)); border-radius: 99px; }
+        .mpe-item { margin-bottom: 0; border-bottom: 1px solid var(--ui-border, rgba(244,241,234,0.06)); overflow: hidden; transition: background 0.16s; border-left: 3px solid transparent; border-radius: 6px; }
+        .mpe-item:hover { background: color-mix(in srgb, var(--ui-surface-2, #181d26) 60%, transparent); }
+        .mpe-item.expanded { background: var(--ui-surface-1, #12161d); border-left-color: var(--ui-accent, #eb613f); }
+        .mpe-item-header { display: flex; align-items: center; gap: 8px; padding: 11px 12px; cursor: pointer; user-select: none; }
+        .mpe-toggle {
+          width: 34px; height: 18px; border-radius: 999px; position: relative; cursor: pointer; flex-shrink: 0;
+          background: var(--ui-surface-elevated, #1e2430);
+          border: 1px solid var(--ui-border-strong, rgba(244,241,234,0.18));
+          transition: background 0.2s, border-color 0.2s;
+        }
+        .mpe-toggle.on { background: var(--ui-accent, #eb613f); border-color: var(--ui-accent, #eb613f); }
+        .mpe-toggle.on::after { left: 17px; background: var(--ui-accent-ink, #fff); }
+        .mpe-toggle::after { content: ''; position: absolute; width: 12px; height: 12px; border-radius: 50%; top: 2px; left: 2px; background: var(--ui-ink-muted, #aba69b); transition: 0.2s; }
+        .mpe-item-name { flex: 1; font-size: 13px; font-weight: 500; color: var(--ui-ink, #f0ece2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .mpe-item-name.disabled { color: var(--ui-ink-faint, #757168); text-decoration: line-through; }
+        .mpe-item-role { font-size: 10px; color: var(--ui-ink-muted, #aba69b); padding: 2px 7px; border: 1px solid var(--ui-border, rgba(244,241,234,0.12)); border-radius: 999px; flex-shrink: 0; }
+        .mpe-item-mode { font-size: 10px; color: var(--ui-state-on, #58b97c); padding: 2px 7px; border: 1px solid color-mix(in srgb, var(--ui-state-on, #58b97c) 32%, transparent); border-radius: 999px; flex-shrink: 0; }
+        .mpe-item-idx { font-size: 11px; color: var(--ui-ink-faint, #757168); width: 24px; text-align: center; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+        .mpe-item-btns { display: flex; gap: 4px; flex-shrink: 0; opacity: 0; transition: opacity 0.16s; }
         .mpe-item:hover .mpe-item-btns, .mpe-item.expanded .mpe-item-btns { opacity: 1; }
         .mpe-item-body { display: none; padding: 0 12px 16px 44px; }
         .mpe-item.expanded .mpe-item-body { display: block; }
-        .mpe-field-row { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
-        .mpe-field-row label { font-size: 12px; color: #a39f98; width: 50px; flex-shrink: 0; }
-        .mpe-field-input { flex: 1; padding: 6px 8px; background: transparent; border: none; border-bottom: 1px solid rgba(255,255,255,0.1); border-radius: 0; color: #e8e4d9; font-size: 13px; outline: none; transition: border-color 0.2s; }
-        .mpe-field-input:focus { border-bottom-color: #eb613f; }
-        .mpe-field-select { padding: 5px 8px; background: #070a0e; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; color: #e8e4d9; font-size: 12px; outline: none; }
-        .mpe-textarea { width: 100%; box-sizing: border-box; min-height: 100px; background: rgba(0,0,0,0.15); border: 1px solid transparent; border-bottom: 1px solid rgba(255,255,255,0.1); border-radius: 4px 4px 0 0; color: #e8e4d9; font: 13px/1.6 'Noto Sans SC',monospace; padding: 12px; resize: vertical; outline: none; transition: border-color 0.2s; }
-        .mpe-textarea:focus { border-bottom-color: #eb613f; }
-        .mpe-empty { text-align: center; color: #6e6a65; padding: 60px 20px; font-size: 14px; }
-        .mpe-footer { padding: 10px 14px; border-top: 1px solid rgba(198,156,109,0.15); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; background: rgba(20,25,30,0.8); }
-        .mpe-footer-info { font-size: 11px; color: #6e6a65; }
+        .mpe-field-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
+        .mpe-field-row label { font-size: 12px; color: var(--ui-ink-muted, #aba69b); width: 48px; flex-shrink: 0; }
+        .mpe-field-input {
+          flex: 1; padding: 7px 10px; border-radius: 7px; font-size: 13px; outline: none; transition: border-color 0.16s;
+          background: var(--ui-surface-2, #181d26);
+          border: 1px solid var(--ui-border, rgba(244,241,234,0.12));
+          color: var(--ui-ink, #f0ece2);
+        }
+        .mpe-field-input:focus { border-color: var(--ui-accent, #eb613f); }
+        .mpe-field-select {
+          padding: 6px 10px; border-radius: 7px; font-size: 12px; outline: none;
+          background: var(--ui-surface-2, #181d26);
+          border: 1px solid var(--ui-border, rgba(244,241,234,0.12));
+          color: var(--ui-ink, #f0ece2);
+        }
+        .mpe-textarea {
+          width: 100%; box-sizing: border-box; min-height: 100px; padding: 11px 12px; resize: vertical; outline: none;
+          background: var(--ui-surface-2, #181d26);
+          border: 1px solid var(--ui-border, rgba(244,241,234,0.12));
+          border-radius: 8px; color: var(--ui-ink, #f0ece2);
+          font: 13px/1.65 var(--font-mono, 'JetBrains Mono',monospace); transition: border-color 0.16s;
+        }
+        .mpe-textarea:focus { border-color: var(--ui-accent, #eb613f); }
+        .mpe-empty { text-align: center; color: var(--ui-ink-faint, #757168); padding: 60px 20px; font-size: 14px; }
+        .mpe-footer {
+          padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
+          background: var(--ui-surface-1, #12161d);
+          border-top: 1px solid var(--ui-border, rgba(244,241,234,0.09));
+        }
+        .mpe-footer-info { font-size: 11px; color: var(--ui-ink-faint, #757168); }
         input[type="file"] { display: none; }
-        .drag-over { border-color: #eb613f !important; background: rgba(235,97,63,0.05); }
+        .drag-over { border-color: var(--ui-accent, #eb613f) !important; background: color-mix(in srgb, var(--ui-accent, #eb613f) 6%, transparent); }
         @media(max-width:640px){
           :host{padding:0;box-sizing:border-box}
           .mpe-container{max-height:100dvh;border-radius:0;border-left:0;border-right:0}
@@ -124,7 +197,7 @@ class MainPresetEditor extends HTMLElement {
           <input class="mpe-name-input" id="mpe-preset-name" value="${this._escAttr(this._preset.name || '')}" placeholder="预设名称" />
           <button class="btn sm" id="mpe-enable-all">全开</button>
           <button class="btn sm" id="mpe-disable-all">全关</button>
-          <button class="btn sm" id="mpe-add-entry" style="background:rgba(76,175,80,0.15);border-color:rgba(76,175,80,0.4);color:#81c784;">+ 新增条目</button>
+          <button class="btn sm good" id="mpe-add-entry">+ 新增条目</button>
         </div>
         <div class="mpe-body" id="mpe-body">
           ${entries.length === 0 ? '<div class="mpe-empty">尚未导入主预设。点击「导入JSON」或「恢复默认」加载预设。</div>' : ''}

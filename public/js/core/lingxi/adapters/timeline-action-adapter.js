@@ -119,7 +119,7 @@ export class TimelineActionAdapter {
     executeTimelineAction = options => defaultEventBus.request('app:execute-timeline-action', options)
   } = {}) {
     if (typeof stateManager?.snapshot !== 'function'
-      || typeof timelineSystem?.getAllNodes !== 'function'
+      || (typeof timelineSystem?.getNodeSummaries !== 'function' && typeof timelineSystem?.getAllNodes !== 'function')
       || typeof timelineSystem?.getAllBranches !== 'function'
       || typeof executeTimelineAction !== 'function') {
       fail('LINGXI_ADAPTER_INVALID', '时间线适配器需要状态快照、时间线读取和显式执行器');
@@ -151,8 +151,11 @@ export class TimelineActionAdapter {
   }
 
   async _snapshot() {
+    const readNodes = typeof this.timelineSystem.getNodeSummaries === 'function'
+      ? () => this.timelineSystem.getNodeSummaries()
+      : () => this.timelineSystem.getAllNodes();
     const [nodes, branches] = await Promise.all([
-      this.timelineSystem.getAllNodes(),
+      readNodes(),
       this.timelineSystem.getAllBranches()
     ]);
     const state = this.manager.snapshot();

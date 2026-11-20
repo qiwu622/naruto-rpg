@@ -151,6 +151,78 @@ test('exporting the worldbook includes the current editor draft', async ({ page 
   expect(exported.custom.at(-1).content).toBe('Draft included in export');
 });
 
+test('builtin worldbook entries can be toggled, edited, persisted, exported/imported and restored individually', async ({ page }) => {
+  await page.goto('/tests/fixtures/editor-harness.html');
+  await page.waitForFunction(() => window.__EDITOR_HARNESS_READY__ === true);
+
+  await page.locator('worldbook-editor #toggle-builtin').click();
+  const builtinItems = page.locator('worldbook-editor .wb-item[data-type="builtin"]');
+  expect(await builtinItems.count()).toBeGreaterThan(300);
+
+  const list = page.locator('worldbook-editor #entry-list');
+  const targetBuiltin = builtinItems.nth(40);
+  await targetBuiltin.scrollIntoViewIfNeeded();
+  const beforeScroll = await list.evaluate(element => element.scrollTop);
+  expect(beforeScroll).toBeGreaterThan(0);
+
+  const originalTitle = await targetBuiltin.locator('.wb-item-title').innerText();
+  await targetBuiltin.locator('.wb-item-toggle').click();
+
+  const toggleState = await page.locator('worldbook-editor').evaluate(host => {
+    const root = host.shadowRoot;
+    const saved = JSON.parse(localStorage.getItem('naruto_worldbook_builtin_overrides_v1'));
+    const targetToggle = root.querySelector('.wb-item-toggle[data-type="builtin"][data-idx="40"]');
+    return {
+      scrollTop: root.querySelector('#entry-list').scrollTop,
+      focusedToggle: root.activeElement === targetToggle,
+      saved
+    };
+  });
+  expect(Math.abs(toggleState.scrollTop - beforeScroll)).toBeLessThanOrEqual(1);
+  expect(toggleState.focusedToggle).toBe(true);
+  expect(toggleState.saved.entries[originalTitle.toLocaleLowerCase('zh-CN')].enabled).toBe(false);
+
+  await targetBuiltin.click();
+  await expect(page.locator('worldbook-editor #entry-title')).toBeEnabled();
+  await expect(page.locator('worldbook-editor #entry-keys')).toBeEnabled();
+  await expect(page.locator('worldbook-editor #entry-mode')).toBeEnabled();
+  await expect(page.locator('worldbook-editor #entry-content')).toBeEnabled();
+
+  await page.locator('worldbook-editor #entry-title').fill(`${originalTitle}·改`);
+  await page.locator('worldbook-editor #entry-keys').fill('测试内置触发词');
+  await page.locator('worldbook-editor #entry-content').fill('内置条目已修改正文');
+  await page.locator('worldbook-editor #entry-mode').selectOption('always');
+
+  await expect(targetBuiltin.locator('.wb-builtin-tag')).toHaveText('已改');
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('worldbook-editor #btn-export').click()
+  ]);
+  const exported = JSON.parse(await readDownload(download));
+  expect(exported.builtinOverrides.entries[originalTitle.toLocaleLowerCase('zh-CN')].content).toBe('内置条目已修改正文');
+
+  await page.reload();
+  await page.waitForFunction(() => window.__EDITOR_HARNESS_READY__ === true);
+  await page.locator('worldbook-editor #toggle-builtin').click();
+  await expect(targetBuiltin.locator('.wb-item-title')).toHaveText(`${originalTitle}·改`);
+  await targetBuiltin.click();
+  await expect(page.locator('worldbook-editor #entry-content')).toHaveValue('内置条目已修改正文');
+
+  await page.locator('worldbook-editor #btn-restore-builtin-entry').click();
+  await expect(page.locator('worldbook-editor #entry-title')).toHaveValue(originalTitle);
+  await expect(targetBuiltin.locator('.wb-builtin-tag')).toHaveText('内置');
+  expect(await page.evaluate(() => localStorage.getItem('naruto_worldbook_builtin_overrides_v1'))).toBeNull();
+
+  await page.locator('worldbook-editor #file-import').setInputFiles({
+    name: 'worldbook-with-builtin.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(exported))
+  });
+  await page.locator('game-modal').getByRole('button', { name: '确定', exact: true }).click();
+  await expect(targetBuiltin.locator('.wb-item-title')).toHaveText(`${originalTitle}·改`);
+});
+
 test.describe('worldbook mobile layout', () => {
   test.use({ viewport: { width: 360, height: 800 } });
 

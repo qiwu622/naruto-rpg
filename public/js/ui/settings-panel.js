@@ -5,7 +5,7 @@ import { getAgentConfig, saveAgentConfig } from '../data/agent-config.js';
 import { settingsStyles } from '../../css/components/settings-panel.css.js';
 import { escHtml, escAttr } from '../utils/format.js';
 import GameModal from './modal.js';
-import { bindCustomSelects } from './custom-select.js';
+import { bindCustomSelects, refreshCustomSelect } from './custom-select.js';
 import { getVariableUpdaterPreset } from '../data/variable-updater-preset.js';
 import { VARIABLE_UPDATER_DEFAULT_TEMPERATURE } from '../core/variable-updater.js';
 import './memory-panel.js';
@@ -21,6 +21,8 @@ import { resolveAICallPolicy } from '../core/ai-call-policy.js';
 import { openImageGallery } from './image-studio.js';
 import './api-config-form.js';
 import { settingsConfigGateway } from './settings-config-gateway.js';
+import { KNOWLEDGE_BASE } from '../data/knowledge-base.js';
+import { getMainPreset } from '../data/default-preset.js';
 import { icon } from '../utils/icons.js';
 import { musicService } from '../core/music-service.js';
 import { musicPlayback } from '../core/music-playback.js';
@@ -35,21 +37,71 @@ const SUPPORT_GITHUB_URL = 'https://github.com/qiwu622/naruto-rpg';
 const SUPPORT_ISSUES_URL = `${SUPPORT_GITHUB_URL}/issues`;
 
 const THEME_PRESETS = {
-  konoha: { label: '木叶卷轴', textColor: '#e8e4d9', accentColor: '#eb613f', goldColor: '#c69c6d', backgroundColor: '#070a0e',
+  konoha: { label: '木叶卷轴', modeLabel: '暖墨', textColor: '#e8e4d9', accentColor: '#eb613f', goldColor: '#c69c6d', backgroundColor: '#070a0e',
     inkDeep: '7, 10, 14', ink: '11, 14, 19', paper: '255, 255, 255', washi: '244, 241, 234',
-    dialogueColor: '#bae6fd', thoughtColor: '#c4b5fd', markColor: '#CE93D8' },
-  anbu: { label: '暗部夜行', textColor: '#e6edf5', accentColor: '#6aa4ff', goldColor: '#9fb7d9', backgroundColor: '#080d16',
+    dialogueColor: '#bae6fd', thoughtColor: '#c4b5fd', markColor: '#CE93D8',
+    ui: {
+      colorScheme: 'dark',
+      canvas: '#0b0e13', surface1: '#12161d', surface2: '#181d26', elevated: '#1e2430',
+      backdrop: 'rgba(3, 5, 8, 0.80)',
+      border: 'rgba(244, 241, 234, 0.09)', borderStrong: 'rgba(244, 241, 234, 0.20)',
+      ink: '#f0ece2', inkMuted: '#aba69b', inkFaint: '#757168',
+      accentInk: '#ffffff', stateOn: '#58b97c', stateAlways: '#6da8ec', stateDanger: '#e2645a',
+      shadow: '0 24px 64px rgba(0, 0, 0, 0.50)'
+    }
+  },
+  anbu: { label: '暗部夜行', modeLabel: '青夜', textColor: '#e6edf5', accentColor: '#6aa4ff', goldColor: '#9fb7d9', backgroundColor: '#080d16',
     inkDeep: '6, 10, 18', ink: '10, 16, 26', paper: '255, 255, 255', washi: '230, 237, 245',
-    dialogueColor: '#a8c8ff', thoughtColor: '#b8a8e8', markColor: '#8fb8ff' },
-  akatsuki: { label: '晓之绯云', textColor: '#f1e8e8', accentColor: '#d7263d', goldColor: '#e0b15a', backgroundColor: '#12070a',
+    dialogueColor: '#a8c8ff', thoughtColor: '#b8a8e8', markColor: '#8fb8ff',
+    ui: {
+      colorScheme: 'dark',
+      canvas: '#090e17', surface1: '#101725', surface2: '#162033', elevated: '#1c2940',
+      backdrop: 'rgba(4, 8, 15, 0.82)',
+      border: 'rgba(220, 234, 255, 0.10)', borderStrong: 'rgba(220, 234, 255, 0.22)',
+      ink: '#e8eff8', inkMuted: '#9fb0c8', inkFaint: '#697b95',
+      accentInk: '#ffffff', stateOn: '#56c28b', stateAlways: '#78b6ff', stateDanger: '#ee6f6b',
+      shadow: '0 24px 64px rgba(2, 6, 14, 0.56)'
+    }
+  },
+  akatsuki: { label: '晓之绯云', modeLabel: '绯夜', textColor: '#f1e8e8', accentColor: '#d7263d', goldColor: '#e0b15a', backgroundColor: '#12070a',
     inkDeep: '18, 7, 10', ink: '24, 12, 15', paper: '255, 255, 255', washi: '241, 232, 232',
-    dialogueColor: '#f0a8a8', thoughtColor: '#d8a8c8', markColor: '#e8a0b0' },
-  scroll: { label: '古旧卷轴', textColor: '#3b2a18', accentColor: '#9a4b24', goldColor: '#8a5f2a', backgroundColor: '#ead7a8',
+    dialogueColor: '#f0a8a8', thoughtColor: '#d8a8c8', markColor: '#e8a0b0',
+    ui: {
+      colorScheme: 'dark',
+      canvas: '#13090c', surface1: '#1c0e13', surface2: '#26141a', elevated: '#311a22',
+      backdrop: 'rgba(12, 4, 7, 0.84)',
+      border: 'rgba(255, 228, 232, 0.10)', borderStrong: 'rgba(255, 228, 232, 0.22)',
+      ink: '#f4ebeb', inkMuted: '#b9a2a5', inkFaint: '#836a6e',
+      accentInk: '#ffffff', stateOn: '#5ebc82', stateAlways: '#75aeea', stateDanger: '#ff7077',
+      shadow: '0 24px 64px rgba(10, 2, 4, 0.58)'
+    }
+  },
+  scroll: { label: '古旧卷轴', modeLabel: '和纸', textColor: '#3b2a18', accentColor: '#9a4b24', goldColor: '#8a5f2a', backgroundColor: '#ead7a8',
     inkDeep: '226, 208, 164', ink: '240, 228, 196', paper: '80, 58, 32', washi: '70, 52, 30',
-    dialogueColor: '#8a4b1e', thoughtColor: '#6b5a9e', markColor: '#9a3b2e' },
-  mist: { label: '雾隐冷雨', textColor: '#e8f3f5', accentColor: '#6bc7d9', goldColor: '#a8d8df', backgroundColor: '#0b1a1f',
+    dialogueColor: '#8a4b1e', thoughtColor: '#6b5a9e', markColor: '#9a3b2e',
+    ui: {
+      colorScheme: 'light',
+      canvas: '#f4ebd6', surface1: '#ebe0c5', surface2: '#e2d4b4', elevated: '#faf4e6',
+      backdrop: 'rgba(42, 30, 18, 0.56)',
+      border: 'rgba(74, 52, 26, 0.14)', borderStrong: 'rgba(74, 52, 26, 0.28)',
+      ink: '#2e2012', inkMuted: '#5d4831', inkFaint: '#7c664d',
+      accentInk: '#fffaf2', stateOn: '#267a48', stateAlways: '#2764a6', stateDanger: '#b9382e',
+      shadow: '0 20px 52px rgba(42, 30, 18, 0.24)'
+    }
+  },
+  mist: { label: '雾隐冷雨', modeLabel: '冷雾', textColor: '#e8f3f5', accentColor: '#6bc7d9', goldColor: '#a8d8df', backgroundColor: '#0b1a1f',
     inkDeep: '8, 20, 25', ink: '12, 26, 32', paper: '255, 255, 255', washi: '232, 243, 245',
-    dialogueColor: '#a8e0ea', thoughtColor: '#b0c8e8', markColor: '#8fd8e8' }
+    dialogueColor: '#a8e0ea', thoughtColor: '#b0c8e8', markColor: '#8fd8e8',
+    ui: {
+      colorScheme: 'dark',
+      canvas: '#0b181d', surface1: '#11232a', surface2: '#172f38', elevated: '#1e3b46',
+      backdrop: 'rgba(5, 13, 16, 0.82)',
+      border: 'rgba(220, 244, 248, 0.10)', borderStrong: 'rgba(220, 244, 248, 0.22)',
+      ink: '#e8f3f5', inkMuted: '#99b9c1', inkFaint: '#658790',
+      accentInk: '#062028', stateOn: '#56c297', stateAlways: '#72b9ea', stateDanger: '#f07167',
+      shadow: '0 24px 64px rgba(3, 11, 14, 0.54)'
+    }
+  }
 };
 
 const FONT_PRESETS = {
@@ -161,6 +213,56 @@ class SettingsPanel extends HTMLElement {
     return this;
   }
 
+  _getKnowledgeSummaries() {
+    let builtinEntries = [];
+    let customEntries = [];
+    let mainPreset = { entries: [] };
+    try {
+      builtinEntries = KNOWLEDGE_BASE.getBuiltinEntries({ includeDisabled: true }) || [];
+      customEntries = KNOWLEDGE_BASE.getCustomEntries() || [];
+    } catch {}
+    try {
+      mainPreset = getMainPreset() || { entries: [] };
+    } catch {}
+    const presetEntries = Array.isArray(mainPreset.entries) ? mainPreset.entries : [];
+    return {
+      wb: {
+        builtinEnabled: builtinEntries.filter(e => e.enabled !== false).length,
+        builtinTotal: builtinEntries.length,
+        builtinModified: builtinEntries.filter(e => e._overridden).length,
+        customEnabled: customEntries.filter(e => e.enabled !== false).length,
+        customTotal: customEntries.length
+      },
+      preset: {
+        name: mainPreset.name || 'Narutomech',
+        total: presetEntries.length,
+        enabled: presetEntries.filter(e => e.enabled !== false).length
+      }
+    };
+  }
+
+  _refreshKnowledgeSummaries() {
+    const summary = this._getKnowledgeSummaries();
+    const wbEl = this.shadowRoot?.querySelector('#wb-summary-metrics');
+    if (wbEl) {
+      wbEl.innerHTML = `
+        <span><strong>${summary.wb.builtinEnabled}/${summary.wb.builtinTotal}</strong>内置启用</span>
+        <span><strong>${summary.wb.builtinModified}</strong>内置已改</span>
+        <span><strong>${summary.wb.customEnabled}</strong>自定义启用</span>
+        <span><strong>${summary.wb.customTotal}</strong>自定义总数</span>
+      `;
+    }
+    const mpeTitle = this.shadowRoot?.querySelector('#mpe-summary-title');
+    if (mpeTitle) mpeTitle.textContent = `主预设 · ${summary.preset.name}`;
+    const mpeEl = this.shadowRoot?.querySelector('#mpe-summary-metrics');
+    if (mpeEl) {
+      mpeEl.innerHTML = `
+        <span><strong>${summary.preset.enabled}</strong>已启用条目</span>
+        <span><strong>${summary.preset.total}</strong>预设总条目</span>
+      `;
+    }
+  }
+
   render() {
     const s = this._settings;
     const isCreator = this._mode === 'creator';
@@ -176,6 +278,7 @@ class SettingsPanel extends HTMLElement {
     const variablePreset = getVariableUpdaterPreset();
     const plotStats = CANON_DATABASE.getStats('plot');
     const techniqueStats = CANON_DATABASE.getStats('techniques');
+    const knowledgeSummary = this._getKnowledgeSummaries();
     const imagePlayerSettings = callPolicyImageSettingsStore.load();
     this.shadowRoot.innerHTML = `
       <style>${settingsStyles}</style>
@@ -183,7 +286,7 @@ class SettingsPanel extends HTMLElement {
         <div class="panel${isCreator ? ' creator' : ''}" role="dialog" aria-modal="true" aria-label="${isCreator ? '创作者工作台' : '玩家设置'}">
           <div class="inner-bg"></div>
           <div class="head">
-            <div class="title"><span>${isCreator ? '編' : '巻'}</span><div>${isCreator ? '创作者工作台' : '玩家设置'}<small>${isCreator ? '叙事资源与生成运行时' : '阅读、游玩与连接'}</small></div></div>
+            <div class="title"><span class="title-seal">${isCreator ? '編' : '巻'}</span><div>${isCreator ? '创作者工作台' : '玩家设置'}<small>${isCreator ? '叙事资源与生成运行时' : '阅读、游玩与连接'}</small></div></div>
             <div class="head-actions">
               <button class="workbench-link" type="button" data-action="${isCreator ? 'open-player-settings' : 'open-creator-workbench'}">${isCreator ? '玩家设置' : '创作者工作台'}</button>
               <button class="close" data-action="close" aria-label="关闭设置">×</button>
@@ -192,17 +295,17 @@ class SettingsPanel extends HTMLElement {
           <div class="layout">
             <aside class="sidebar">
               ${isCreator ? `
-                <button class="tab-btn active" data-tool="pipeline" data-targets="tab-agent,tab-variable">生成管线</button>
-                <button class="tab-btn" data-tool="knowledge" data-targets="tab-lore">提示词与知识</button>
-                <button class="tab-btn" data-tool="canon" data-targets="tab-canon-plot,tab-canon-techniques">原作数据库</button>
-                <button class="tab-btn" data-tool="image" data-targets="tab-image">画面工坊</button>
-                <button class="tab-btn" data-tool="memory" data-targets="tab-memory">记忆运行时</button>
+                <button class="tab-btn active" data-tool="pipeline" data-targets="tab-agent,tab-variable"><span class="tab-icon" aria-hidden="true">${icon('sliders', 16)}</span><span>生成管线</span></button>
+                <button class="tab-btn" data-tool="knowledge" data-targets="tab-lore"><span class="tab-icon" aria-hidden="true">${icon('book-open', 16)}</span><span>提示词与知识</span></button>
+                <button class="tab-btn" data-tool="canon" data-targets="tab-canon-plot,tab-canon-techniques"><span class="tab-icon" aria-hidden="true">${icon('database', 16)}</span><span>原作数据库</span></button>
+                <button class="tab-btn" data-tool="image" data-targets="tab-image"><span class="tab-icon" aria-hidden="true">${icon('zen', 16)}</span><span>画面工坊</span></button>
+                <button class="tab-btn" data-tool="memory" data-targets="tab-memory"><span class="tab-icon" aria-hidden="true">${icon('timeline', 16)}</span><span>记忆运行时</span></button>
               ` : `
-                <button class="tab-btn active" data-section="appearance" data-target="tab-visual">外观与阅读</button>
-                <button class="tab-btn" data-section="gameplay" data-target="tab-system">游玩与输出</button>
-                <button class="tab-btn" data-section="connection" data-target="tab-connection">AI 连接</button>
-                <button class="tab-btn" data-section="media" data-target="tab-audio">声音与画面</button>
-                <button class="tab-btn support-tab" data-section="support" data-target="tab-support">支持项目</button>
+                <button class="tab-btn active" data-section="appearance" data-target="tab-visual"><span class="tab-icon" aria-hidden="true">${icon('sliders', 16)}</span><span>外观与阅读</span></button>
+                <button class="tab-btn" data-section="gameplay" data-target="tab-system"><span class="tab-icon" aria-hidden="true">${icon('book-open', 16)}</span><span>游玩与输出</span></button>
+                <button class="tab-btn" data-section="connection" data-target="tab-connection"><span class="tab-icon" aria-hidden="true">${icon('zap', 16)}</span><span>AI 连接</span></button>
+                <button class="tab-btn" data-section="media" data-target="tab-audio"><span class="tab-icon" aria-hidden="true">${icon('play', 16)}</span><span>声音与画面</span></button>
+                <button class="tab-btn support-tab" data-section="support" data-target="tab-support"><span class="tab-icon" aria-hidden="true">${icon('heart', 16)}</span><span>支持项目</span></button>
               `}
             </aside>
             <main class="content">
@@ -210,6 +313,36 @@ class SettingsPanel extends HTMLElement {
               
               <!-- Tab 1: 视觉与环境 -->
               <div class="tab-pane active" id="tab-visual">
+                <div class="visual-showcase">
+                  <section>
+                    <h3>主题画廊</h3>
+                    <div class="theme-swatch-grid">
+                      ${Object.entries(THEME_PRESETS).map(([k, v]) => `
+                        <button type="button" class="theme-swatch-card${s.themePreset === k ? ' active' : ''}" data-theme-card="${escAttr(k)}">
+                          <span class="theme-swatch-preview" style="background:${escAttr(v.ui.canvas)};color:${escAttr(v.ui.ink)};">
+                            <span class="theme-swatch-dots">
+                              <span class="theme-swatch-dot" style="background:${escAttr(v.accentColor)};"></span>
+                              <span class="theme-swatch-dot" style="background:${escAttr(v.goldColor)};"></span>
+                            </span>
+                            <span class="theme-swatch-aa">忍</span>
+                          </span>
+                          <span class="theme-swatch-name">${escHtml(v.label)}</span>
+                          <span class="theme-swatch-mode">${escHtml(v.modeLabel)}</span>
+                        </button>
+                      `).join('')}
+                    </div>
+                  </section>
+                  <div class="reading-preview-card" id="visual-reading-preview">
+                    <div class="reading-preview-head">
+                      <span>实时阅读效果预览（应用后写入阅读界面）</span>
+                      <span id="visual-preview-meta">${s.fontSize}px · 行高 ${s.lineHeight}</span>
+                    </div>
+                    <div class="reading-preview-body" data-card-style="${escAttr(s.aiCardStyle || 'line')}" data-indent="${String(Boolean(s.paragraphIndent))}">
+                      <p>木叶历六十四年秋，暮风掠过慰灵碑前的石阶，火影岩的轮廓在残照下渐渐沉入暮色。</p>
+                      <p><span class="preview-dialogue">「任务简报已经送到第七班桌上了。」</span>旗木卡卡西合上亲热天堂，<span class="preview-thought">（今夜的边境哨所，恐怕比预想的还要安静……）</span>目光落在<span class="preview-mark">封印卷轴</span>的火漆印上。</p>
+                    </div>
+                  </div>
+                </div>
                 <div class="pane-grid">
                   <section data-anchor="typography" tabindex="-1">
                     <h3>排版与视觉</h3>
@@ -240,13 +373,13 @@ class SettingsPanel extends HTMLElement {
                     <h3>色彩与环境</h3>
                     <div class="grid">
                       <label>正文颜色</label>
-                      <div class="color-picker-wrap"><input type="color" name="textColor" value="${s.textColor}"></div>
+                      <div class="color-picker-wrap"><input type="color" name="textColor" value="${escAttr(s.textColor)}"><span class="color-hex" data-color-hex="textColor">${escHtml(s.textColor)}</span></div>
                       <label>强调色 (朱)</label>
-                      <div class="color-picker-wrap"><input type="color" name="accentColor" value="${s.accentColor}"></div>
+                      <div class="color-picker-wrap"><input type="color" name="accentColor" value="${escAttr(s.accentColor)}"><span class="color-hex" data-color-hex="accentColor">${escHtml(s.accentColor)}</span></div>
                       <label>金印色 (金)</label>
-                      <div class="color-picker-wrap"><input type="color" name="goldColor" value="${s.goldColor}"></div>
+                      <div class="color-picker-wrap"><input type="color" name="goldColor" value="${escAttr(s.goldColor)}"><span class="color-hex" data-color-hex="goldColor">${escHtml(s.goldColor)}</span></div>
                       <label>背景底色 (墨)</label>
-                      <div class="color-picker-wrap"><input type="color" name="backgroundColor" value="${s.backgroundColor}"></div>
+                      <div class="color-picker-wrap"><input type="color" name="backgroundColor" value="${escAttr(s.backgroundColor)}"><span class="color-hex" data-color-hex="backgroundColor">${escHtml(s.backgroundColor)}</span></div>
                       <label>背景图链接</label>
                       <input type="text" name="backgroundImage" value="${escAttr(s.backgroundImage)}" placeholder="https://...">
                       <label>本地背景图</label>
@@ -261,7 +394,7 @@ class SettingsPanel extends HTMLElement {
               <div class="tab-pane" id="tab-connection">
                 <section class="connection-section" data-anchor="main-connection" tabindex="-1">
                   <div class="section-heading">
-                    <div><span class="eyebrow">MAIN CONNECTION</span><h3>主 AI 连接</h3></div>
+                    <div><h3>主 AI 连接</h3><span class="section-sub">正文与辅助模型统一配置入口</span></div>
                     <span class="owner-badge">唯一配置入口</span>
                   </div>
                   <p class="setting-note">正文生成使用此连接。创作者工作台中的辅助模型默认继承这里的地址、密钥与模型。</p>
@@ -395,7 +528,7 @@ class SettingsPanel extends HTMLElement {
                       <strong id="variable-preset-name">${escHtml(variablePreset.name || '未命名变量更新预设')}</strong>
                       <span id="variable-preset-count">${variablePreset.entries?.length || 0} 个预设条目 · ${variablePreset.entries?.filter(entry => entry.enabled !== false).length || 0} 个已启用</span>
                       <p>可查看并编辑真实 system/user role 链，支持保存、JSON 导入、JSON 导出、增删排序和恢复默认。运行时直接读取此预设，不再使用隐藏硬编码内容。</p>
-                      <button class="btn primary" type="button" data-action="open-variable-updater-preset-editor">编辑 / 导入 / 导出</button>
+                      <button class="btn tonal" type="button" data-action="open-variable-updater-preset-editor">编辑 / 导入 / 导出</button>
                     </div>
                   </section>
                 </div>
@@ -405,17 +538,27 @@ class SettingsPanel extends HTMLElement {
               <div class="tab-pane" id="tab-lore">
                 <section style="margin-bottom: 32px;">
                    <h3>世界书管理 · 知识库</h3>
-                   <div class="config-card config-card-center">
-                     <p class="config-card-note">使用可视化的编辑器管理、导入和导出游戏内的世界书条目。</p>
-                     <button class="btn primary" type="button" data-action="open-worldbook-editor">打开世界书编辑器</button>
+                   <div class="database-metrics workbench-metrics" id="wb-summary-metrics">
+                     <span><strong>${knowledgeSummary.wb.builtinEnabled}/${knowledgeSummary.wb.builtinTotal}</strong>内置启用</span>
+                     <span><strong>${knowledgeSummary.wb.builtinModified}</strong>内置已改</span>
+                     <span><strong>${knowledgeSummary.wb.customEnabled}</strong>自定义启用</span>
+                     <span><strong>${knowledgeSummary.wb.customTotal}</strong>自定义总数</span>
+                   </div>
+                   <div class="config-card">
+                     <p class="config-card-note">支持单条开关与本地改写内置设定，同时可创建、筛选、导入和导出自定义世界书条目。</p>
+                     <button class="btn tonal" type="button" data-action="open-worldbook-editor">打开世界书编辑器</button>
                    </div>
                 </section>
                 <section>
                    <h3>预设管理</h3>
+                   <div class="database-metrics workbench-metrics" id="mpe-summary-metrics">
+                     <span><strong>${knowledgeSummary.preset.enabled}</strong>已启用条目</span>
+                     <span><strong>${knowledgeSummary.preset.total}</strong>预设总条目</span>
+                   </div>
                    <div class="config-card">
-                     <p class="config-card-title">主预设 · Narutomech</p>
+                     <p class="config-card-title" id="mpe-summary-title">主预设 · ${escHtml(knowledgeSummary.preset.name)}</p>
                      <p class="config-card-note">管理文风破限、角色扮演、CoT回映等高级预设条目。支持开关、增删、修改、拖拽排序。</p>
-                     <button class="btn primary" type="button" data-action="open-main-preset-editor">打开主预设编辑器</button>
+                     <button class="btn tonal" type="button" data-action="open-main-preset-editor">打开主预设编辑器</button>
                    </div>
                 </section>
               </div>
@@ -427,7 +570,7 @@ class SettingsPanel extends HTMLElement {
                     <div class="database-metrics" id="canon-plot-summary">
                       <span><strong>${plotStats.effective}</strong>启用</span><span><strong>${plotStats.modified}</strong>修改</span><span><strong>${plotStats.custom}</strong>新增</span><span><strong>${plotStats.disabled}</strong>停用</span>
                     </div>
-                    <button class="btn primary" type="button" data-action="open-canon-plot-editor">管理剧情日</button>
+                    <button class="btn tonal" type="button" data-action="open-canon-plot-editor">管理剧情日</button>
                   </div>
                 </section>
               </div>
@@ -439,7 +582,7 @@ class SettingsPanel extends HTMLElement {
                     <div class="database-metrics" id="canon-techniques-summary">
                       <span><strong>${techniqueStats.effective}</strong>启用</span><span><strong>${techniqueStats.modified}</strong>修改</span><span><strong>${techniqueStats.custom}</strong>新增</span><span><strong>${techniqueStats.disabled}</strong>停用</span>
                     </div>
-                    <button class="btn primary" type="button" data-action="open-canon-techniques-editor">管理忍术记录</button>
+                    <button class="btn tonal" type="button" data-action="open-canon-techniques-editor">管理忍术记录</button>
                   </div>
                 </section>
               </div>
@@ -449,7 +592,7 @@ class SettingsPanel extends HTMLElement {
               <div class="tab-pane" id="tab-audio">
                 <section class="media-image-section" data-anchor="image-generation" tabindex="-1">
                   <div class="section-heading">
-                    <div><span class="eyebrow">ILLUSTRATION</span><h3>回合插图</h3></div>
+                    <div><h3>回合插图</h3><span class="section-sub">游玩中的立绘与场景出图开关</span></div>
                     <button class="btn ghost" type="button" data-action="open-creator-image">画面工坊</button>
                   </div>
                   <p class="setting-note">这里仅控制游玩时是否生成插图。绘图后端、工作流和图像世界书在创作者工作台中配置。</p>
@@ -532,7 +675,7 @@ class SettingsPanel extends HTMLElement {
                 </section>
                 <section class="storage-section" data-anchor="storage" tabindex="-1">
                   <div class="section-heading">
-                    <div><span class="eyebrow">LOCAL TIMELINE</span><h3>存档与空间</h3></div>
+                    <div><h3>存档与空间</h3><span class="section-sub">浏览器本地时间线与备份管理</span></div>
                     <span class="owner-badge">本地时间线</span>
                   </div>
                   <p class="setting-note">旧回合始终保留，可按页查看。正文和状态在点开时读取；浏览数量不会改变模型上下文或删除存档。</p>
@@ -552,11 +695,11 @@ class SettingsPanel extends HTMLElement {
                     </label>
                     <div class="storage-status" id="storage-info" role="status" aria-live="polite">等待统计...</div>
                     <div class="storage-actions">
-                      <button class="btn primary" type="button" data-action="save-library">${icon('book-open', 15)}<span>本地存档库</span></button>
-                      <button class="btn ghost" type="button" data-action="check-storage" title="刷新存档空间统计">${icon('database', 15)}<span>刷新统计</span></button>
-                      <button class="btn ghost" type="button" data-action="manual-archive" title="立即压缩旧时间线回合">${icon('timeline', 15)}<span>立即压缩</span></button>
-                      <button class="btn primary" type="button" data-action="export-save" title="导出无损 gzip 压缩存档">${icon('export', 15)}<span>压缩导出</span></button>
+                      <button class="btn tonal" type="button" data-action="save-library">${icon('book-open', 15)}<span>本地存档库</span></button>
+                      <button class="btn" type="button" data-action="export-save" title="导出无损 gzip 压缩存档">${icon('export', 15)}<span>压缩导出</span></button>
                       <button class="btn ghost" type="button" data-action="export-save-json" title="导出未压缩的普通 JSON 存档">${icon('file-text', 15)}<span>普通 JSON</span></button>
+                      <button class="btn ghost" type="button" data-action="manual-archive" title="立即压缩旧时间线回合">${icon('timeline', 15)}<span>立即压缩</span></button>
+                      <button class="btn ghost" type="button" data-action="check-storage" title="刷新存档空间统计">${icon('database', 15)}<span>刷新统计</span></button>
                     </div>
                   </div>
                 </section>
@@ -565,7 +708,7 @@ class SettingsPanel extends HTMLElement {
               <div class="tab-pane" id="tab-support">
                 <section class="support-section" data-anchor="support" tabindex="-1">
                   <div class="section-heading">
-                    <div><span class="eyebrow">KEEP THE STORY GOING</span><h3>支持忍者手记持续开发</h3></div>
+                    <div><h3>支持忍者手记持续开发</h3><span class="section-sub">开源项目 · 完全自愿赞助</span></div>
                     <span class="owner-badge support-badge">开源 · 独立维护</span>
                   </div>
                   <div class="support-story">
@@ -579,7 +722,7 @@ class SettingsPanel extends HTMLElement {
                     <p>作为一个个人开发项目，忍者手记的运行和成长离不开持续投入。服务器维护、开发工具、测试环境以及新内容制作，都需要投入时间与资源。</p>
                   </div>
                   <div class="support-impact">
-                    <div class="support-block-heading"><span>FUNDING USE</span><h4>你的支持将用于</h4></div>
+                    <div class="support-block-heading"><h4>你的支持将用于</h4></div>
                     <ul class="support-use-list">
                       <li><span class="support-use-icon" aria-hidden="true">${icon('cloud', 17)}</span><span>项目服务器及运行环境维护</span></li>
                       <li><span class="support-use-icon" aria-hidden="true">${icon('developer', 17)}</span><span>新玩法与功能开发</span></li>
@@ -588,7 +731,7 @@ class SettingsPanel extends HTMLElement {
                     </ul>
                   </div>
                   <p class="support-recognition">每一份支持，都是对独立开发创作的认可，也会帮助忍者手记继续成长。</p>
-                  <div class="support-block-heading support-options-heading"><span>SUPPORT OPTIONS</span><h4>选择支持方式</h4></div>
+                  <div class="support-block-heading support-options-heading"><h4>选择支持方式</h4></div>
                   <div class="support-methods">
                     <article class="support-method support-method-afdian">
                       <span class="support-method-icon" aria-hidden="true">${icon('heart', 20)}</span>
@@ -597,7 +740,7 @@ class SettingsPanel extends HTMLElement {
                         <strong>持续支持开发</strong>
                         <p>通过爱发电选择适合你的支持方式。</p>
                       </div>
-                      <a class="btn primary support-primary-link" href="${escAttr(SUPPORT_AFDIAN_URL)}" target="_blank" rel="noopener noreferrer">
+                      <a class="btn tonal support-primary-link" href="${escAttr(SUPPORT_AFDIAN_URL)}" target="_blank" rel="noopener noreferrer">
                         <span>前往爱发电</span>${icon('external-link', 15)}
                       </a>
                     </article>
@@ -657,6 +800,44 @@ class SettingsPanel extends HTMLElement {
     if (localStorage.getItem('naruto_music_shuffle') !== null) this._set('musicShuffle', this._getShuffle());
     this._set('varUpdaterBackend', stateManager.getAPIConfig()?.variableUpdater?.backend || 'inherit');
     this._set('narrativeReviewBackend', stateManager.getAPIConfig()?.narrativeReview?.backend || 'inherit');
+    this._syncVisualShowcase();
+  }
+
+  _syncVisualShowcase() {
+    const root = this.shadowRoot;
+    if (!root) return;
+    const themeKey = this._get('themePreset', this._settings?.themePreset || 'konoha');
+    const preset = THEME_PRESETS[themeKey] || THEME_PRESETS.konoha;
+    root.querySelectorAll('.theme-swatch-card').forEach(card => {
+      card.classList.toggle('active', card.dataset.themeCard === themeKey);
+    });
+    for (const colorField of ['textColor', 'accentColor', 'goldColor', 'backgroundColor']) {
+      const value = this._get(colorField, preset[colorField]);
+      const hex = root.querySelector(`[data-color-hex="${colorField}"]`);
+      if (hex && value) hex.textContent = String(value);
+    }
+    const preview = root.querySelector('#visual-reading-preview');
+    if (preview) {
+      const fontSize = clamp(this._get('fontSize'), 12, 24, this._settings.fontSize);
+      const lineHeight = clamp(this._get('lineHeight'), 1.2, 2.4, this._settings.lineHeight);
+      const fontFamily = this._resolveFontFamily() || preset.fontFamily;
+      preview.style.setProperty('--preview-bg', this._get('backgroundColor', preset.backgroundColor));
+      preview.style.setProperty('--preview-text', this._get('textColor', preset.textColor));
+      preview.style.setProperty('--preview-accent', this._get('accentColor', preset.accentColor));
+      preview.style.setProperty('--preview-gold', this._get('goldColor', preset.goldColor));
+      preview.style.setProperty('--preview-dialogue', preset.dialogueColor || '#bae6fd');
+      preview.style.setProperty('--preview-thought', preset.thoughtColor || '#c4b5fd');
+      preview.style.setProperty('--preview-size', `${fontSize}px`);
+      preview.style.setProperty('--preview-lh', String(lineHeight));
+      if (fontFamily) preview.style.setProperty('--preview-font', fontFamily);
+      const body = preview.querySelector('.reading-preview-body');
+      if (body) {
+        body.dataset.cardStyle = this._get('aiCardStyle', this._settings.aiCardStyle || 'line');
+        body.dataset.indent = String(Boolean(this._get('paragraphIndent')));
+      }
+      const meta = root.querySelector('#visual-preview-meta');
+      if (meta) meta.textContent = `${preset.label} · ${fontSize}px · 行高 ${lineHeight}`;
+    }
   }
 
   _set(name, value) {
@@ -675,8 +856,24 @@ class SettingsPanel extends HTMLElement {
   _bind() {
     this.shadowRoot.querySelector('.backdrop').addEventListener('click', e => { if (e.target.dataset.close) this.close(); });
     this.shadowRoot.querySelectorAll('[data-action]').forEach(btn => btn.addEventListener('click', (e) => this._handle(btn.dataset.action, e)));
+    this.shadowRoot.querySelectorAll('.theme-swatch-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const key = card.dataset.themeCard;
+        const select = this.shadowRoot.querySelector('[name="themePreset"]');
+        if (select && THEME_PRESETS[key]) {
+          select.value = key;
+          refreshCustomSelect(select);
+          this._applyThemeToFields();
+          this._markDirty('appearance');
+        }
+      });
+    });
     this.shadowRoot.querySelector('[name="themePreset"]').addEventListener('change', () => this._applyThemeToFields());
     this.shadowRoot.querySelector('[name="fontPreset"]').addEventListener('change', () => this._applyFontPreset());
+    for (const fieldName of ['fontFamily', 'fontSize', 'lineHeight', 'paragraphIndent', 'aiCardStyle', 'textColor', 'accentColor', 'goldColor', 'backgroundColor']) {
+      this.shadowRoot.querySelector(`[name="${fieldName}"]`)?.addEventListener('input', () => this._syncVisualShowcase());
+      this.shadowRoot.querySelector(`[name="${fieldName}"]`)?.addEventListener('change', () => this._syncVisualShowcase());
+    }
     this.shadowRoot.querySelector('[name="musicEnabled"]').addEventListener('change', () => this._syncAudio());
     this.shadowRoot.querySelector('[name="musicLoop"]').addEventListener('change', () => { this._setLoop(this._get('musicLoop')); this._syncAudio(); });
     this.shadowRoot.querySelector('[name="musicShuffle"]').addEventListener('change', () => { this._setShuffle(this._get('musicShuffle')); });
@@ -747,7 +944,10 @@ class SettingsPanel extends HTMLElement {
       }
       target.focus?.({ preventScroll: true });
     }
-    else if (focus) button.focus({ preventScroll: true });
+    if (focus) {
+      if (!target) button.focus({ preventScroll: true });
+      if (window.innerWidth <= 768) button.scrollIntoView?.({ block: 'nearest', inline: 'center' });
+    }
     if (this._activeSection === 'gameplay') this._checkStorage();
     const informational = this._activeSection === 'support';
     const saveButton = this.shadowRoot.querySelector('.actions > [data-action="save"]');
@@ -786,7 +986,10 @@ class SettingsPanel extends HTMLElement {
     if (saveButton) saveButton.hidden = this._activeTool !== 'pipeline';
     const memory = this.shadowRoot.querySelector('memory-panel');
     if (this._activeTool === 'memory') memory?.refreshStats?.();
-    if (focus && !resourceTarget) button.focus({ preventScroll: true });
+    if (focus) {
+      if (!resourceTarget) button.focus({ preventScroll: true });
+      if (window.innerWidth <= 768) button.scrollIntoView?.({ block: 'nearest', inline: 'center' });
+    }
     this._updateSaveState();
   }
 
@@ -802,8 +1005,13 @@ class SettingsPanel extends HTMLElement {
 
   _updateSaveState(message = '') {
     const status = this.shadowRoot.querySelector('.save-state');
+    const actions = this.shadowRoot.querySelector('.actions');
     if (!status) return;
     const activeKey = this._mode === 'creator' ? this._activeTool : this._activeSection;
+    const isDirty = this._mode === 'player' && activeKey === 'support'
+      ? this._dirtySections.size > 0
+      : this._dirtySections.has(activeKey);
+    actions?.classList.toggle('is-dirty', isDirty && !message);
     if (this._mode === 'player' && activeKey === 'support' && !message) {
       status.textContent = this._dirtySections.size
         ? `${this._dirtySections.size} 个设置页有未应用的修改`
@@ -920,6 +1128,8 @@ class SettingsPanel extends HTMLElement {
         layer.classList.remove('active');
         layout?.classList.remove('editor-open');
         this.shadowRoot.querySelectorAll('.tab-btn').forEach(button => { button.disabled = false; });
+        this._refreshKnowledgeSummaries();
+        this._refreshCanonDatabaseSummaries();
         const context = this._editorContext;
         this._editorContext = null;
         if (content && context) content.scrollTop = context.scrollTop;
@@ -942,8 +1152,15 @@ class SettingsPanel extends HTMLElement {
       const kb = Math.round(stats.estimatedBytes / 1024);
       const mb = (stats.estimatedBytes / 1024 / 1024).toFixed(2);
       const compressed = Number.isFinite(stats.compressedCount) ? stats.compressedCount : stats.archivedCount;
-      const text = `节点 ${stats.totalNodes} (可即时点开 ${stats.activeCount} / 已压缩 ${compressed}) · ${kb >= 1024 ? mb + ' MB' : kb + ' KB'}`;
-      if (info) info.textContent = text;
+      const sizeText = kb >= 1024 ? `${mb} MB` : `${kb} KB`;
+      if (info) {
+        info.innerHTML = `
+          <div class="storage-metrics">
+            <div class="storage-metric"><strong>节点 ${stats.totalNodes}</strong><span>已记录回合节点</span></div>
+            <div class="storage-metric"><strong>${stats.activeCount} / ${compressed}</strong><span>明文 / 已压缩</span></div>
+            <div class="storage-metric"><strong>${sizeText}</strong><span>估算占用空间</span></div>
+          </div>`;
+      }
     } catch (e) {
       if (info) info.textContent = '查询失败: ' + e.message;
     } finally {
@@ -1016,28 +1233,26 @@ class SettingsPanel extends HTMLElement {
       if (!listEl) {
         listEl = document.createElement('div');
         listEl.id = `list-${targetName}`;
-        listEl.style.cssText = 'max-height:180px;overflow-y:auto;margin-top:4px;border:1px solid rgba(198,156,109,0.2);border-radius:6px;background:rgba(7,10,14,0.95);';
-        input.parentElement.appendChild(listEl);
+        listEl.className = 'inline-model-list';
+        listEl.style.gridColumn = '1 / -1';
+        const row = input.closest('.inline-field') || input.parentElement;
+        row?.insertAdjacentElement('afterend', listEl);
       }
       listEl.innerHTML = models.map(id =>
-        `<div style="padding:7px 10px;cursor:pointer;font-size:12px;color:#a39f98;border-bottom:1px solid rgba(255,255,255,0.04);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" data-model="${escAttr(id)}">${escHtml(id)}</div>`
+        `<div class="inline-model-item${input.value === id ? ' selected' : ''}" data-model="${escAttr(id)}">${escHtml(id)}</div>`
       ).join('');
-      listEl.querySelectorAll('div').forEach(item => {
+      listEl.querySelectorAll('.inline-model-item').forEach(item => {
         item.addEventListener('click', () => {
           input.value = item.dataset.model;
           this._markDirty(this._mode === 'creator' ? 'pipeline' : this._activeSection);
-          listEl.querySelectorAll('div').forEach(i => i.style.cssText = i.style.cssText.replace(/border-left:.*?;/, ''));
-          item.style.cssText += ';background:rgba(235,97,63,0.12);color:#ff8a65;border-left:3px solid #eb613f;';
-        });
-        item.addEventListener('mouseenter', () => { item.style.background = 'rgba(198,156,109,0.1)'; item.style.color = '#e8e4d9'; });
-        item.addEventListener('mouseleave', () => {
-          if (!item.style.cssText.includes('border-left')) { item.style.background = ''; item.style.color = ''; }
+          listEl.querySelectorAll('.inline-model-item').forEach(i => i.classList.remove('selected'));
+          item.classList.add('selected');
         });
       });
       if (!input.value && models[0]) {
         input.value = models[0];
         this._markDirty(this._mode === 'creator' ? 'pipeline' : this._activeSection);
-        listEl.querySelector('div')?.setAttribute('style', listEl.querySelector('div')?.getAttribute('style') + ';background:rgba(235,97,63,0.12);color:#ff8a65;border-left:3px solid #eb613f;');
+        listEl.querySelector('.inline-model-item')?.classList.add('selected');
       }
       this._showToast(`已读取 ${models.length} 个模型`);
     } catch (e) {
@@ -1333,12 +1548,17 @@ class SettingsPanel extends HTMLElement {
   _applyThemeToFields() {
     const preset = THEME_PRESETS[this._get('themePreset')];
     if (!preset) return;
-    this._set('textColor', preset.textColor); this._set('accentColor', preset.accentColor); this._set('goldColor', preset.goldColor); this._set('backgroundColor', preset.backgroundColor);
+    this._set('textColor', preset.textColor);
+    this._set('accentColor', preset.accentColor);
+    this._set('goldColor', preset.goldColor);
+    this._set('backgroundColor', preset.backgroundColor);
+    this._syncVisualShowcase();
   }
 
   _applyFontPreset() {
     const preset = FONT_PRESETS[this._get('fontPreset')];
     if (preset?.family) this._set('fontFamily', preset.family);
+    this._syncVisualShowcase();
   }
 
   async _importBackgroundFile(event) {
@@ -2162,8 +2382,9 @@ export function applyLocalSettings(settings = stateManager.getSub('_ui').setting
   root.style.setProperty('--text-primary', s.textColor);
   root.style.setProperty('--c-shuiro', s.accentColor);
   root.style.setProperty('--c-kin', s.goldColor);
-  // 主题基调通道 + 文本美化色：取自当前主题预设，让玻璃质感/描边/对话色随主题整体切换
+  // 主题基调通道 + 墨印卷册 UI Surface 令牌 + 文本美化色：随主题整体切换
   const preset = THEME_PRESETS[s.themePreset] || THEME_PRESETS.konoha;
+  const ui = preset.ui || THEME_PRESETS.konoha.ui;
   root.style.setProperty('--ink-deep-rgb', preset.inkDeep);
   root.style.setProperty('--ink-rgb', preset.ink);
   root.style.setProperty('--paper-rgb', preset.paper);
@@ -2171,6 +2392,26 @@ export function applyLocalSettings(settings = stateManager.getSub('_ui').setting
   root.style.setProperty('--chat-dialogue-color', preset.dialogueColor);
   root.style.setProperty('--chat-thought-color', preset.thoughtColor);
   root.style.setProperty('--chat-mark-color', preset.markColor);
+  root.style.setProperty('--ui-canvas', ui.canvas);
+  root.style.setProperty('--ui-surface-1', ui.surface1);
+  root.style.setProperty('--ui-surface-2', ui.surface2);
+  root.style.setProperty('--ui-surface-elevated', ui.elevated);
+  root.style.setProperty('--ui-backdrop', ui.backdrop);
+  root.style.setProperty('--ui-border', ui.border);
+  root.style.setProperty('--ui-border-strong', ui.borderStrong);
+  root.style.setProperty('--ui-ink', ui.ink);
+  root.style.setProperty('--ui-ink-muted', ui.inkMuted);
+  root.style.setProperty('--ui-ink-faint', ui.inkFaint);
+  root.style.setProperty('--ui-accent', s.accentColor || preset.accentColor);
+  root.style.setProperty('--ui-accent-ink', ui.accentInk);
+  root.style.setProperty('--ui-gold', s.goldColor || preset.goldColor);
+  root.style.setProperty('--ui-state-on', ui.stateOn);
+  root.style.setProperty('--ui-state-always', ui.stateAlways);
+  root.style.setProperty('--ui-state-danger', ui.stateDanger);
+  root.style.setProperty('--ui-shadow', ui.shadow);
+  root.style.setProperty('--ui-color-scheme', ui.colorScheme);
+  root.dataset.theme = s.themePreset;
+  root.dataset.colorScheme = ui.colorScheme;
   document.body.style.backgroundColor = s.backgroundColor;
   document.body.dataset.bgMode = 'image';
   if (s.backgroundImage && s.backgroundImage !== 'img/bg-home.png') {

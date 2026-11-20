@@ -1,5 +1,18 @@
-import { WORLD_BOOK_ENTRIES } from './worldbook/index.js';
-import { isWorldbookEntryEnabled, matchesWorldbookActivation } from './worldbook/activation.js';
+import { WORLD_BOOK_V2_ENTRIES } from './worldbook/index.js';
+import { isWorldbookEntryEnabled, matchesWorldbookActivation, normalizeWorldbookActivation } from './worldbook/activation.js';
+import {
+  applyBuiltinWorldbookOverride,
+  clearBuiltinWorldbookOverrides,
+  getBuiltinWorldbookKey,
+  loadBuiltinWorldbookOverrides,
+  normalizeBuiltinOverridesStore,
+  readBuiltinWorldbookOverridesRaw,
+  resetBuiltinWorldbookEntry,
+  saveBuiltinWorldbookOverridesStore,
+  setAllBuiltinWorldbookEnabled,
+  setBuiltinWorldbookEntryEnabled,
+  setBuiltinWorldbookEntryOverride
+} from './worldbook/builtin-overrides.js';
 import { CANON_DATABASE } from './canon-database.js';
 
 export const KNOWLEDGE_BASE = {
@@ -131,15 +144,108 @@ S级任务: 影级任务，涉及国家机密或超强敌人。报酬: 500000两
   ],
 
   getDefaultEntries() {
-    const worldTitles = new Set(WORLD_BOOK_ENTRIES.map(entry => entry.title));
-    return [
-      ...this.entries.filter(entry => !worldTitles.has(entry.title)),
-      ...WORLD_BOOK_ENTRIES
-    ];
+    const v2Entries = WORLD_BOOK_V2_ENTRIES.map(entry => {
+      const activation = normalizeWorldbookActivation(entry);
+      return {
+        title: entry.title,
+        keys: [...(entry.keys || [])],
+        content: entry.content,
+        isAlwaysOn: activation.mode === 'always',
+        activation,
+        v2Category: entry.category,
+        source: 'builtin',
+        enabled: true,
+        _builtinKey: getBuiltinWorldbookKey(entry.title)
+      };
+    });
+    const v2Keys = new Set(v2Entries.map(entry => entry._builtinKey));
+    const legacyExtra = this.entries
+      .filter(entry => !v2Keys.has(getBuiltinWorldbookKey(entry.title)))
+      .map(entry => {
+        const activation = normalizeWorldbookActivation(entry);
+        return {
+          ...entry,
+          keys: [...(entry.keys || [])],
+          isAlwaysOn: activation.mode === 'always',
+          activation,
+          v2Category: '',
+          source: 'builtin',
+          enabled: true,
+          _builtinKey: getBuiltinWorldbookKey(entry.title)
+        };
+      });
+    return [...legacyExtra, ...v2Entries];
+  },
+
+  getBuiltinEntries({ includeDisabled = true } = {}) {
+    const overrides = loadBuiltinWorldbookOverrides().entries;
+    const merged = this.getDefaultEntries().map(entry => {
+      const key = entry._builtinKey || getBuiltinWorldbookKey(entry);
+      return applyBuiltinWorldbookOverride(entry, overrides[key] || null);
+    });
+    return includeDisabled ? merged : merged.filter(isWorldbookEntryEnabled);
+  },
+
+  getBuiltinOverrides() {
+    return loadBuiltinWorldbookOverrides();
+  },
+
+  _findDefaultBuiltinEntry(entryOrKey) {
+    const key = getBuiltinWorldbookKey(entryOrKey);
+    if (!key) return null;
+    return this.getDefaultEntries().find(entry => (entry._builtinKey || getBuiltinWorldbookKey(entry)) === key) || null;
+  },
+
+  saveBuiltinEntry(entryOrKey, editedEntry) {
+    const baseEntry = this._findDefaultBuiltinEntry(entryOrKey);
+    if (!baseEntry) return null;
+    const store = setBuiltinWorldbookEntryOverride(baseEntry, editedEntry);
+    this.invalidateCache();
+    return applyBuiltinWorldbookOverride(baseEntry, store.entries[baseEntry._builtinKey] || null);
+  },
+
+  setBuiltinEntryEnabled(entryOrKey, enabled) {
+    const baseEntry = this._findDefaultBuiltinEntry(entryOrKey);
+    if (!baseEntry) return null;
+    const store = setBuiltinWorldbookEntryEnabled(baseEntry, enabled);
+    this.invalidateCache();
+    return applyBuiltinWorldbookOverride(baseEntry, store.entries[baseEntry._builtinKey] || null);
+  },
+
+  setAllBuiltinEnabled(enabled) {
+    const store = setAllBuiltinWorldbookEnabled(this.getDefaultEntries(), enabled);
+    this.invalidateCache();
+    return store;
+  },
+
+  resetBuiltinEntry(entryOrKey) {
+    const baseEntry = this._findDefaultBuiltinEntry(entryOrKey);
+    const key = baseEntry?._builtinKey || getBuiltinWorldbookKey(entryOrKey);
+    const store = resetBuiltinWorldbookEntry(key);
+    this.invalidateCache();
+    return baseEntry ? applyBuiltinWorldbookOverride(baseEntry, store.entries[key] || null) : null;
+  },
+
+  clearBuiltinOverrides() {
+    const store = clearBuiltinWorldbookOverrides();
+    this.invalidateCache();
+    return store;
+  },
+
+  importBuiltinOverrides(raw, { merge = true } = {}) {
+    const incoming = normalizeBuiltinOverridesStore(raw);
+    const current = merge ? loadBuiltinWorldbookOverrides() : { version: 1, entries: {} };
+    const nextStore = {
+      version: 1,
+      entries: { ...current.entries, ...incoming.entries }
+    };
+    saveBuiltinWorldbookOverridesStore(nextStore);
+    this.invalidateCache();
+    return Object.keys(incoming.entries).length;
   },
 
   get allEntries() {
-    const builtin = this.getDefaultEntries();
+    const builtin = this.getBuiltinEntries({ includeDisabled: false });
     const custom = this._loadCustomEntries().filter(isWorldbookEntryEnabled).map(e => ({ ...e, source: 'custom' }));
     return [...builtin, ...custom];
   },
@@ -268,10 +374,19 @@ S级任务: 影级任务，涉及国家机密或超强敌人。报酬: 500000两
     const stopTerms = new Set(['血继', '血继限界', '家族', '一族', '是否', '存在', '调查', '了解', '打听', '相关', '线索']);
     const terms = this._tokenize(lowerQuery);
     for (const entry of this.allEntries) {
-      if (!lowerQuery && entry.source !== 'custom') continue;
+      if (!isWorldbookEntryEnabled(entry)) continue;
+      const activation = normalizeWorldbookActivation(entry);
+      if (activation.mode === 'manual') continue;
+      if (entry.source !== 'custom' && !lowerQuery && activation.mode !== 'always') continue;
       if (entry.source === 'custom' && !matchesWorldbookActivation(entry, searchText)) continue;
+      if (entry.source !== 'custom' && activation.mode === 'keyword') {
+        const needsActivationMatch = Boolean(entry._activationOverridden)
+          || (activation.selective && activation.secondary_keys.length > 0);
+        if (needsActivationMatch && !matchesWorldbookActivation(entry, searchText)) continue;
+      }
       let relevance = 0;
       if (entry.source === 'custom') relevance = 1000;
+      else if (!lowerQuery && activation.mode === 'always') relevance = 1;
       const lowerTitle = String(entry.title || '').toLowerCase();
       const lowerContent = String(entry.content || '').toLowerCase();
       if (lowerQuery.includes(lowerTitle)) relevance += 18;
@@ -313,7 +428,9 @@ S级任务: 影级任务，涉及国家机密或超强敌人。报酬: 500000两
 
   _refreshWorldbookCache() {
     if (typeof localStorage === 'undefined') return;
-    const raw = localStorage.getItem('naruto_worldbook_custom') ?? localStorage.getItem('naruto_worldbook');
+    const customRaw = localStorage.getItem('naruto_worldbook_custom') ?? localStorage.getItem('naruto_worldbook') ?? '';
+    const builtinRaw = readBuiltinWorldbookOverridesRaw();
+    const raw = `${customRaw}\u0000${builtinRaw}`;
     if (raw !== this._cachedWorldbookRaw) {
       this._cachedWorldbookRaw = raw;
       this.invalidateCache();
@@ -346,7 +463,10 @@ S级任务: 影级任务，涉及国家机密或超强敌人。报酬: 500000两
   },
 
   getEntry(title) {
-    return this.allEntries.find(e => e.title === title) || null;
+    const key = getBuiltinWorldbookKey(title);
+    return this.allEntries.find(e => e.title === title)
+      || (key ? this.allEntries.find(e => e._builtinKey && e._builtinKey === key) : null)
+      || null;
   },
 
   getAllEntries() {
@@ -420,14 +540,19 @@ S级任务: 影级任务，涉及国家机密或超强敌人。报酬: 500000两
     for (const entry of all) {
       // 玩家开局契约属于当前存档；旧版全局“玩家人设”不能污染其他角色。
       if (entry.title === '玩家人设' && state._opening_contract) continue;
-      if (entry.source !== 'custom' && entry.isAlwaysOn) {
+      if (entry.source !== 'custom' && normalizeWorldbookActivation(entry).mode === 'always') {
         add(entry);
       }
     }
 
-    add(this.getEntry('火影时间线总览'));
-    add(this.getEntry('九尾之乱与木叶52年'));
-    add(this.getEntry('忍者能力分类') || this.getEntry('基础忍术体系'));
+    const addDefaultAlwaysOn = (titleOrKey) => {
+      const target = this.getEntry(titleOrKey);
+      if (target && normalizeWorldbookActivation(target).mode === 'always') add(target);
+    };
+    addDefaultAlwaysOn('火影时间线总览');
+    addDefaultAlwaysOn('九尾之乱与木叶52年');
+    if (this.getEntry('忍者能力分类')) addDefaultAlwaysOn('忍者能力分类');
+    else addDefaultAlwaysOn('基础忍术体系');
 
     const location = state['世界·地点'] || '';
     if (location) {

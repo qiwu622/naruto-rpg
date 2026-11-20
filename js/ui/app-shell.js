@@ -1630,7 +1630,7 @@ class AppShell {
 
     const btnRow = document.createElement('div');
     btnRow.style.cssText = 'display:flex;gap:8px;margin-top:8px;';
-    btnRow.innerHTML = `<button class="btn-save-edit" style="padding:6px 16px;background:var(--c-shuiro);color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:700;">保存</button>
+    btnRow.innerHTML = `<button class="btn-save-edit" style="padding:6px 14px;background:var(--ui-btn-primary-bg,#6c3326);color:var(--ui-btn-primary-ink,#f6f1e7);border:1px solid var(--ui-btn-primary-border,#9e5341);border-radius:6px;cursor:pointer;font-weight:500;box-shadow:var(--ui-btn-primary-shadow,0 1px 2px rgba(0,0,0,.36),inset 0 1px 0 rgba(255,255,255,.11));">保存</button>
       <button class="btn-cancel-edit" style="padding:6px 16px;background:transparent;color:#a39f98;border:1px solid rgba(232,228,217,0.2);border-radius:4px;cursor:pointer;">取消</button>`;
 
     contentEl.innerHTML = '';

@@ -72,13 +72,14 @@ export async function generateAnnouncements(projectRoot = root) {
     .wrap { width:min(1080px,100%); margin:auto; padding:32px 28px calc(64px + env(safe-area-inset-bottom)); }
     .top { display:flex; align-items:center; justify-content:space-between; gap:20px; border-bottom:1px solid #ffffff14; padding-bottom:24px; }
     .brand { font:600 22px/1.2 Georgia,"Songti SC",serif; letter-spacing:2px; text-decoration:none; color:var(--paper); }
-    .pill { display:inline-flex; justify-content:center; padding:8px 18px; border:1px solid #d7b17a48; border-radius:9px; text-decoration:none; }
+    .pill { display:inline-flex; justify-content:center; padding:8px 18px; border:1px solid #d7b17a48; border-radius:7px; text-decoration:none; font-weight:500; transition:background .16s ease, border-color .16s ease, transform .12s ease; }
     .hero { padding:58px 0 40px; }
     .eyebrow { margin:0; color:var(--gold); font-size:12px; letter-spacing:3px; }
     h1 { margin:12px 0; font:600 clamp(32px,5vw,52px)/1.3 Georgia,"Songti SC",serif; letter-spacing:1px; }
     .hero p { color:var(--muted); margin:12px 0 20px; }
     .links { display:flex; gap:10px; flex-wrap:wrap; }
-    .primary { background:#b04a31; color:#fff0e3; border-color:#d87553; }
+    .primary { background:#6c3326; color:#f6f1e7; border-color:#9e5341; box-shadow:0 1px 2px rgba(0,0,0,.36), inset 0 1px 0 rgba(255,255,255,.11); }
+    .primary:hover { background:#7f3b2c; border-color:#b8624d; }
     .layout { display:grid; grid-template-columns:210px minmax(0,1fr); gap:40px; align-items:start; }
     nav { position:sticky; top:24px; padding:20px 0; }
     nav p { color:var(--muted); font-size:12px; letter-spacing:2px; }

@@ -151,5 +151,95 @@ try {
     KNOWLEDGE_BASE.saveCustomEntries([fixture({ isAlwaysOn: true, content: 'OVER_BUDGET_BLUE' + '大'.repeat(50_000) })]);
     assert.doesNotMatch(KNOWLEDGE_BASE.buildContext({ query: '叶舟', includeCanon: false, budget: 5000 }), /OVER_BUDGET_BLUE/);
   });
+
+  test('builtin entries can be disabled individually including core always-on entries', () => {
+    reset();
+    const v2Resolver = new WorldbookV2Resolver({ customLoader: () => [] });
+    const baseV2 = v2Resolver.resolve({ query: '漩涡鸣人', currentDate: 'K052-06-01', audience: 'writer', maxEntries: 30, budget: 100_000 });
+    assert.equal(baseV2.entries.some(e => e.title === '【早期】漩涡鸣人'), true);
+    assert.equal(baseV2.entries.some(e => e.title === '火影时间线总览'), true);
+    assert.equal(baseV2.entries.some(e => e.title === '查克拉基础'), true);
+
+    KNOWLEDGE_BASE.setBuiltinEntryEnabled('【早期】漩涡鸣人', false);
+    KNOWLEDGE_BASE.setBuiltinEntryEnabled('火影时间线总览', false);
+    KNOWLEDGE_BASE.setBuiltinEntryEnabled('查克拉基础', false);
+
+    assert.equal(KNOWLEDGE_BASE.search('漩涡鸣人').some(e => e.title === '【早期】漩涡鸣人'), false);
+    const kbCtx = KNOWLEDGE_BASE.buildContext({ query: '漩涡鸣人', state: { '世界·时间': { year: '木叶52年' } }, includeCanon: false, maxEntries: 30, budget: 100_000 });
+    assert.equal(kbCtx.includes('### 【早期】漩涡鸣人'), false);
+    assert.equal(kbCtx.includes('### 火影时间线总览'), false);
+    assert.equal(kbCtx.includes('### 查克拉基础'), false);
+
+    const disabledV2 = v2Resolver.resolve({ query: '漩涡鸣人', currentDate: 'K052-06-01', audience: 'writer', maxEntries: 30, budget: 100_000 });
+    assert.equal(disabledV2.entries.some(e => e.title === '【早期】漩涡鸣人'), false);
+    assert.equal(disabledV2.entries.some(e => e.title === '火影时间线总览'), false);
+    assert.equal(disabledV2.entries.some(e => e.title === '查克拉基础'), false);
+  });
+
+  test('editing builtin entry title, keys, mode and content takes effect in both KNOWLEDGE_BASE and V2 resolver', () => {
+    reset();
+    const v2Resolver = new WorldbookV2Resolver({ customLoader: () => [] });
+    KNOWLEDGE_BASE.saveBuiltinEntry('【早期】漩涡鸣人', {
+      title: '鸣人自定义改版',
+      keys: ['拉面暗号'],
+      activation: { mode: 'keyword', secondary_keys: ['一乐'], selective: true, selective_logic: 'and_any' },
+      content: 'BUILTIN_OVERRIDE_VERBATIM_BODY'
+    });
+
+    assert.equal(v2Resolver.resolve({ query: '漩涡鸣人', currentDate: 'K052-06-01', audience: 'writer', budget: 100_000 }).entries.some(e => e.title === '鸣人自定义改版'), false);
+    assert.equal(v2Resolver.resolve({ query: '拉面暗号', currentDate: 'K052-06-01', audience: 'writer', budget: 100_000 }).entries.some(e => e.title === '鸣人自定义改版'), false);
+
+    const hitV2 = v2Resolver.resolve({ query: '拉面暗号 一乐', currentDate: 'K052-06-01', audience: 'writer', maxEntries: 30, budget: 100_000 });
+    const edited = hitV2.entries.find(e => e.title === '鸣人自定义改版');
+    assert.ok(edited);
+    assert.equal(edited.content, 'BUILTIN_OVERRIDE_VERBATIM_BODY');
+    assert.match(KNOWLEDGE_BASE.buildContext({ query: '拉面暗号 一乐', includeCanon: false, maxEntries: 30, budget: 100_000 }), /BUILTIN_OVERRIDE_VERBATIM_BODY/);
+
+    KNOWLEDGE_BASE.saveBuiltinEntry('【早期】漩涡鸣人', {
+      title: '鸣人自定义改版',
+      keys: ['拉面暗号'],
+      activation: { mode: 'manual' },
+      content: 'BUILTIN_OVERRIDE_VERBATIM_BODY'
+    });
+    assert.equal(v2Resolver.resolve({ query: '拉面暗号 一乐', currentDate: 'K052-06-01', audience: 'writer', budget: 100_000 }).entries.some(e => e.title === '鸣人自定义改版'), false);
+    assert.equal(KNOWLEDGE_BASE.search('拉面暗号 一乐').some(e => e.title === '鸣人自定义改版'), false);
+
+    KNOWLEDGE_BASE.saveBuiltinEntry('【早期】漩涡鸣人', {
+      title: '鸣人自定义改版',
+      keys: ['拉面暗号'],
+      activation: { mode: 'always' },
+      content: 'BUILTIN_OVERRIDE_ALWAYS_BODY'
+    });
+    assert.match(KNOWLEDGE_BASE.buildContext({ query: '', includeCanon: false, maxEntries: 30, budget: 100_000 }), /BUILTIN_OVERRIDE_ALWAYS_BODY/);
+    assert.equal(v2Resolver.resolve({ query: '', currentDate: 'K052-06-01', audience: 'writer', maxEntries: 30, budget: 100_000 }).entries.some(e => e.content === 'BUILTIN_OVERRIDE_ALWAYS_BODY'), true);
+  });
+
+  test('builtin bulk toggle preserves content edits, reset restores defaults, and direct storage changes invalidate cache', () => {
+    reset();
+    KNOWLEDGE_BASE.saveBuiltinEntry('木叶隐村', {
+      title: '木叶隐村',
+      keys: ['木叶'],
+      content: 'EDITED_KONOHA_BODY'
+    });
+    KNOWLEDGE_BASE.setAllBuiltinEnabled(false);
+    assert.equal(KNOWLEDGE_BASE.getBuiltinEntries({ includeDisabled: false }).length, 0);
+    KNOWLEDGE_BASE.setAllBuiltinEnabled(true);
+    const konoha = KNOWLEDGE_BASE.getBuiltinEntries().find(e => e._builtinKey === '木叶隐村');
+    assert.equal(konoha.enabled, true);
+    assert.equal(konoha.content, 'EDITED_KONOHA_BODY');
+
+    KNOWLEDGE_BASE.resetBuiltinEntry('木叶隐村');
+    assert.equal(KNOWLEDGE_BASE.getBuiltinEntries().find(e => e._builtinKey === '木叶隐村')._hasOverride, false);
+    assert.equal(localStorage.getItem('naruto_worldbook_builtin_overrides_v1'), null);
+
+    assert.match(KNOWLEDGE_BASE.buildContext({ query: '木叶隐村', includeCanon: false, maxEntries: 30, budget: 100_000 }), /火之国五大忍村/);
+    localStorage.setItem('naruto_worldbook_builtin_overrides_v1', JSON.stringify({
+      version: 1,
+      entries: { '木叶隐村': { enabled: false } }
+    }));
+    assert.doesNotMatch(KNOWLEDGE_BASE.buildContext({ query: '木叶隐村', includeCanon: false, maxEntries: 30, budget: 100_000 }), /### 木叶隐村 \|/);
+    KNOWLEDGE_BASE.clearBuiltinOverrides();
+    assert.equal(localStorage.getItem('naruto_worldbook_builtin_overrides_v1'), null);
+  });
 } finally { delete globalThis.localStorage; KNOWLEDGE_BASE.invalidateCache(); }
 console.log(passed + ' worldbook trigger regression groups passed.');

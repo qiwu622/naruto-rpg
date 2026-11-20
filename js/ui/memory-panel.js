@@ -47,17 +47,17 @@ class MemoryPanel extends HTMLElement {
             <label>启用 AI 滚动压缩</label>
             <div>
               <input type="checkbox" name="memAiCompressionEnabled" ${cfg.aiCompressionEnabled ? 'checked' : ''}>
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">默认关闭。达到压缩阈值时会产生额外后台模型调用；关闭后仍会使用本地无 API 压缩。</div>
+              <div class="hint" style="font-size:11px;color:var(--ui-ink-faint, #757168);margin-top:3px;">默认关闭。达到压缩阈值时会产生额外后台模型调用；关闭后仍会使用本地无 API 压缩。</div>
             </div>
             <label>启用深度整理</label>
             <div>
               <input type="checkbox" name="memDeepEnabled" ${cfg.deepEnabled ? 'checked' : ''}>
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">默认关闭。开启后系统会在后台定期调用模型整理摘要。原始记忆完整留存，不会因整理而删除。</div>
+              <div class="hint" style="font-size:11px;color:var(--ui-ink-faint, #757168);margin-top:3px;">默认关闭。开启后系统会在后台定期调用模型整理摘要。原始记忆完整留存，不会因整理而删除。</div>
             </div>
             <label>整理周期(回合)</label>
             <div>
               <input type="number" name="memDeepCycle" min="12" max="100" value="${cfg.deepCycle}">
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">每隔多少回合触发一次整理，建议30-50。</div>
+              <div class="hint" style="font-size:11px;color:var(--ui-ink-faint, #757168);margin-top:3px;">每隔多少回合触发一次整理，建议30-50。</div>
             </div>
             <label>使用模型</label>
             <div>
@@ -65,12 +65,12 @@ class MemoryPanel extends HTMLElement {
                 <option value="main" ${cfg.deepModel === 'main' ? 'selected' : ''}>主模型</option>
                 <option value="updater" ${cfg.deepModel === 'updater' ? 'selected' : ''}>二次变量模型</option>
               </select>
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">指定哪一个模型整理摘要，二次模型能节约主模型的开销。</div>
+              <div class="hint" style="font-size:11px;color:var(--ui-ink-faint, #757168);margin-top:3px;">指定哪一个模型整理摘要，二次模型能节约主模型的开销。</div>
             </div>
           </div>
           <div style="margin-top:12px;">
             <button type="button" class="btn ghost btn-xs" data-action="mem-deep-now">立即整理</button>
-            <span class="hint" style="margin-left:8px;font-size:11px;color:var(--c-text-muted);">不阻塞游戏,失败静默放弃</span>
+            <span class="hint" style="margin-left:8px;font-size:11px;color:var(--ui-ink-faint, #757168);">不阻塞游戏,失败静默放弃</span>
           </div>
         </section>
         <section>
@@ -79,37 +79,37 @@ class MemoryPanel extends HTMLElement {
             <label>章节窗口(回合)</label>
             <div>
               <input type="number" name="memChapterWindow" min="5" max="30" value="${cfg.chapterWindow}">
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">每次整合历史摘要所涉及的最小回合跨度。</div>
+              <div class="hint" style="font-size:11px;color:var(--ui-ink-faint, #757168);margin-top:3px;">每次整合历史摘要所涉及的最小回合跨度。</div>
             </div>
             <label>近期小结窗口</label>
             <div>
               <input type="number" name="memMaxTurnSummaries" min="4" max="20" value="${cfg.maxTurnSummaries}">
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">超过此窗口会整理为章节；原始记录完整保留。</div>
+              <div class="hint" style="font-size:11px;color:var(--ui-ink-faint, #757168);margin-top:3px;">超过此窗口会整理为章节；原始记录完整保留。</div>
             </div>
             <label>注入预算(字符)</label>
             <div>
               <input type="number" name="memPromptBudget" min="3000" max="20000" value="${cfg.promptBudget}">
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">提供给 AI 的记忆上下文最大字符数(Token容量保护)。</div>
+              <div class="hint" style="font-size:11px;color:var(--ui-ink-faint, #757168);margin-top:3px;">提供给 AI 的记忆上下文最大字符数(Token容量保护)。</div>
             </div>
             <label>活跃事实窗口</label>
             <div>
               <input type="number" name="memFactsLimit" min="30" max="300" value="${cfg.factsLimit}">
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">超出窗口的事实移入归档并保留全文，仍可检索。</div>
+              <div class="hint" style="font-size:11px;color:var(--ui-ink-faint, #757168);margin-top:3px;">超出窗口的事实移入归档并保留全文，仍可检索。</div>
             </div>
             <label>归档数量提醒</label>
             <div>
               <input type="number" name="memArchivedLimit" min="100" max="2000" value="${cfg.archivedLimit}">
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">仅作数量提醒，超出也不删除；完整记录随存档保存。</div>
+              <div class="hint" style="font-size:11px;color:var(--ui-ink-faint, #757168);margin-top:3px;">仅作数量提醒，超出也不删除；完整记录随存档保存。</div>
             </div>
             <label>启用 &lt;recall&gt; 协议</label>
             <div>
               <input type="checkbox" name="memRecallEnabled" ${cfg.recallEnabled ? 'checked' : ''}>
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">开启后允许 AI 在交互中主动请求召回特定人物或地点的历史记忆。</div>
+              <div class="hint" style="font-size:11px;color:var(--ui-ink-faint, #757168);margin-top:3px;">开启后允许 AI 在交互中主动请求召回特定人物或地点的历史记忆。</div>
             </div>
             <label>召回有效期(回合)</label>
             <div>
               <input type="number" name="memRecallLifetime" min="1" max="10" value="${cfg.recallLifetime}">
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">召回内容的生效时限，超时将自动从上下文中卸载。</div>
+              <div class="hint" style="font-size:11px;color:var(--ui-ink-faint, #757168);margin-top:3px;">召回内容的生效时限，超时将自动从上下文中卸载。</div>
             </div>
           </div>
         </section>
@@ -121,12 +121,12 @@ class MemoryPanel extends HTMLElement {
             <label>启用自动总结</label>
             <div>
               <input type="checkbox" name="memNpcSummaryEnabled" ${cfg.npcSummaryEnabled ? 'checked' : ''}>
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">开启后，置顶(📌)的重要角色会自动在后台调用主模型总结互动历史，防止长期遗忘。</div>
+              <div class="hint" style="font-size:11px;color:var(--ui-ink-faint, #757168);margin-top:3px;">开启后，置顶(📌)的重要角色会自动在后台调用主模型总结互动历史，防止长期遗忘。</div>
             </div>
             <label>总结频率(互动次)</label>
             <div>
               <input type="number" name="memNpcSummaryFrequency" min="5" max="30" value="${cfg.npcSummaryFrequency || 10}">
-              <div class="hint" style="font-size:10px;color:var(--c-text-muted);margin-top:2px;">每累计N次有效互动(产生历史/心声)后触发一次小结，10次小结后自动大总结。</div>
+              <div class="hint" style="font-size:11px;color:var(--ui-ink-faint, #757168);margin-top:3px;">每累计N次有效互动(产生历史/心声)后触发一次小结，10次小结后自动大总结。</div>
             </div>
           </div>
         </section>
@@ -135,7 +135,7 @@ class MemoryPanel extends HTMLElement {
           <div class="mem-stats" data-mem-stats>计算中…</div>
         </section>
         <section>
-          <h3 style="display:flex;align-items:center;gap:6px;color:var(--c-accent);">${icon('database', 18)} 动态记忆库 (Memory Bank)</h3>
+          <h3 style="display:flex;align-items:center;gap:6px;color:var(--ui-accent, #eb613f);">${icon('database', 18)} 动态记忆库 (Memory Bank)</h3>
           <div class="mem-chapters" data-mem-chapters style="max-height:400px;overflow:auto;font-size:12px;padding-right:8px;">加载中…</div>
         </section>
       </div>`;
@@ -233,29 +233,29 @@ class MemoryPanel extends HTMLElement {
       if (facts.length > 0) {
         const recentFacts = facts.slice(-10).reverse();
         recentFactsHTML = recentFacts.map(fact =>
-          `<div style="padding:6px 8px;margin-bottom:6px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:4px;">
-            <span style="color:var(--c-shuiro);margin-right:4px;">✦</span> ${this._esc(fact)}
+          `<div style="padding:8px 10px;margin-bottom:6px;background:var(--ui-surface-2, #181d26);border:1px solid var(--ui-border, rgba(244,241,234,0.09));border-radius:8px;color:var(--ui-ink, #f0ece2);">
+            <span style="color:var(--ui-accent, #eb613f);margin-right:4px;">✦</span> ${this._esc(fact)}
           </div>`
         ).join('');
       }
 
-      let chaptersHTML = '<div style="opacity:0.6;font-size:11px;">尚无章节(系统将根据周期自动固化)</div>';
+      let chaptersHTML = '<div style="opacity:0.65;font-size:11px;">尚无章节(系统将根据周期自动固化)</div>';
       if (chapters.length) {
         chaptersHTML = chapters.slice(-3).reverse().map(ch =>
-          `<div style="padding:8px;margin-bottom:8px;background:rgba(235,97,63,0.05);border-left:2px solid var(--c-shuiro);border-radius:0 4px 4px 0;">
-            <div style="font-weight:600;margin-bottom:4px;">[第${ch.id}章] ${this._esc(ch.title || '无名章节')} <span style="opacity:0.6;font-size:10px;font-weight:normal;">(${ch.from}-${ch.to}回合)</span></div>
-            <div style="font-size:11px;opacity:0.85;line-height:1.5;">${this._esc(ch.summary || '')}</div>
+          `<div style="padding:10px 12px;margin-bottom:8px;background:color-mix(in srgb, var(--ui-accent, #eb613f) 7%, var(--ui-surface-2, #181d26));border-left:3px solid var(--ui-accent, #eb613f);border-radius:0 8px 8px 0;color:var(--ui-ink, #f0ece2);">
+            <div style="font-weight:600;margin-bottom:4px;">[第${ch.id}章] ${this._esc(ch.title || '无名章节')} <span style="opacity:0.65;font-size:10px;font-weight:normal;">(${ch.from}-${ch.to}回合)</span></div>
+            <div style="font-size:11px;color:var(--ui-ink-muted, #aba69b);line-height:1.5;">${this._esc(ch.summary || '')}</div>
           </div>`
         ).join('');
       }
 
       chapEl.innerHTML = `
         <div style="margin-bottom:16px;">
-          <h4 style="font-size:12px;color:var(--c-text-muted);margin:0 0 8px 0;display:flex;align-items:center;gap:4px;">${icon('file-text', 14)} 近期新增记忆 (Facts)</h4>
+          <h4 style="font-size:12px;color:var(--ui-ink-muted, #aba69b);margin:0 0 8px 0;display:flex;align-items:center;gap:4px;">${icon('file-text', 14)} 近期新增记忆 (Facts)</h4>
           <div id="memory-facts" style="display:flex;flex-direction:column;gap:4px;">
             ${recentFactsHTML}
           </div>
-          <h4 style="font-size:12px;color:var(--c-text-muted);margin:0 0 8px 0;display:flex;align-items:center;gap:4px;">${icon('book-open', 14)} 最新大总结 (Chapters)</h4>
+          <h4 style="font-size:12px;color:var(--ui-ink-muted, #aba69b);margin:14px 0 8px 0;display:flex;align-items:center;gap:4px;">${icon('book-open', 14)} 最新大总结 (Chapters)</h4>
           ${chaptersHTML}
         </div>
       `;

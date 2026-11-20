@@ -161,6 +161,79 @@ function findUnsafeSnapshotKey(snapshot) {
   return null;
 }
 
+export function inspectTimelineNodeContent(node, continuityEventOwners = new Map(), { allowPayload = false } = {}) {
+  const errors = [];
+  if (!isRecord(node) || !validId(node.id)) return ['时间线节点包含无效 ID'];
+  if (node.shinobi_daily != null) {
+    const dailyResult = validateShinobiDaily(node.shinobi_daily);
+    if (!dailyResult.valid) {
+      errors.push(`${node.id}: shinobi_daily 忍界日报无效 (${dailyResult.errors.slice(0, 3).join('; ')})`);
+    }
+  }
+  if (!allowPayload && (node.payload_encoding != null || Object.prototype.hasOwnProperty.call(node, 'payload'))) {
+    errors.push(`${node.id}: 存档文件不能包含本地 gzip 载荷，导出前必须先解压`);
+  }
+  if (node.state_snapshot != null && !isRecord(node.state_snapshot)) {
+    errors.push(`${node.id}: state_snapshot 状态快照必须是 JSON 对象或 null`);
+  } else if (isRecord(node.state_snapshot) && findUnsafeSnapshotKey(node.state_snapshot)) {
+    errors.push(`${node.id}: state_snapshot 状态快照包含不安全键`);
+  } else if (isRecord(node.state_snapshot) && findForbiddenTimelineMedia(node.state_snapshot, 'state_snapshot')) {
+    errors.push(`${node.id}: state_snapshot 状态快照包含图片二进制、Base64 或 blob URL`);
+  } else if (isRecord(node.state_snapshot)
+      && hasOwn(node.state_snapshot, '_meta')
+      && node.state_snapshot._meta != null
+      && !isRecord(node.state_snapshot._meta)) {
+    errors.push(`${node.id}: state_snapshot._meta 必须是 JSON 对象或 null`);
+  } else if (isRecord(node.state_snapshot)
+      && !SUPPORTED_SNAPSHOT_VERSIONS.has(node.state_snapshot._version)) {
+    errors.push(`${node.id}: state_snapshot 状态快照版本不受支持`);
+  }
+  const snapshotLedger = node.state_snapshot?._continuity;
+  if (snapshotLedger != null) {
+    const ledgerResult = inspectContinuityLedger(snapshotLedger);
+    if (!ledgerResult.valid) {
+      errors.push(`${node.id}: 连续性账本无效 (${ledgerResult.errors.slice(0, 3).join('; ')})`);
+    }
+  }
+  if (hasOwn(node, 'continuity_revision')) {
+    if (!isNonNegativeInteger(node.continuity_revision)) {
+      errors.push(`${node.id}: continuity_revision 必须是非负整数`);
+    } else if (snapshotLedger && node.continuity_revision !== snapshotLedger.revision) {
+      errors.push(`${node.id}: continuity_revision 与状态快照账本版本不一致`);
+    }
+  }
+  if (node.continuity_delta != null && !Array.isArray(node.continuity_delta)) {
+    errors.push(`${node.id}: continuity_delta 必须是数组`);
+  } else if (Array.isArray(node.continuity_delta)) {
+    let previousSequence = -1;
+    const snapshotEvents = new Map(
+      (Array.isArray(snapshotLedger?.events) ? snapshotLedger.events : [])
+        .filter(event => isRecord(event) && validId(event.event_id))
+        .map(event => [event.event_id, event])
+    );
+    for (let index = 0; index < node.continuity_delta.length; index++) {
+      const event = node.continuity_delta[index];
+      const eventResult = inspectMemoryEvent(event);
+      if (!eventResult.valid) {
+        errors.push(`${node.id}: continuity_delta[${index}] 无效 (${eventResult.errors.join(', ')})`);
+        continue;
+      }
+      const owner = continuityEventOwners.get(event.event_id);
+      if (owner) errors.push(`${event.event_id}: continuity_delta 同时属于 ${owner} 与 ${node.id}`);
+      else continuityEventOwners.set(event.event_id, node.id);
+      if (event.sequence <= previousSequence) errors.push(`${node.id}: continuity_delta sequence 必须递增`);
+      previousSequence = event.sequence;
+      const snapshotEvent = snapshotEvents.get(event.event_id);
+      if (snapshotLedger && !snapshotEvent) {
+        errors.push(`${node.id}: continuity_delta 事件未写入同节点状态快照 (${event.event_id})`);
+      } else if (snapshotEvent && JSON.stringify(snapshotEvent) !== JSON.stringify(event)) {
+        errors.push(`${node.id}: continuity_delta 与状态快照事件内容不一致 (${event.event_id})`);
+      }
+    }
+  }
+  return errors;
+}
+
 function inspectTimelineSaveInternal(data) {
   const errors = [];
   if (!isRecord(data)) return { valid: false, errors: ['存档根节点必须是 JSON 对象'] };
@@ -225,72 +298,8 @@ function inspectTimelineSaveInternal(data) {
     if (hasOwn(node, 'depth') && !isNonNegativeInteger(node.depth)) {
       errors.push(`${node.id}: depth 必须是非负整数`);
     }
-    if (node.shinobi_daily != null) {
-      const dailyResult = validateShinobiDaily(node.shinobi_daily);
-      if (!dailyResult.valid) {
-        errors.push(`${node.id}: shinobi_daily 忍界日报无效 (${dailyResult.errors.slice(0, 3).join('; ')})`);
-      }
-    }
-    if (node.payload_encoding != null || Object.prototype.hasOwnProperty.call(node, 'payload')) {
-      errors.push(`${node.id}: 存档文件不能包含本地 gzip 载荷，导出前必须先解压`);
-    }
-    if (node.state_snapshot != null && !isRecord(node.state_snapshot)) {
-      errors.push(`${node.id}: state_snapshot 状态快照必须是 JSON 对象或 null`);
-    } else if (isRecord(node.state_snapshot) && findUnsafeSnapshotKey(node.state_snapshot)) {
-      errors.push(`${node.id}: state_snapshot 状态快照包含不安全键`);
-    } else if (isRecord(node.state_snapshot) && findForbiddenTimelineMedia(node.state_snapshot, 'state_snapshot')) {
-      errors.push(`${node.id}: state_snapshot 状态快照包含图片二进制、Base64 或 blob URL`);
-    } else if (isRecord(node.state_snapshot)
-        && hasOwn(node.state_snapshot, '_meta')
-        && node.state_snapshot._meta != null
-        && !isRecord(node.state_snapshot._meta)) {
-      errors.push(`${node.id}: state_snapshot._meta 必须是 JSON 对象或 null`);
-    } else if (isRecord(node.state_snapshot)
-        && !SUPPORTED_SNAPSHOT_VERSIONS.has(node.state_snapshot._version)) {
-      errors.push(`${node.id}: state_snapshot 状态快照版本不受支持`);
-    }
-    const snapshotLedger = node.state_snapshot?._continuity;
-    if (snapshotLedger != null) {
-      const ledgerResult = inspectContinuityLedger(snapshotLedger);
-      if (!ledgerResult.valid) {
-        errors.push(`${node.id}: 连续性账本无效 (${ledgerResult.errors.slice(0, 3).join('; ')})`);
-      }
-    }
-    if (hasOwn(node, 'continuity_revision')) {
-      if (!isNonNegativeInteger(node.continuity_revision)) {
-        errors.push(`${node.id}: continuity_revision 必须是非负整数`);
-      } else if (snapshotLedger && node.continuity_revision !== snapshotLedger.revision) {
-        errors.push(`${node.id}: continuity_revision 与状态快照账本版本不一致`);
-      }
-    }
-    if (node.continuity_delta != null && !Array.isArray(node.continuity_delta)) {
-      errors.push(`${node.id}: continuity_delta 必须是数组`);
-    } else if (Array.isArray(node.continuity_delta)) {
-      let previousSequence = -1;
-      const snapshotEvents = new Map(
-        (Array.isArray(snapshotLedger?.events) ? snapshotLedger.events : [])
-          .filter(event => isRecord(event) && validId(event.event_id))
-          .map(event => [event.event_id, event])
-      );
-      for (let index = 0; index < node.continuity_delta.length; index++) {
-        const event = node.continuity_delta[index];
-        const eventResult = inspectMemoryEvent(event);
-        if (!eventResult.valid) {
-          errors.push(`${node.id}: continuity_delta[${index}] 无效 (${eventResult.errors.join(', ')})`);
-          continue;
-        }
-        const owner = continuityEventOwners.get(event.event_id);
-        if (owner) errors.push(`${event.event_id}: continuity_delta 同时属于 ${owner} 与 ${node.id}`);
-        else continuityEventOwners.set(event.event_id, node.id);
-        if (event.sequence <= previousSequence) errors.push(`${node.id}: continuity_delta sequence 必须递增`);
-        previousSequence = event.sequence;
-        const snapshotEvent = snapshotEvents.get(event.event_id);
-        if (snapshotLedger && !snapshotEvent) {
-          errors.push(`${node.id}: continuity_delta 事件未写入同节点状态快照 (${event.event_id})`);
-        } else if (snapshotEvent && JSON.stringify(snapshotEvent) !== JSON.stringify(event)) {
-          errors.push(`${node.id}: continuity_delta 与状态快照事件内容不一致 (${event.event_id})`);
-        }
-      }
+    for (const error of inspectTimelineNodeContent(node, continuityEventOwners)) {
+      errors.push(error);
     }
   }
 

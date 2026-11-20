@@ -1183,14 +1183,18 @@ class CharacterCreator extends HTMLElement {
       .ghost-btn { color:var(--cc-text-2); }
       .ghost-btn:hover,.secondary-btn:hover,.add-btn:hover { border-color:rgba(226,96,60,.55); color:var(--cc-text-1); background:rgba(226,96,60,.07); }
       .secondary-btn { color:var(--cc-text-2); }
-      .primary-btn { position:relative; overflow:hidden; border-color:transparent; border-radius:var(--cc-r-s);
-        background:linear-gradient(135deg,var(--cc-shu-2) 0%,var(--cc-shu) 45%,var(--cc-shu-deep) 100%);
-        color:#fff8f0; font-weight:700; letter-spacing:1px; box-shadow:0 10px 28px rgba(168,58,32,.3), inset 0 1px 0 rgba(255,255,255,.18); }
-      .primary-btn::after { content:''; position:absolute; top:0; bottom:0; left:-70%; width:45%;
-        background:linear-gradient(105deg,transparent,rgba(255,255,255,.22),transparent); transform:skewX(-18deg); transition:left .55s var(--cc-ease); }
-      .primary-btn:hover { transform:translateY(-1px); box-shadow:0 14px 34px rgba(168,58,32,.42), inset 0 1px 0 rgba(255,255,255,.22); }
-      .primary-btn:hover::after { left:130%; }
-      .primary-btn:active { transform:translateY(0) scale(.98); }
+      .primary-btn { position:relative; border-color:var(--ui-btn-primary-border, #9e5341); border-radius:var(--cc-r-s, 6px);
+        background:var(--ui-btn-primary-bg, #6c3326);
+        color:var(--ui-btn-primary-ink, #f6f1e7); font-weight:600; letter-spacing:0.08em;
+        box-shadow:var(--ui-btn-primary-shadow, 0 1px 2px rgba(0,0,0,.36), inset 0 1px 0 rgba(255,255,255,.11)); }
+      .primary-btn:hover:not(:disabled) {
+        background:var(--ui-btn-primary-bg-hover, #7f3b2c);
+        border-color:var(--ui-btn-primary-border-hover, #b8624d);
+        box-shadow:var(--ui-btn-primary-shadow-hover, 0 2px 6px rgba(0,0,0,.44), inset 0 1px 0 rgba(255,255,255,.15)); }
+      .primary-btn:active:not(:disabled) {
+        background:var(--ui-btn-primary-bg-active, #5a2a1f);
+        box-shadow:var(--ui-btn-primary-shadow-active, inset 0 1px 2px rgba(0,0,0,.38));
+        transform:translateY(1px); }
       .secondary-btn:disabled { opacity:.3; cursor:not-allowed; }
       .icon-btn { width:34px; height:34px; display:grid; place-items:center; padding:0; border-radius:var(--cc-r-s); color:var(--cc-text-3); }
       .icon-btn:hover { border-color:var(--cc-line-2); color:var(--cc-text-1); }

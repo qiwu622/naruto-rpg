@@ -4,4 +4,6 @@
     <string name="title_activity_main">忍者手记</string>
     <string name="package_name">asia.qiwu.narutorpg</string>
     <string name="custom_url_scheme">asia.qiwu.narutorpg</string>
+    <string name="shortcut_recovery_short">存档救援</string>
+    <string name="shortcut_recovery_long">存档救援与备份导出</string>
 </resources>

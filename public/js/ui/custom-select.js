@@ -21,49 +21,54 @@ export function bindCustomSelects(root) {
       }
       .ns-select-trigger {
         width: 100%;
+        min-height: 38px;
         box-sizing: border-box;
-        background: rgba(255,255,255,0.02);
-        color: var(--text-primary, #e8e4d9);
-        border: 1px solid var(--border-subtle, rgba(255,255,255,0.1));
-        border-radius: var(--r-sm, 4px);
-        padding: 10px 32px 10px 12px;
+        background: var(--ui-surface-2, #181d26);
+        color: var(--ui-ink, #f0ece2);
+        border: 1px solid var(--ui-border, rgba(244,241,234,0.12));
+        border-radius: 8px;
+        padding: 8px 34px 8px 12px;
         cursor: pointer;
         display: flex;
         align-items: center;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
+      .ns-select-trigger:hover {
+        border-color: var(--ui-border-strong, rgba(244,241,234,0.22));
+      }
       .ns-select-trigger::after {
         content: '';
         position: absolute;
-        right: 12px;
+        right: 13px;
         top: 50%;
-        transform: translateY(-50%);
-        width: 8px;
-        height: 5px;
-        background-image: url("data:image/svg+xml,%3Csvg width='10' height='6'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23ffffff' stroke-opacity='0.5' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
-        background-repeat: no-repeat;
-        background-size: contain;
-        transition: transform 0.2s ease;
+        width: 6px;
+        height: 6px;
+        border-right: 1.6px solid var(--ui-ink-muted, #aba69b);
+        border-bottom: 1.6px solid var(--ui-ink-muted, #aba69b);
+        transform: translateY(-65%) rotate(45deg);
+        transition: transform 0.2s ease, border-color 0.2s ease;
       }
       .ns-select-wrapper.open .ns-select-trigger {
-        border-color: rgba(255,255,255,0.3);
-        background: rgba(255,255,255,0.05);
+        border-color: var(--ui-accent, #eb613f);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent, #eb613f) 16%, transparent);
+        background: var(--ui-surface-elevated, #1e2430);
       }
       .ns-select-wrapper.open .ns-select-trigger::after {
-        transform: translateY(-50%) rotate(180deg);
+        border-color: var(--ui-accent, #eb613f);
+        transform: translateY(-30%) rotate(-135deg);
       }
       .ns-select-dropdown {
         position: absolute;
         top: calc(100% + 4px);
         left: 0;
         right: 0;
-        background: rgba(11, 14, 19, 0.95);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: var(--r-sm, 4px);
-        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        background: var(--ui-surface-elevated, #1e2430);
+        border: 1px solid var(--ui-border-strong, rgba(244,241,234,0.20));
+        border-radius: 8px;
+        box-shadow: var(--ui-shadow, 0 12px 32px rgba(0,0,0,0.45));
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);
         z-index: 1000;
@@ -71,42 +76,43 @@ export function bindCustomSelects(root) {
         overflow-y: auto;
         opacity: 0;
         visibility: hidden;
-        transform: translateY(-5px);
-        transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        transform: translateY(-4px);
+        transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.18s;
         scrollbar-width: thin;
-        scrollbar-color: rgba(255,255,255,0.2) transparent;
+        scrollbar-color: var(--ui-border-strong, rgba(244,241,234,0.20)) transparent;
       }
       .ns-select-dropdown::-webkit-scrollbar { width: 4px; }
-      .ns-select-dropdown::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
+      .ns-select-dropdown::-webkit-scrollbar-thumb { background: var(--ui-border-strong, rgba(244,241,234,0.20)); border-radius: 2px; }
       .ns-select-wrapper.open .ns-select-dropdown {
         opacity: 1;
         visibility: visible;
         transform: translateY(0);
       }
       .ns-select-option {
-        padding: 10px 16px;
-        color: var(--text-secondary, #a39f98);
+        padding: 9px 14px;
+        color: var(--ui-ink-muted, #aba69b);
         cursor: pointer;
-        transition: all 0.15s ease;
+        transition: background 0.14s ease, color 0.14s ease;
         position: relative;
       }
       .ns-select-option:hover {
-        background: rgba(255,255,255,0.03);
-        color: var(--text-primary, #e8e4d9);
+        background: color-mix(in srgb, var(--ui-ink, #f0ece2) 5%, transparent);
+        color: var(--ui-ink, #f0ece2);
       }
       .ns-select-option.selected {
-        color: var(--text-primary, #e8e4d9);
-        background: rgba(235, 97, 63, 0.04);
+        color: var(--ui-ink, #f0ece2);
+        font-weight: 600;
+        background: color-mix(in srgb, var(--ui-accent, #eb613f) 10%, transparent);
       }
       .ns-select-option.selected::before, .ns-select-option:hover::before {
         content: '';
         position: absolute;
-        left: 0; top: 0; bottom: 0; width: 2px;
-        background: var(--c-shuiro, #eb613f);
+        left: 0; top: 4px; bottom: 4px; width: 2.5px; border-radius: 9px;
+        background: var(--ui-accent, #eb613f);
         opacity: 0;
-        transition: opacity 0.2s;
+        transition: opacity 0.16s;
       }
-      .ns-select-option:hover::before { opacity: 0.5; }
+      .ns-select-option:hover::before { opacity: 0.45; }
       .ns-select-option.selected::before { opacity: 1; }
     `;
     if (root.prepend) {

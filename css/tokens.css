@@ -57,6 +57,47 @@
   --surface-inset: rgba(0, 0, 0, 0.4); /* 凹陷空槽背景 */
   --surface-icon-wrapper: rgba(var(--paper-rgb), 0.03); /* 图标底座 */
   --surface-icon-wrapper-hover: rgba(var(--paper-rgb), 0.08);
+
+  /* ── 墨印卷册 UI Surface Tokens（设置壳层 / 工作台 / 全屏编辑器共用） ──── */
+  --ui-canvas:           #0b0e13;
+  --ui-surface-1:        #12161d;
+  --ui-surface-2:        #181d26;
+  --ui-surface-elevated: #1e2430;
+  --ui-backdrop:         rgba(3, 5, 8, 0.80);
+  --ui-border:           rgba(244, 241, 234, 0.09);
+  --ui-border-strong:    rgba(244, 241, 234, 0.20);
+  --ui-ink:              #f0ece2;
+  --ui-ink-muted:        #aba69b;
+  --ui-ink-faint:        #757168;
+  --ui-accent:           var(--c-shuiro, #eb613f);
+  --ui-accent-ink:       #ffffff;
+  --ui-gold:             var(--c-kin, #c69c6d);
+  --ui-state-on:         #58b97c;
+  --ui-state-always:     #6da8ec;
+  --ui-state-danger:     #e2645a;
+  --ui-shadow:           0 24px 64px rgba(0, 0, 0, 0.50);
+  --ui-color-scheme:     dark;
+
+  /* ── 墨印漆作 · 统一按钮语义令牌（深色主题基线，暗漆沉墨 · 零荧光光晕） ──── */
+  --ui-btn-primary-bg:           color-mix(in srgb, var(--ui-accent, #eb613f) 42%, var(--ui-canvas, #0b0e13));
+  --ui-btn-primary-bg-hover:     color-mix(in srgb, var(--ui-accent, #eb613f) 50%, var(--ui-canvas, #0b0e13));
+  --ui-btn-primary-bg-active:    color-mix(in srgb, var(--ui-accent, #eb613f) 34%, var(--ui-canvas, #0b0e13));
+  --ui-btn-primary-border:       color-mix(in srgb, var(--ui-accent, #eb613f) 58%, var(--ui-border-strong, rgba(244, 241, 234, 0.20)));
+  --ui-btn-primary-border-hover: color-mix(in srgb, var(--ui-accent, #eb613f) 74%, var(--ui-border-strong, rgba(244, 241, 234, 0.20)));
+  --ui-btn-primary-ink:          #f6f1e7;
+  --ui-btn-primary-shadow:       0 1px 2px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.11);
+  --ui-btn-primary-shadow-hover: 0 2px 6px rgba(0, 0, 0, 0.44), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  --ui-btn-primary-shadow-active: inset 0 1px 2px rgba(0, 0, 0, 0.38);
+
+  /* 卡片入口 / 次级强调（墨底朱棱 · 暗墨印边） */
+  --ui-btn-tonal-bg:             color-mix(in srgb, var(--ui-accent, #eb613f) 13%, var(--ui-surface-2, #181d26));
+  --ui-btn-tonal-bg-hover:       color-mix(in srgb, var(--ui-accent, #eb613f) 21%, var(--ui-surface-elevated, #1e2430));
+  --ui-btn-tonal-bg-active:      color-mix(in srgb, var(--ui-accent, #eb613f) 16%, var(--ui-surface-1, #12161d));
+  --ui-btn-tonal-border:         color-mix(in srgb, var(--ui-accent, #eb613f) 46%, var(--ui-border-strong, rgba(244, 241, 234, 0.20)));
+  --ui-btn-tonal-border-hover:   color-mix(in srgb, var(--ui-accent, #eb613f) 68%, var(--ui-border-strong, rgba(244, 241, 234, 0.20)));
+  --ui-btn-tonal-ink:            var(--ui-ink, #f0ece2);
+  --ui-btn-tonal-shadow:         0 1px 2px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --ui-btn-tonal-shadow-hover:   0 2px 5px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.10);
   
   --blur-sm:       blur(6px) saturate(110%);
   --blur-md:       blur(12px) saturate(120%);
@@ -184,6 +225,27 @@
   --z-lyrics:   99999;  /* 桌面歌词 */
   --z-fullscreen: 100000; /* 全屏编辑器基准（编辑器间按 calc 叠放） */
   --z-modal-top: 200000;  /* GameModal 全局最高弹窗 */
+}
+
+:root[data-color-scheme="light"] {
+  --ui-btn-primary-bg:           color-mix(in srgb, var(--ui-accent, #9a4b24) 84%, var(--ui-ink, #2e2012));
+  --ui-btn-primary-bg-hover:     color-mix(in srgb, var(--ui-accent, #9a4b24) 72%, var(--ui-ink, #2e2012));
+  --ui-btn-primary-bg-active:    color-mix(in srgb, var(--ui-accent, #9a4b24) 60%, var(--ui-ink, #2e2012));
+  --ui-btn-primary-border:       color-mix(in srgb, var(--ui-accent, #9a4b24) 68%, var(--ui-ink, #2e2012));
+  --ui-btn-primary-border-hover: color-mix(in srgb, var(--ui-accent, #9a4b24) 52%, var(--ui-ink, #2e2012));
+  --ui-btn-primary-ink:          #fbf5e9;
+  --ui-btn-primary-shadow:       0 1px 2px rgba(42, 30, 18, 0.18), inset 0 1px 0 rgba(255, 250, 240, 0.16);
+  --ui-btn-primary-shadow-hover: 0 2px 5px rgba(42, 30, 18, 0.24), inset 0 1px 0 rgba(255, 250, 240, 0.20);
+  --ui-btn-primary-shadow-active: inset 0 1px 2px rgba(42, 30, 18, 0.28);
+
+  --ui-btn-tonal-bg:             color-mix(in srgb, var(--ui-accent, #9a4b24) 10%, var(--ui-surface-elevated, #faf4e6));
+  --ui-btn-tonal-bg-hover:       color-mix(in srgb, var(--ui-accent, #9a4b24) 18%, var(--ui-surface-elevated, #faf4e6));
+  --ui-btn-tonal-bg-active:      color-mix(in srgb, var(--ui-accent, #9a4b24) 24%, var(--ui-surface-2, #e2d4b4));
+  --ui-btn-tonal-border:         color-mix(in srgb, var(--ui-accent, #9a4b24) 46%, var(--ui-border-strong, rgba(74, 52, 26, 0.28)));
+  --ui-btn-tonal-border-hover:   color-mix(in srgb, var(--ui-accent, #9a4b24) 70%, var(--ui-border-strong, rgba(74, 52, 26, 0.28)));
+  --ui-btn-tonal-ink:            color-mix(in srgb, var(--ui-accent, #9a4b24) 48%, var(--ui-ink, #2e2012));
+  --ui-btn-tonal-shadow:         0 1px 2px rgba(42, 30, 18, 0.08), inset 0 1px 0 rgba(255, 252, 245, 0.65);
+  --ui-btn-tonal-shadow-hover:   0 2px 5px rgba(42, 30, 18, 0.12), inset 0 1px 0 rgba(255, 252, 245, 0.75);
 }
 
 @media (prefers-reduced-motion: reduce) {

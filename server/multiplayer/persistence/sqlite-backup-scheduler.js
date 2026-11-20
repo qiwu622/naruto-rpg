@@ -1,3 +1,4 @@
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -32,6 +33,51 @@ function backupFilename(clock, idFactory) {
   return `multiplayer-${timestamp}-${suffix}.sqlite`;
 }
 
+const BACKUP_FILE_PATTERN = /^multiplayer-.+\.sqlite$/u;
+const BACKUP_SIDECAR_PATTERN = /^(multiplayer-.+\.sqlite)-(?:wal|shm)$/u;
+
+async function pruneOldBackups(backupDirectory, maxBackups, keepFilename) {
+  if (!Number.isSafeInteger(maxBackups) || maxBackups < 1) return;
+  const entries = await fsp.readdir(backupDirectory, { withFileTypes: true });
+  const snapshots = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !BACKUP_FILE_PATTERN.test(entry.name)) continue;
+    try {
+      const stats = await fsp.stat(path.join(backupDirectory, entry.name));
+      snapshots.push({ name: entry.name, mtimeMs: stats.mtimeMs });
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+  snapshots.sort((left, right) => {
+    if (right.mtimeMs !== left.mtimeMs) return right.mtimeMs - left.mtimeMs;
+    return right.name.localeCompare(left.name);
+  });
+
+  const kept = new Set();
+  if (keepFilename && snapshots.some(item => item.name === keepFilename)) {
+    kept.add(keepFilename);
+  }
+  for (const item of snapshots) {
+    if (kept.size >= maxBackups) break;
+    kept.add(item.name);
+  }
+
+  for (const item of snapshots) {
+    if (kept.has(item.name)) continue;
+    await fsp.rm(path.join(backupDirectory, item.name), { force: true });
+    await fsp.rm(path.join(backupDirectory, `${item.name}-wal`), { force: true });
+    await fsp.rm(path.join(backupDirectory, `${item.name}-shm`), { force: true });
+  }
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const match = BACKUP_SIDECAR_PATTERN.exec(entry.name);
+    if (match && !kept.has(match[1])) {
+      await fsp.rm(path.join(backupDirectory, entry.name), { force: true });
+    }
+  }
+}
+
 /**
  * Periodic, non-overlapping online backups through better-sqlite3's backup
  * API. connection.backup performs the consistency snapshot and integrity/FK
@@ -41,6 +87,7 @@ export function createSqliteBackupScheduler({
   connection,
   backup_directory,
   interval_ms = 6 * 60 * 60 * 1_000,
+  max_backups = 28,
   on_error = () => {},
   clock = () => new Date(),
   id_factory = () => randomUUID().replaceAll('-', '')
@@ -53,6 +100,9 @@ export function createSqliteBackupScheduler({
   }
   if (!Number.isSafeInteger(interval_ms) || interval_ms < 1_000) {
     fail('SQLITE_BACKUP_SCHEDULER_CONFIGURATION_INVALID', 'interval_ms must be at least 1000');
+  }
+  if (max_backups !== null && (!Number.isSafeInteger(max_backups) || max_backups < 1)) {
+    fail('SQLITE_BACKUP_SCHEDULER_CONFIGURATION_INVALID', 'max_backups must be a positive integer or null');
   }
   if (typeof on_error !== 'function' || typeof clock !== 'function'
     || typeof id_factory !== 'function') {
@@ -70,8 +120,15 @@ export function createSqliteBackupScheduler({
   function runNow() {
     if (inFlight) return inFlight;
     const destination = path.join(backupDirectory, backupFilename(clock, id_factory));
-    inFlight = Promise.resolve(connection.backup(destination)).then(result => {
+    inFlight = Promise.resolve(connection.backup(destination)).then(async result => {
       completedCount += 1;
+      if (max_backups !== null) {
+        try {
+          await pruneOldBackups(backupDirectory, max_backups, path.basename(destination));
+        } catch (pruneError) {
+          on_error(pruneError, Object.freeze({ phase: 'sqlite_online_backup_prune' }));
+        }
+      }
       return result;
     }, error => {
       failedCount += 1;

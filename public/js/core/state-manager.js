@@ -14,6 +14,7 @@ import { parseGameCalendar } from '../utils/game-calendar.js';
 import { createContinuityLedger, migrateLegacyMemory } from './continuity-ledger.js';
 
 import { openTimelineDB, SUMMARY_STORE, buildTimelineIndex, timelineRevision } from './timeline-db.js';
+import { withTimelineTransaction } from './idb-transaction.js';
 import { listingTimelineNode } from './timeline-node-codec.js';
 import { PAYLOAD_CHUNK_STORE, putPayloadChunks } from './timeline-payload-chunks.js';
 import { normalizeHistoryViewTurns, DEFAULT_HISTORY_VIEW_TURNS } from './timeline-preferences.js';
@@ -1112,10 +1113,22 @@ class StateManager {
     if (this._db) return this._db;
     if (!this._dbOpening) this._dbOpening = openTimelineDB().then(db => {
       this._db = db;
-      db.onversionchange = () => { db.close(); this._db = null; this._dbOpening = null; };
+      db.onclose = () => this._forgetDBConnection(db);
+      db.onversionchange = () => { db.close(); this._forgetDBConnection(db); };
       return db;
     }).catch(error => { this._dbOpening = null; throw error; });
     return this._dbOpening;
+  }
+
+  _forgetDBConnection(db) {
+    if (this._db !== db) return;
+    this._db = null;
+    this._dbOpening = null;
+    this._indexOpening = null;
+  }
+
+  _dbTransaction(stores, mode, run) {
+    return withTimelineTransaction(() => this.initDB(), db => this._forgetDBConnection(db), stores, mode, run);
   }
 
   async dbTimelineSummaries() {
@@ -1131,9 +1144,7 @@ class StateManager {
   }
 
   async dbPut(storeName, data) {
-    if (!this._db) await this.initDB();
-    return new Promise((resolve, reject) => {
-      const tx = this._db.transaction([...new Set([storeName, STORE_META, ...(storeName === STORE_NODES ? [SUMMARY_STORE] : [])])], 'readwrite');
+    return this._dbTransaction([...new Set([storeName, STORE_META, ...(storeName === STORE_NODES ? [SUMMARY_STORE] : [])])], 'readwrite', (tx, resolve, reject) => {
       let request, failure;
       tx.oncomplete = () => resolve(request.result);
       tx.onabort = () => reject(failure || tx.error);
@@ -1150,9 +1161,7 @@ class StateManager {
   }
 
   async dbGet(storeName, key) {
-    if (!this._db) await this.initDB();
-    return new Promise((resolve, reject) => {
-      const tx = this._db.transaction(storeName, 'readonly');
+    return this._dbTransaction(storeName, 'readonly', (tx, resolve, reject) => {
       const store = tx.objectStore(storeName);
       const request = store.get(key);
       tx.oncomplete = () => resolve(request.result);
@@ -1162,9 +1171,7 @@ class StateManager {
   }
 
   async dbGetAll(storeName, query) {
-    if (!this._db) await this.initDB();
-    return new Promise((resolve, reject) => {
-      const tx = this._db.transaction(storeName, 'readonly');
+    return this._dbTransaction(storeName, 'readonly', (tx, resolve, reject) => {
       const store = tx.objectStore(storeName);
       const request = query ? store.getAll(query) : store.getAll();
       tx.oncomplete = () => resolve(request.result);
@@ -1174,9 +1181,7 @@ class StateManager {
   }
 
   async dbDelete(storeName, key) {
-    if (!this._db) await this.initDB();
-    return new Promise((resolve, reject) => {
-      const tx = this._db.transaction([...new Set([storeName, STORE_META, ...(storeName === STORE_NODES ? [SUMMARY_STORE] : [])])], 'readwrite');
+    return this._dbTransaction([...new Set([storeName, STORE_META, ...(storeName === STORE_NODES ? [SUMMARY_STORE] : [])])], 'readwrite', (tx, resolve, reject) => {
       const store = tx.objectStore(storeName);
       const request = store.delete(key);
       if (storeName === STORE_NODES || storeName === STORE_BRANCHES || (storeName === STORE_META && key === 'root')) tx.objectStore(STORE_META).put(timelineRevision());
@@ -1188,9 +1193,7 @@ class StateManager {
   }
 
   async dbProjectAll(storeName, project) {
-    if (!this._db) await this.initDB();
-    return new Promise((resolve, reject) => {
-      const tx = this._db.transaction(storeName, 'readonly');
+    return this._dbTransaction(storeName, 'readonly', (tx, resolve, reject) => {
       const result = [];
       const request = tx.objectStore(storeName).openCursor();
       let projectionError;
@@ -1207,9 +1210,7 @@ class StateManager {
   }
 
   async dbClear(storeName) {
-    if (!this._db) await this.initDB();
-    return new Promise((resolve, reject) => {
-      const tx = this._db.transaction([...new Set([storeName, STORE_META, ...(storeName === STORE_NODES ? [SUMMARY_STORE] : [])])], 'readwrite');
+    return this._dbTransaction([...new Set([storeName, STORE_META, ...(storeName === STORE_NODES ? [SUMMARY_STORE] : [])])], 'readwrite', (tx, resolve, reject) => {
       const store = tx.objectStore(storeName);
       const request = store.clear();
       tx.objectStore(STORE_META).put(timelineRevision());
@@ -1221,9 +1222,7 @@ class StateManager {
   }
 
   async dbReplaceTimeline({ nodes, branches, meta }) {
-    if (!this._db) await this.initDB();
-    return new Promise((resolve, reject) => {
-      const tx = this._db.transaction([STORE_NODES, STORE_BRANCHES, STORE_META, SUMMARY_STORE], 'readwrite');
+    return this._dbTransaction([STORE_NODES, STORE_BRANCHES, STORE_META, SUMMARY_STORE], 'readwrite', (tx, resolve, reject) => {
       let settled = false;
       const fail = () => {
         if (settled) return;
@@ -1262,9 +1261,7 @@ class StateManager {
   }
 
   async dbCommitTimeline({ nodes = [], branches = [], meta = null }) {
-    if (!this._db) await this.initDB();
-    return new Promise((resolve, reject) => {
-      const tx = this._db.transaction([STORE_NODES, STORE_BRANCHES, STORE_META, SUMMARY_STORE], 'readwrite');
+    return this._dbTransaction([STORE_NODES, STORE_BRANCHES, STORE_META, SUMMARY_STORE], 'readwrite', (tx, resolve, reject) => {
       let settled = false;
       const fail = () => {
         if (settled) return;
@@ -1299,9 +1296,7 @@ class StateManager {
 
   async dbMutateTimeline(mutator, { nodeKeys = null, branchKeys = null, validateCurrent = null } = {}) {
     if (typeof mutator !== 'function') throw new TypeError('时间线事务需要同步变更函数');
-    if (!this._db) await this.initDB();
-    return new Promise((resolve, reject) => {
-      const tx = this._db.transaction([STORE_NODES, STORE_BRANCHES, STORE_META, SUMMARY_STORE, PAYLOAD_CHUNK_STORE], 'readwrite');
+    return this._dbTransaction([STORE_NODES, STORE_BRANCHES, STORE_META, SUMMARY_STORE, PAYLOAD_CHUNK_STORE], 'readwrite', (tx, resolve, reject) => {
       const nodeStore = tx.objectStore(STORE_NODES);
       const branchStore = tx.objectStore(STORE_BRANCHES);
       const metaStore = tx.objectStore(STORE_META);

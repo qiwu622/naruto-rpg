@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="zh-CN" data-release-version="3.7.2">
+<html lang="zh-CN" data-release-version="3.7.4">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#101113">
-  <meta name="description" content="忍者手记 v3.7.2 更新公告与历史版本说明。">
-  <title>更新公告 · 忍者手记 v3.7.2</title>
+  <meta name="description" content="忍者手记 v3.7.4 更新公告与历史版本说明。">
+  <title>更新公告 · 忍者手记 v3.7.4</title>
   <style>
     :root { color-scheme:dark; --ink:#101113; --paper:#ede6d9; --muted:#aaa49c; --gold:#d7b17a; }
     * { box-sizing:border-box; }
@@ -16,13 +16,14 @@
     .wrap { width:min(1080px,100%); margin:auto; padding:32px 28px calc(64px + env(safe-area-inset-bottom)); }
     .top { display:flex; align-items:center; justify-content:space-between; gap:20px; border-bottom:1px solid #ffffff14; padding-bottom:24px; }
     .brand { font:600 22px/1.2 Georgia,"Songti SC",serif; letter-spacing:2px; text-decoration:none; color:var(--paper); }
-    .pill { display:inline-flex; justify-content:center; padding:8px 18px; border:1px solid #d7b17a48; border-radius:9px; text-decoration:none; }
+    .pill { display:inline-flex; justify-content:center; padding:8px 18px; border:1px solid #d7b17a48; border-radius:7px; text-decoration:none; font-weight:500; transition:background .16s ease, border-color .16s ease, transform .12s ease; }
     .hero { padding:58px 0 40px; }
     .eyebrow { margin:0; color:var(--gold); font-size:12px; letter-spacing:3px; }
     h1 { margin:12px 0; font:600 clamp(32px,5vw,52px)/1.3 Georgia,"Songti SC",serif; letter-spacing:1px; }
     .hero p { color:var(--muted); margin:12px 0 20px; }
     .links { display:flex; gap:10px; flex-wrap:wrap; }
-    .primary { background:#b04a31; color:#fff0e3; border-color:#d87553; }
+    .primary { background:#6c3326; color:#f6f1e7; border-color:#9e5341; box-shadow:0 1px 2px rgba(0,0,0,.36), inset 0 1px 0 rgba(255,255,255,.11); }
+    .primary:hover { background:#7f3b2c; border-color:#b8624d; }
     .layout { display:grid; grid-template-columns:210px minmax(0,1fr); gap:40px; align-items:start; }
     nav { position:sticky; top:24px; padding:20px 0; }
     nav p { color:var(--muted); font-size:12px; letter-spacing:2px; }
@@ -56,29 +57,44 @@
   <div class="wrap">
     <header class="top"><a class="brand" href="/">忍者手记</a><a class="pill" href="/">进入游戏 ↗</a></header>
     <section class="hero" aria-labelledby="title">
-      <p class="eyebrow">RELEASE NOTES · 2026-10-20</p>
-      <h1 id="title">v3.7.2 · 更新公告</h1>
+      <p class="eyebrow">RELEASE NOTES · 2026-11-20</p>
+      <h1 id="title">v3.7.4 · 更新公告</h1>
       <p>每一次更新，都记录在这里。查看本次变化、升级说明与历史版本。</p>
       <div class="links"><a class="pill primary" href="https://www.qiwu.asia/app/android/naruto-rpg.apk">安卓安装包</a><a class="pill" href="https://github.com/qiwu622/naruto-rpg/releases">GitHub 下载</a><a class="pill" href="#history">历史公告 ↓</a></div>
     </section>
     <div class="layout">
       <nav aria-label="本次更新目录"><p>本次更新</p><a href="#section-1">本次更新</a>
-<a href="#section-2">升级说明</a></nav>
-      <article aria-label="v3.7.2 更新内容"><p><strong>2026-10-20 · 记忆原文保留与兼容性修复</strong></p>
+<a href="#section-2">更新方式</a></nav>
+      <article aria-label="v3.7.4 更新内容"><p><strong>2026-11-20 · 设置与世界书重构 · 全局按钮美学统一 · 大存档防崩溃加固</strong></p>
 <h2 id="section-1">本次更新</h2>
 <ul>
-<li><strong>记忆完整留存</strong>：取消写入截断和数量淘汰；整理后保留原文，记忆卷宗可分页查看原始记录。</li>
-<li><strong>减少无效失败</strong>：思考/展示容器、日报字数与条数改为软提示，不再因排版差异卡住合法变量更新。</li>
-<li><strong>内容不再误删</strong>：修复正文标签、引用标记和词语误删；世界书保留导入原文，长选项与行动完整发送。</li>
-<li><strong>生图与物品修复</strong>：修复 NovelAI 压缩响应和图片识别，取消物品数量 99 上限。</li>
-<li><strong>安卓同步更新</strong>：继续复用网页代码，可在客户端内查看公告、下载并覆盖安装。</li>
+<li><strong>世界书内置条目可自由编辑</strong>：新增「墨印卷册」世界书编辑器，支持对内置条目单条开关、本地改写与独立恢复默认，支持按「全部 / 已改 / 已关闭 / 蓝灯常驻」快速筛选，自定义条目导入导出继续兼容。</li>
+<li><strong>设置中心与全站按钮质感统一</strong>：统一 5 套深/浅视觉主题（含和纸浅色模式）与实时阅读预览；全站设置页、编辑器、弹窗、存档库、联机面板、创角及公告/救援页按钮重构为「墨印漆作」暗漆双层体系，移除刺眼荧光橙光晕与廉价渐变。</li>
+<li><strong>大存档防崩溃与独立救援加固</strong>：新增大存档流式分块导入/导出以降低内存峰值、连续启动异常自动高亮「存档救援」入口、启动后自动申请浏览器持久化存储并错峰维护、超大档自动节流云同步；同步升级独立救援页、可选外置备份及安卓原生存档保险库与启动崩溃守护。</li>
+<li><strong>主预设微调</strong>：默认主预设第 24 条「执笔者定位」改为常规 <code>system</code> 指令，避免部分模型出现多余确认或复述预设（自定义主预设不受影响）。</li>
 </ul>
-<h2 id="section-2">升级说明</h2>
-<p class="callout">网页在原浏览器刷新；安卓覆盖安装，<strong>不要卸载、清除网站数据或重新开档</strong>。</p>
-<p class="callout">原存档继续保留，新写入记忆完整保存；旧版本已删失且无备份的内容无法自动恢复。向量记忆仍默认关闭。</p>
-<p><a href="https://www.qiwu.asia/announcements.html" target="_blank" rel="noopener noreferrer">网站公告</a> · <a href="https://www.qiwu.asia/app/android/naruto-rpg.apk" target="_blank" rel="noopener noreferrer">安卓下载</a> · <a href="https://github.com/qiwu622/naruto-rpg/releases/tag/v3.7.2" target="_blank" rel="noopener noreferrer">GitHub</a></p></article>
+<h2 id="section-2">更新方式</h2>
+<p class="callout">正式站网页端与安卓客户端 <strong>v3.7.4</strong> 已同步发布。网页端在原浏览器刷新页面（或点击顶部更新条「立即刷新」）即可生效；安卓端可在客户端内检查更新或下载覆盖安装（请<strong>切勿先卸载旧版</strong>），<strong>无需清除数据或重新开档</strong>，现有本地与云端存档完全保留兼容。</p>
+<p><a href="https://www.qiwu.asia/announcements.html" target="_blank" rel="noopener noreferrer">网站公告</a> · <a href="https://www.qiwu.asia/app/android/naruto-rpg.apk" target="_blank" rel="noopener noreferrer">安卓包下载</a></p></article>
     </div>
     <section class="history" id="history"><h2>历史版本</h2><p class="muted">本次完整公告与之前版本的更新记录。</p>
+    <details><summary><span>v3.7.3</span><time>2026-11-18</time></summary>
+      <div class="history-content"><ul>
+<li>修复读取云档或下载到本地存档库时，浏览器复用已关闭的 IndexedDB 连接导致读档中断。创建事务失败时自动重新连接，已开始的写入仍按原事务处理。</li>
+<li>本次为正式站网页热修复。关闭其他游戏标签页后重新打开即可，旧存档保留，无需清理网站数据。</li>
+</ul></div>
+    </details>
+    <details><summary><span>v3.7.2</span><time>2026-10-20</time></summary>
+      <div class="history-content"><ul>
+<li>导入预设的思考/展示容器、日报字数/条目数/等级顺序改为兼容提示，不再因排版差异阻断合法变量提交；联机日报按实际条目核对公开来源，不再固定 4/3/4 条。</li>
+<li>修复普通标签名、正文引用“[回映结束]”被误判，以及无条件删除“极其、共犯”的行为；JSON 记忆字符串保留原文，实际思考与机器指令仍与正文分离。</li>
+<li>动态记忆新增完整原始记录，事实、备注、线索、置顶与事件取消写入截断和数量淘汰；章节/卷摘要不再销毁原文。记忆卷宗可分页展开完整记录，旧档原有内容先保留基线，检索预算只影响本轮上下文。</li>
+<li>取消预设正则、选项与灵希行动链的静默长度裁剪和拒绝；长记忆纠正可完整保存，预设沙箱点击传递完整行动。超长正则和选项仅作提示，原有权限与脚本隔离继续生效。</li>
+<li>移除世界书正文、关键词及角色档案的按词过滤和整段删除，导入、迁移与运行时保留原文；自定义角色条目不再被推断档案覆盖，条目开关与关键词触发逻辑保持不变。</li>
+<li>修复 NovelAI 生图响应被误报为“ZIP 压缩包无效或缺少目录”：代理保留 gzip/Brotli 压缩响应头，前端按实际内容识别 ZIP、官方 JSON/Base64 和直接图片，错误页面与接口错误不再当作 ZIP 解包；解析不额外发送生图请求。</li>
+<li>取消物品数量 99 上限，同步普通变量、灵希操作预演及旧档恢复；开局物品数量不再受 9999 限制，“丢弃全部”也不再最多只丢弃 999999 件。</li>
+</ul></div>
+    </details>
     <details><summary><span>v3.7.1</span><time>2026-10-15</time></summary>
       <div class="history-content"><ul>
 <li>修复正式站登录后仍返回旧构建入口，导致“有新版本”刷新后反复出现：发布、校验与失败回退同时覆盖登录后的 HTML 入口及静态资源。</li>

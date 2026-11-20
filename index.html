@@ -76,6 +76,31 @@
   </div>
 
   <a id="boot-recovery" href="recovery.html" style="position:fixed;right:20px;bottom:20px;z-index:10000;color:#d4b18a;background:#141a20;padding:10px 16px;border-radius:10px;font:14px system-ui">打不开游戏？存档救援</a>
+  <script>
+    (function () {
+      try {
+        var key = 'naruto_boot_watchdog_v1';
+        var raw = localStorage.getItem(key);
+        var state = raw ? JSON.parse(raw) : {};
+        var attempts = (Number(state && state.attempts) || 0) + 1;
+        localStorage.setItem(key, JSON.stringify({
+          attempts: attempts,
+          lastStartAt: Date.now(),
+          lastHealthyAt: Number(state && state.lastHealthyAt) || 0
+        }));
+        if (attempts >= 2) {
+          var btn = document.getElementById('boot-recovery');
+          if (btn) {
+            btn.textContent = '⚠ 连续启动异常 · 进入存档救援';
+            btn.style.background = '#7a251d';
+            btn.style.color = '#fff3ed';
+            btn.style.border = '1px solid #f09c8d';
+            btn.style.fontWeight = '600';
+          }
+        }
+      } catch (e) {}
+    })();
+  </script>
   <!-- 滤镜系统 -->
   <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
     <defs>

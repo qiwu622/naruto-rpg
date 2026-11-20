@@ -62,6 +62,52 @@ try {
         2
       );
     });
+
+    await test('max_backups retains newest snapshots, cleans -wal/-shm sidecars and leaves unrelated files untouched', async () => {
+      const retentionDir = path.join(tempRoot, 'backups-retention');
+      let seq = 0;
+      let tick = 0;
+      const baseTime = Date.UTC(2026, 10, 20, 12, 0, 0);
+      const retainedScheduler = createSqliteBackupScheduler({
+        connection,
+        backup_directory: retentionDir,
+        interval_ms: 60_000,
+        max_backups: 3,
+        clock: () => new Date(baseTime + (++tick) * 60_000),
+        id_factory: () => `ret_${++seq}`
+      });
+
+      const created = [];
+      for (let i = 0; i < 5; i += 1) {
+        const snapshotPath = await retainedScheduler.runNow();
+        const ts = (baseTime + (i + 1) * 60_000) / 1000;
+        if (i < 2) {
+          await fsp.writeFile(`${snapshotPath}-wal`, 'stale wal');
+          await fsp.writeFile(`${snapshotPath}-shm`, 'stale shm');
+        }
+        await fsp.utimes(snapshotPath, ts, ts);
+        created.push(snapshotPath);
+        if (i === 0) {
+          await fsp.writeFile(path.join(retentionDir, 'keep-me.txt'), 'note');
+        }
+      }
+
+      const entries = (await fsp.readdir(retentionDir)).sort();
+      const sqliteFiles = entries.filter(name => name.endsWith('.sqlite'));
+      assert.equal(sqliteFiles.length, 3);
+      assert.deepEqual(
+        sqliteFiles,
+        created.slice(-3).map(filePath => path.basename(filePath)).sort()
+      );
+      for (const obsolete of created.slice(0, 2)) {
+        const base = path.basename(obsolete);
+        assert.equal(entries.includes(base), false, `${base} should be pruned`);
+        assert.equal(entries.includes(`${base}-wal`), false, `${base}-wal should be pruned`);
+        assert.equal(entries.includes(`${base}-shm`), false, `${base}-shm should be pruned`);
+      }
+      assert.equal(entries.includes('keep-me.txt'), true);
+      assert.equal(await fsp.readFile(path.join(retentionDir, 'keep-me.txt'), 'utf8'), 'note');
+    });
   } finally {
     await connection.close();
   }

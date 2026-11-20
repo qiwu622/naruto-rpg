@@ -804,13 +804,13 @@ export function createLingXiTools({
         if (!['all', 'enabled', 'disabled'].includes(status)) throw new TypeError('不支持的世界书状态');
         const includeContent = input.includeContent === true;
         const limit = Math.min(30, Math.max(1, Math.trunc(Number(input.limit) || 12)));
-        const builtins = knowledgeBase.getDefaultEntries() || [];
+        const builtins = knowledgeBase.getBuiltinEntries?.({ includeDisabled: true }) || knowledgeBase.getDefaultEntries() || [];
         const customs = knowledgeBase.getCustomEntries() || [];
         const candidates = [
           ...(source === 'custom' ? [] : builtins.map((entry, index) => ({ entry, index, source: 'builtin' }))),
           ...(source === 'builtin' ? [] : customs.map((entry, index) => ({ entry, index, source: 'custom' })))
-        ].filter(({ entry, source: entrySource }) => {
-          const enabled = entrySource === 'builtin' || entry?.enabled !== false;
+        ].filter(({ entry }) => {
+          const enabled = entry?.enabled !== false;
           if (status === 'enabled' && !enabled) return false;
           if (status === 'disabled' && enabled) return false;
           if (!query) return true;
@@ -835,7 +835,7 @@ export function createLingXiTools({
             title: text(entry?.title, 160),
             keys: (Array.isArray(entry?.keys) ? entry.keys : []).slice(0, 32).map(item => text(item, 100)).filter(Boolean),
             category: text(entry?.category, 80) || (entrySource === 'custom' ? 'custom' : 'builtin'),
-            enabled: entrySource === 'builtin' || entry?.enabled !== false,
+            enabled: entry?.enabled !== false,
             ...(includeContent
               ? { content: text(entry?.content, 6_000) }
               : { preview: text(entry?.content, 420) })

@@ -400,6 +400,7 @@ export async function createMultiplayerRuntime(configValue, options = {}) {
         interval_ms: options.backupIntervalMs
           ?? config.backupIntervalMs
           ?? (6 * 60 * 60 * 1_000),
+        max_backups: options.backupMaxFiles ?? config.backupMaxFiles ?? 28,
         on_error: options.onBackgroundError ?? (() => {}),
         ...(options.backupSchedulerOptions ?? {})
       });

@@ -49,11 +49,13 @@ export const multiplayerRoomExitStyles = `
   .mp-exit-save p { color:var(--mp-secondary); font-size:12px; line-height:1.75; }
   .mp-exit-note { margin-top:14px!important; color:var(--mp-muted); font-size:12px; }
   .btns { gap:8px; padding:16px 24px; background:var(--mp-card); border-top:1px solid var(--mp-border); }
-  .btn { box-sizing:border-box; min-height:40px; padding:0 14px; border:1px solid var(--mp-border); border-radius:10px; background:transparent; color:var(--mp-secondary); font:600 13px/1.3 var(--mp-font); }
+  .btn { box-sizing:border-box; min-height:40px; padding:0 14px; border:1px solid var(--mp-border); border-radius:7px; background:transparent; color:var(--mp-secondary); font:500 13px/1.3 var(--mp-font); letter-spacing:0.02em; transition:background .16s ease, border-color .16s ease, box-shadow .16s ease, color .16s ease, transform .12s ease; }
   .btn:first-child { margin-right:auto; }
-  .btn:hover { background:var(--mp-raised); border-color:var(--mp-border-strong); color:var(--mp-text); }
-  .btn-p { background:var(--mp-accent); border-color:var(--mp-accent); color:white; box-shadow:none; }
-  .btn-p:hover { background:var(--mp-accent); border-color:var(--mp-accent); color:white; filter:brightness(1.08); }
+  .btn:hover:not(:disabled) { background:var(--mp-raised); border-color:var(--mp-border-strong); color:var(--mp-text); }
+  .btn:active:not(:disabled) { transform:translateY(1px); }
+  .btn-p { background:var(--ui-btn-primary-bg, #6c3326); border-color:var(--ui-btn-primary-border, #9e5341); color:var(--ui-btn-primary-ink, #f6f1e7); font-weight:500; box-shadow:var(--ui-btn-primary-shadow, 0 1px 2px rgba(0,0,0,.36), inset 0 1px 0 rgba(255,255,255,.11)); }
+  .btn-p:hover:not(:disabled) { background:var(--ui-btn-primary-bg-hover, #7f3b2c); border-color:var(--ui-btn-primary-border-hover, #b8624d); color:var(--ui-btn-primary-ink, #f6f1e7); box-shadow:var(--ui-btn-primary-shadow-hover, 0 2px 6px rgba(0,0,0,.44), inset 0 1px 0 rgba(255,255,255,.15)); }
+  .btn-p:active:not(:disabled) { background:var(--ui-btn-primary-bg-active, #5a2a1f); box-shadow:var(--ui-btn-primary-shadow-active, inset 0 1px 2px rgba(0,0,0,.38)); }
   .btn:focus-visible { outline:2px solid var(--mp-gold); outline-offset:3px; }
   @media (max-width:480px) {
     .title { padding:22px 20px 12px; font-size:19px; }

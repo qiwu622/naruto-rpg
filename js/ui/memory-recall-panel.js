@@ -12,7 +12,14 @@ class MemoryRecallPanel extends HTMLElement {
     const trace = getMemoryRecallTrace();
     const editable = new Set(['pins', 'facts', 'long_term', 'clues', 'important_events']);
     this.innerHTML = `<style>
-      memory-recall-panel{display:block;margin-bottom:18px}memory-recall-panel>details{border:1px solid #ffffff20;background:#ffffff04;border-radius:12px;padding:16px}memory-recall-panel summary{cursor:pointer;color:var(--c-text,#d9d4c9);font-weight:600}memory-recall-panel p{color:var(--c-text-muted,#9ba5ad);font-size:12px;line-height:1.8}memory-recall-panel article{border-top:1px solid #ffffff14;padding:10px 0}memory-recall-panel pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.8 system-ui;max-height:260px;overflow:auto;color:var(--c-text,#d9d4c9)}memory-recall-panel .source{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;color:var(--c-text-muted,#9ba5ad);font-size:12px;margin:8px 0}memory-recall-panel button{white-space:normal;text-align:left;min-height:34px}
+      memory-recall-panel{display:block;margin-bottom:18px}
+      memory-recall-panel>details{border:1px solid var(--ui-border, rgba(244,241,234,.12));background:var(--ui-surface-1, #12161d);border-radius:12px;padding:15px 16px}
+      memory-recall-panel summary{cursor:pointer;color:var(--ui-ink, #f0ece2);font-weight:600}
+      memory-recall-panel p{color:var(--ui-ink-muted, #aba69b);font-size:12px;line-height:1.75}
+      memory-recall-panel article{border-top:1px solid var(--ui-border, rgba(244,241,234,.09));padding:10px 0}
+      memory-recall-panel pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.75 var(--font-body, system-ui);max-height:260px;overflow:auto;color:var(--ui-ink, #f0ece2)}
+      memory-recall-panel .source{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;color:var(--ui-ink-faint, #757168);font-size:12px;margin:8px 0}
+      memory-recall-panel button{white-space:normal;text-align:left;min-height:34px}
     </style><details><summary>本轮记忆依据${trace ? ` · ${trace.sections.length} 组` : ''}</summary>
       <p>${trace ? `第 ${trace.turn} 回合构建的本地记忆上下文。这里只展示实际纳入预算的内容；后续提示词处理可能继续裁剪。` : '生成下一回合后，可在这里查看本地记忆选中了哪些内容。刷新、读档或修订记忆后会清空。'}</p>
       ${trace?.sections.map((section, index) => `<article><strong>${escHtml(section.title)}</strong><pre>${escHtml(section.text)}</pre>${section.sources.map((source, sourceIndex) => `<div class="source"><span>${source.fromTurn != null ? `来源：第 ${Number(source.fromTurn)}${source.toTurn !== source.fromTurn && source.toTurn != null ? `–${Number(source.toTurn)}` : ''} 回合` : '来源：当前记忆记录，未标注原始回合'}${source.eventId ? ` · ${escHtml(source.eventId)}` : ''}</span>${editable.has(source.field) && source.text ? `<button type="button" class="btn ghost btn-xs" data-trace-section="${index}" data-trace-source="${sourceIndex}" title="查找：${escAttr(source.text.slice(0, 100))}">查找并修订：${escHtml(source.text.slice(0, 28))}${source.text.length > 28 ? '…' : ''}</button>` : ''}</div>`).join('')}</article>`).join('') || ''}

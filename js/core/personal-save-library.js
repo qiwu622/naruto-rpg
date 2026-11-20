@@ -2,8 +2,10 @@ import { timelineSystem } from '../systems/timeline-system.js';
 import { assertTimelineSave } from './timeline-save-schema.js';
 import { buildContinuationCopy, continuationSaveScope, DEFAULT_CONTINUATION_TURNS } from './continuation-save.js';
 import { timelineStorageTask } from './timeline-storage-client.js';
+import { decodeTimelineSaveFile } from './timeline-file-codec.js';
 import {
-  localSaveLibrary, PERSONAL_SAVE_KIND, SAVE_PACKAGE_SCHEMA,
+  localSaveLibrary, PERSONAL_SAVE_KIND, ROOM_SAVE_KIND,
+  SAVE_PACKAGE_SCHEMA, SAVE_PACKAGE_SCHEMA_V2,
   cleanSaveData, createSavePackage, validateSavePackage
 } from './save-library.js';
 
@@ -103,13 +105,45 @@ export class PersonalSaveLibrary {
   }
 
   async importData(data, label = '') {
-    if (data?.schema === SAVE_PACKAGE_SCHEMA) {
+    if (data?.schema === SAVE_PACKAGE_SCHEMA || data?.schema === SAVE_PACKAGE_SCHEMA_V2) {
       await validateSavePackage(data);
       if (data.kind !== PERSONAL_SAVE_KIND) throw new Error('这是联机房间档，请在联机房间分区导入');
+      if (data.schema === SAVE_PACKAGE_SCHEMA_V2 && this.timeline.supportsArchiveStorage?.()) {
+        const file = new Blob([JSON.stringify(data)], { type: 'application/json' });
+        return this.importFile(file, { label: label || data.label });
+      }
       return this.store(data.payload, { label: label || data.label, reason: 'import' });
     }
     if (String(data?.schema ?? '').startsWith('naruto.save-package/')) throw new Error('不支持的存档包版本');
     return this.store(data, { label, reason: 'import' });
+  }
+
+  async importFile(file, {
+    label = '',
+    reason = 'import',
+    maxDecompressedBytes = Infinity,
+    onProgress = () => {},
+    signal = null
+  } = {}) {
+    if (!(file instanceof Blob)) throw new Error('请选择有效的本地存档文件');
+    if (this.timeline.supportsArchiveStorage?.() && typeof this.archiveTask === 'function') {
+      const result = await this.archiveTask(
+        'import-stream',
+        { file, label, reason, maxDecompressedBytes },
+        { onProgress, signal }
+      );
+      if (result?.isRoomPackage) {
+        const decoded = await decodeTimelineSaveFile(file, { maxDecompressedBytes });
+        return { isRoomPackage: true, data: decoded };
+      }
+      return result;
+    }
+    const data = await decodeTimelineSaveFile(file, { maxDecompressedBytes });
+    if ((data?.schema === SAVE_PACKAGE_SCHEMA || data?.schema === SAVE_PACKAGE_SCHEMA_V2)
+      && data.kind === ROOM_SAVE_KIND) {
+      return { isRoomPackage: true, data };
+    }
+    return this.importData(data, label);
   }
 
   async load(id) {

@@ -38,10 +38,16 @@ export class SaveLibraryCloud {
   async download(saveId) {
     const user = await this.requireUser();
     const entry = await this.owned(saveId);
-    const data = await decodeTimelineSaveFile(await this.client.downloadSave(saveId, { userId: user.id, enforceCurrent: false }));
+    const downloaded = await this.client.downloadSave(saveId, { userId: user.id, enforceCurrent: false });
     // Cloud APIs accept a raw timeline. The local library supplies its checked
     // package/checksum and validates the restore before it accepts that data.
-    const imported = await this.personal.importData(data, entry.slot_name);
+    const imported = downloaded instanceof Blob && typeof this.personal.importFile === 'function'
+      ? await this.personal.importFile(downloaded, { label: entry.slot_name })
+      : await this.personal.importData(
+          downloaded instanceof Blob ? await decodeTimelineSaveFile(downloaded) : downloaded,
+          entry.slot_name
+        );
+    if (imported?.isRoomPackage) throw new Error('不能将联机档写入个人存档分区');
     const source = { userId: user.id, saveId, revision: this.client.getSaveRevision?.(saveId, { userId: user.id }) ?? entry.revision ?? 0, slotName: entry.slot_name };
     this._rememberSource(imported.id, source);
     return { ...imported, cloudSource: source };

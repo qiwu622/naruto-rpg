@@ -1,6 +1,6 @@
 {
   "name": "naruto-rpg",
-  "version": "3.7.2",
+  "version": "3.7.4",
   "description": "火影忍者 AI 文字跑团 RPG — 网页端版本（Discord 登录 + 云存档）",
   "main": "server/index.js",
   "type": "module",

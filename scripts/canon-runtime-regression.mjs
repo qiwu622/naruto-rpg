@@ -544,7 +544,7 @@ test('secondary updater receives the complete day instead of a 1000/2000 charact
 test('editable presets expose V2 lifecycle and unchanged JT authority', () => {
   const main = DEFAULT_MAIN_PRESET.entries.map(entry => entry.content).join('\n');
   const updater = DEFAULT_VARIABLE_UPDATER_PRESET.entries.map(entry => entry.content).join('\n');
-  assert.match(DEFAULT_MAIN_PRESET_VERSION, /relationship-rename-v18/);
+  assert.match(DEFAULT_MAIN_PRESET_VERSION, /writer-entry-normal-v19/);
   assert.equal(DEFAULT_VARIABLE_UPDATER_PRESET_VERSION, 19);
   for (const text of [main, updater]) {
     assert.match(text, /DAY-\{HIST\|P1\|P2\|BOR\}-\*/);

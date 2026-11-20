@@ -112,6 +112,67 @@ public class NarutoFilesPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void beginStreamSave(PluginCall call) {
+        worker.execute(() -> {
+            try {
+                String name = call.getString("fileName", "忍者手记存档.json.gz");
+                name = name.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
+                if (name.trim().isEmpty() || name.length() > 180) throw new IllegalArgumentException("文件名无效");
+                String mime = call.getString("mimeType", "application/octet-stream");
+                FileExportSession session = FileExportSession.openStreaming(getContext().getCacheDir(), name, mime);
+                String id = UUID.randomUUID().toString();
+                sessions.put(id, session);
+                JSObject result = new JSObject();
+                result.put("id", id);
+                result.put("cancelled", false);
+                call.resolve(result);
+            } catch (Exception error) { call.reject(error.getMessage(), "EXPORT_FAILED", error); }
+        });
+    }
+
+    @PluginMethod
+    public void appendStreamSave(PluginCall call) {
+        worker.execute(() -> {
+            try {
+                FileExportSession session = requireSession(call);
+                String data = call.getString("data", "");
+                if (data.length() > 360000) throw new IllegalArgumentException("导出分片过大");
+                session.appendNext(Base64.decode(data, Base64.NO_WRAP));
+                call.resolve();
+            } catch (Exception error) { call.reject(error.getMessage(), "EXPORT_FAILED", error); }
+        });
+    }
+
+    @PluginMethod
+    public void finishStreamSave(PluginCall call) {
+        finishSave(call);
+    }
+
+    @PluginMethod
+    public void markBootHealthy(PluginCall call) {
+        try {
+            BootGuard.markHealthy(getContext());
+            call.resolve();
+        } catch (Exception error) {
+            call.reject(error.getMessage(), error);
+        }
+    }
+
+    @PluginMethod
+    public void openRecovery(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                if (getBridge() != null && getBridge().getWebView() != null) {
+                    getBridge().getWebView().loadUrl(getBridge().getLocalUrl() + "/recovery.html");
+                }
+                call.resolve();
+            } catch (Exception error) {
+                call.reject(error.getMessage(), error);
+            }
+        });
+    }
+
+    @PluginMethod
     public void openDownload(PluginCall call) {
         String url = call.getString("url", "");
         if (!"https://www.qiwu.asia/app/android/naruto-rpg.apk".equals(url)) {

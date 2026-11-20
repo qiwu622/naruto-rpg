@@ -117,16 +117,22 @@ export async function checksumSaveJson(data, { canonical = false } = {}) {
 // Parse individual scalar tokens with the browser's JSON parser. This keeps
 // exact legacy string semantics (including escaped lone UTF-16 surrogates),
 // while TokenParser assembles the document without a whole-document string.
-function createJsonTokenWriter(parser, TokenType) {
+export function createJsonTokenWriter(parser, TokenType, { onKey = null, onToken = null } = {}) {
   const punctuation = { '{': TokenType.LEFT_BRACE, '}': TokenType.RIGHT_BRACE, '[': TokenType.LEFT_BRACKET, ']': TokenType.RIGHT_BRACKET, ':': TokenType.COLON, ',': TokenType.COMMA };
   const boundary = /[ \t\r\n{}\[\],:"]/g;
   const stringBoundary = /["\\]/g;
   let parts = [], kind = '', escaped = false;
+  function writeToken(token, value, serializedText = null) {
+    if (onToken) onToken({ token, value, serializedText, parser, phase: 'before' });
+    parser.write({ token, value });
+    if (onToken) onToken({ token, value, serializedText, parser, phase: 'after' });
+  }
   function emitScalar() {
     const value = JSON.parse(parts.join(''));
     const token = kind === 'string' ? TokenType.STRING : value === null ? TokenType.NULL : value === true ? TokenType.TRUE : value === false ? TokenType.FALSE : TokenType.NUMBER;
+    const serialized = onToken ? JSON.stringify(value) : null;
     parts = []; kind = '';
-    parser.write({ token, value });
+    writeToken(token, value, serialized);
   }
   return {
     write(text) {
@@ -158,7 +164,9 @@ function createJsonTokenWriter(parser, TokenType) {
           if (char === '"') { kind = 'string'; parts = ['"']; index++; continue; }
           if (Object.prototype.hasOwnProperty.call(punctuation, char)) {
             if (char === ':' && UNSAFE_JSON_KEYS.has(parser.key)) throw new Error('存档包含不安全字段');
-            parser.write({ token: punctuation[char], value: char }); index++; continue;
+            if (char === ':' && onKey) onKey(parser.key, parser.stack, parser);
+            writeToken(punctuation[char], char, char);
+            index++; continue;
           }
           kind = 'literal'; parts = [];
         }
@@ -169,6 +177,136 @@ function createJsonTokenWriter(parser, TokenType) {
       if (!parser.isEnded) parser.end();
     }
   };
+}
+
+export async function streamParseSaveJson(stream, {
+  paths = ['$'],
+  keepStack = false,
+  maxBytes = Infinity,
+  limitError = () => new Error('存档超过读取上限'),
+  signal = null,
+  onKey = null,
+  onValue = null,
+  digestPayload = false
+} = {}) {
+  const { TokenParser, TokenType } = globalThis.NarutoSaveCodec;
+  const parser = new TokenParser({ paths, keepStack });
+  const textEncoder = digestPayload ? new TextEncoder() : null;
+  const payloadSha = digestPayload ? globalThis.NarutoSaveCodec.sha256.create() : null;
+  let digestChunks = [];
+  let digestChars = 0;
+  let payloadDepth = null;
+  let payloadSeen = false;
+
+  const flushDigest = () => {
+    if (!payloadSha || !digestChunks.length) return;
+    payloadSha.update(textEncoder.encode(digestChunks.join('')));
+    digestChunks = [];
+    digestChars = 0;
+  };
+  const pushDigestText = text => {
+    if (!payloadSha || !text) return;
+    digestChunks.push(text);
+    digestChars += text.length;
+    if (digestChars >= CHUNK_CHARACTERS) flushDigest();
+  };
+
+  let parserFailure = null;
+  let pendingCallbacks = [];
+  let ended = false;
+  parser.onValue = event => {
+    if (typeof onValue === 'function') {
+      const res = onValue(event);
+      if (res && typeof res.then === 'function') pendingCallbacks.push(res);
+    }
+  };
+  parser.onError = error => {
+    parserFailure = error instanceof Error ? error : new Error(String(error));
+  };
+  parser.onEnd = () => {
+    ended = true;
+  };
+
+  const tokens = createJsonTokenWriter(parser, TokenType, {
+    onKey,
+    onToken: digestPayload
+      ? ({ token, serializedText, parser: p, phase }) => {
+          if (phase === 'before') {
+            if (payloadDepth === null
+              && p.stack.length === 1
+              && p.key === 'payload'
+              && p.state === 0) {
+              payloadSeen = true;
+              if (token === TokenType.LEFT_BRACE || token === TokenType.LEFT_BRACKET) {
+                payloadDepth = 1;
+                pushDigestText(serializedText);
+              } else {
+                pushDigestText(serializedText);
+              }
+            } else if (payloadDepth !== null) {
+              pushDigestText(serializedText);
+            }
+          } else if (payloadDepth !== null && p.stack.length <= payloadDepth) {
+            payloadDepth = null;
+            flushDigest();
+          }
+        }
+      : null
+  });
+
+  const reader = stream.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let totalBytes = 0;
+  let yieldedAt = performance.now();
+  const flushPendingCallbacks = async () => {
+    if (!pendingCallbacks.length) return;
+    const queue = pendingCallbacks;
+    pendingCallbacks = [];
+    for (const promise of queue) await promise;
+  };
+  try {
+    while (true) {
+      signal?.throwIfAborted?.();
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) throw limitError(totalBytes);
+      const text = decoder.decode(value, { stream: true });
+      if (text) {
+        tokens.write(text);
+        if (parserFailure) throw parserFailure;
+        await flushPendingCallbacks();
+      }
+      if (performance.now() - yieldedAt > 16) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+        yieldedAt = performance.now();
+      }
+    }
+    const tail = decoder.decode();
+    if (tail) {
+      tokens.write(tail);
+      if (parserFailure) throw parserFailure;
+      await flushPendingCallbacks();
+    }
+    tokens.end();
+    if (parserFailure) throw parserFailure;
+    await flushPendingCallbacks();
+    if (!ended) throw new Error('文件没有完整的 JSON 内容');
+    let payloadDigest = null;
+    if (payloadSha && payloadSeen) {
+      flushDigest();
+      payloadDigest = Array.from(payloadSha.digest(), byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+    return { totalBytes, payloadDigest };
+  } catch (error) {
+    await reader.cancel(error).catch(() => {});
+    throw error;
+  } finally {
+    if (payloadSha) {
+      try { payloadSha.destroy(); } catch {}
+    }
+    reader.releaseLock();
+  }
 }
 
 export async function parseSaveJsonByteStream(stream, { maxBytes = Infinity, limitError = () => new Error('存档超过读取上限') } = {}) {

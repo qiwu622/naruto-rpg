@@ -155,6 +155,10 @@ export const config = deepFreeze({
       process.env.MULTIPLAYER_BACKUP_INTERVAL_MINUTES,
       360
     ) * 60 * 1000,
+    backupMaxFiles: toPositiveInt(
+      process.env.MULTIPLAYER_BACKUP_MAX_FILES,
+      28
+    ),
     keyVersion: String(process.env.MULTIPLAYER_KEY_VERSION || 'v1'),
     contentMasterKey: multiplayerSecret(
       'MULTIPLAYER_CONTENT_MASTER_KEY',

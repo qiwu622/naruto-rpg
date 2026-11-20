@@ -234,52 +234,36 @@
       justify-content: center;
       gap: 12px;
       width: 100%;
-      padding: 16px 24px;
+      padding: 15px 24px;
       background: #5865F2;
       color: #fff;
       font-family: inherit;
-      font-size: 16px;
-      font-weight: 700;
-      letter-spacing: 1px;
-      border: none;
-      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 9px;
       cursor: pointer;
       text-decoration: none;
-      transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
       position: relative;
-      overflow: hidden;
+      transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
       box-shadow:
-        0 4px 16px rgba(88,101,242,0.3),
-        0 2px 4px rgba(0,0,0,0.2);
+        0 2px 6px rgba(0,0,0,0.38),
+        inset 0 1px 0 rgba(255,255,255,0.16);
     }
 
     .discord-btn:hover {
-      background: #4752c4;
-      transform: translateY(-2px);
+      background: #4d59d8;
+      border-color: rgba(255,255,255,0.22);
       box-shadow:
-        0 8px 28px rgba(88,101,242,0.4),
-        0 4px 8px rgba(0,0,0,0.3);
+        0 4px 12px rgba(0,0,0,0.44),
+        inset 0 1px 0 rgba(255,255,255,0.2);
     }
 
     .discord-btn:active {
-      transform: translateY(0);
-      box-shadow:
-        0 2px 8px rgba(88,101,242,0.3),
-        0 1px 2px rgba(0,0,0,0.2);
-    }
-
-    /* Shine sweep on hover */
-    .discord-btn::after {
-      content: '';
-      position: absolute;
-      top: 0; left: -100%;
-      width: 100%; height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
-      transition: left 0.5s ease;
-    }
-
-    .discord-btn:hover::after {
-      left: 100%;
+      transform: translateY(1px);
+      background: #424ec4;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.35);
     }
 
     .discord-btn svg {
@@ -497,10 +481,10 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg>
         下载安卓测试版
       </a>
-      <p class="android-download-note">3.7.2 · 本地游玩 / 可选云端与联机<br>内置游戏页面，AI 需自行配置接口。</p>
+      <p class="android-download-note">3.7.4 · 本地游玩 / 可选云端与联机<br>内置游戏页面，AI 需自行配置接口。</p>
       <details class="android-download-note">
-        <summary>3.7.2 更新公告 · 10 月 20 日</summary>
-        <p>记忆与世界书完整留存，减少生硬拦截；修复 NovelAI 图片读取，解除物品数量上限。</p>
+        <summary>3.7.4 更新公告 · 11 月 20 日</summary>
+        <p>世界书内置条目可自由编辑，设置中心与全站「墨印漆作」按钮统一；升级大存档防崩溃加固、原生存档保险库与崩溃守护。</p>
         <p>现有存档继续兼容。支持客户端内检查、下载并安装更新；手动安装请覆盖旧版，勿卸载，以保留本地存档。云端连接可选，断网仍可本地操作。</p>
       </details>
     </div>

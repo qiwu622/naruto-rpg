@@ -37,6 +37,7 @@ def fixture(root, fail_public=False, frontend_only=False, mode='staging'):
   'backend/public/index.html':b'<script src="js/app.js?v=261015-node-read-fix"></script>',
   'backend/js/obsolete.js':b'old shared code', 'backend/node_modules/old.marker':b'old dependencies',
   'backend/.env':b'keep private configuration', 'backend/server/data/room.sqlite':b'keep room data',
+  'backend/server/data/multiplayer/backups/old-backup.sqlite':b'keep historical backup',
   'backend/server/data/runtime.sql':b'keep runtime .sql', 'backend/server/db/users.json':b'keep accounts',
   'backend/server/db/saves/cloud.bin':b'keep cloud content', 'stage/index.html':b'old front', 'prod/index.html':b'production front',
  }
@@ -97,8 +98,11 @@ with tempfile.TemporaryDirectory(prefix='naruto-release-regression-') as tempora
  assert not (instance.backend/'server/obsolete.js').exists()
  assert not (instance.backend/'js/obsolete.js').exists()
  assert (instance.backend/'server/multiplayer/persistence/migrations/0008-room-opening-drafts.sql').exists()
- for relative in ['backend/.env','backend/server/data/room.sqlite','backend/server/data/runtime.sql','backend/server/db/users.json','backend/server/db/saves/cloud.bin','prod/index.html']:
+ for relative in ['backend/.env','backend/server/data/room.sqlite','backend/server/data/multiplayer/backups/old-backup.sqlite','backend/server/data/runtime.sql','backend/server/db/users.json','backend/server/db/saves/cloud.bin','prod/index.html']:
   assert (base/'success'/relative).read_bytes()==originals[relative], relative
+ assert (instance.backup/'runtime-metadata/server/data/room.sqlite').exists()
+ assert (instance.backup/'runtime-metadata/server/db/users.json').exists()
+ assert not (instance.backup/'runtime-metadata/server/data/multiplayer/backups/old-backup.sqlite').exists()
  passed+=1; print('PASS full release publishes assets/SQL/shared dependencies, prunes only managed obsolete code and preserves accounts/cloud/rooms/config/production frontend')
  instance.execute()
  assert type(instance).starts==1 and type(instance).dependency_runs==1

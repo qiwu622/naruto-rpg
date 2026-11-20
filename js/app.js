@@ -35,7 +35,9 @@ import { buildOpeningPrompt } from './systems/opening-prompt.js';
 import { migrateStorage } from './core/storage-migrations.js';
 import { imageFeatureIntegration } from './core/image-studio/integration.js';
 import { resolveAICallPolicy } from './core/ai-call-policy.js';
-import { TIMELINE_FILE_ACCEPT, decodeTimelineSaveFile } from './core/timeline-file-codec.js';
+import { TIMELINE_FILE_ACCEPT } from './core/timeline-file-codec.js';
+import { markBootHealthy, requestPersistentStorage, shouldThrottleCloudAutoSync } from './core/save-health.js';
+import { scheduleAutoExternalBackup } from './core/external-backup.js';
 import { inspectRuntimeBuild, showStaleBuildNotice } from './utils/build-version.js';
 import { isNativeAndroidApp, usesProjectServerFeatures, isMultiplayerEntryVisible } from './core/runtime-platform.js';
 import {
@@ -231,12 +233,7 @@ class NarutoRPGApp {
       if (dbOk) {
         try {
           await this._checkSavedGame();
-          this._registerServiceWorker();
-          this._state = 'ready';
-          console.log('[NarutoRPG] App initialized');
-          this._scheduleMultiplayerRestore();
-          this._scheduleAppUpdateCheck();
-          this._startAppCloudChecks();
+          this._finalizeBoot();
           return;
         } catch (e) {
           console.warn('[NarutoRPG] Failed to restore saved game:', e.message);
@@ -247,12 +244,34 @@ class NarutoRPGApp {
       appShell.showAPIForm();
     }
 
+    this._finalizeBoot();
+  }
+
+  _finalizeBoot() {
     this._registerServiceWorker();
     this._state = 'ready';
     console.log('[NarutoRPG] App initialized');
+    markBootHealthy();
+    void requestPersistentStorage();
+    this._scheduleIdleMaintenance();
     this._scheduleMultiplayerRestore();
     this._scheduleAppUpdateCheck();
     this._startAppCloudChecks();
+  }
+
+  _scheduleIdleMaintenance() {
+    if (this._idleMaintenanceScheduled || !timelineSystem.supportsArchiveStorage?.()) return;
+    this._idleMaintenanceScheduled = true;
+    const trigger = () => {
+      import('./core/timeline-storage-client.js')
+        .then(({ timelineStorageTask }) => timelineStorageTask('auto-maintain', { keepAutoBackups: 5 }))
+        .catch(() => {});
+    };
+    if (typeof globalThis.requestIdleCallback === 'function') {
+      globalThis.requestIdleCallback(() => setTimeout(trigger, 1500), { timeout: 6000 });
+    } else {
+      setTimeout(trigger, 4000);
+    }
   }
 
   _startAppCloudChecks() {
@@ -344,6 +363,7 @@ class NarutoRPGApp {
     eventBus.on('timeline:node-created', node => this._markPersistedCloudLocal(node?.id));
     eventBus.on('pipeline:complete', result => {
       if (result?.isPartial || result?.timelineError || !result?.timelineNodeId) return;
+      scheduleAutoExternalBackup();
       return this._syncCommittedCloudSave(result.timelineNodeId);
     });
     eventBus.on('timeline:imported', () => {
@@ -406,13 +426,12 @@ class NarutoRPGApp {
 
     eventBus.on('app:timeline-import-file', async ({ file }) => {
       try {
-        const data = await decodeTimelineSaveFile(file);
-        if (data?.schema === SAVE_PACKAGE_SCHEMA && data.kind === ROOM_SAVE_KIND) {
+        const imported = await personalSaveLibrary.importFile(file);
+        if (imported?.isRoomPackage) {
           if (usesProjectServerFeatures()) await authClient.checkAuth();
-          await localRoomHistory.importPackage(data);
+          await localRoomHistory.importPackage(imported.data);
           await openSaveLibrary({ kind: ROOM_SAVE_KIND });
         } else {
-          const imported = await personalSaveLibrary.importData(data);
           saveLibraryCloud.forgetSource(imported.id);
           await eventBus.request('app:open-saves');
         }
@@ -525,12 +544,16 @@ class NarutoRPGApp {
     });
 
     eventBus.on('timeline:jump-request', async ({ nodeId }) => {
-      const allNodes = await stateManager.dbGetAll('timeline_nodes') || [];
+      const summaries = await timelineSystem.getNodeSummaries() || [];
+      const summaryById = new Map(summaries.filter(n => n?.id).map(n => [n.id, n]));
+      const visited = new Set([nodeId]);
       const countDescendants = (nid) => {
         let count = 0;
-        const node = allNodes.find(n => n.id === nid);
+        const node = summaryById.get(nid);
         if (node && Array.isArray(node.children_ids)) {
           for (const childId of node.children_ids) {
+            if (!childId || visited.has(childId)) continue;
+            visited.add(childId);
             count += 1 + countDescendants(childId);
           }
         }
@@ -892,7 +915,18 @@ class NarutoRPGApp {
   async _syncCommittedCloudSave(nodeId) {
     const scope = await this._markPersistedCloudLocal(nodeId);
     if (!scope?.userId || !usesProjectServerFeatures() || localStorage.getItem('naruto_auto_cloud_sync') !== 'true') return;
-    try { await this._queueCloudSave(scope); }
+    try {
+      const summaries = await timelineSystem.getNodeSummaries();
+      const estimatedBytes = summaries.reduce((sum, node) => sum + (Number(node?.estimated_bytes) || 0), 0);
+      const gate = shouldThrottleCloudAutoSync({
+        totalNodes: summaries.length,
+        estimatedBytes,
+        lastSyncAt: this._lastCloudAutoSyncAt || 0
+      });
+      if (gate.throttle) return;
+      this._lastCloudAutoSyncAt = Date.now();
+      await this._queueCloudSave(scope);
+    }
     catch (error) { console.warn('[CloudSave] 本地回合已保存，云端同步未完成:', error.message); }
   }
 

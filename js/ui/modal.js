@@ -71,22 +71,33 @@ class GameModal extends HTMLElement {
         }
         .btn {
           min-height: 36px;
-          padding: 8px 16px; font-size: 13px; border-radius: 6px; cursor: pointer;
+          padding: 8px 16px; font-size: 13px; font-weight: 500; letter-spacing: 0.02em; border-radius: 6px; cursor: pointer;
           border: 1px solid rgba(232,228,217,0.14);
           background: rgba(232,228,217,0.035);
           color: var(--text-primary, #e8e4d9);
-          transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
-          font-family:'Noto Sans SC','Microsoft YaHei UI','PingFang SC',system-ui,sans-serif; letter-spacing:0;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+          transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
+          font-family:'Noto Sans SC','Microsoft YaHei UI','PingFang SC',system-ui,sans-serif;
         }
-        .btn:hover { border-color: rgba(232,228,217,0.24); background: rgba(232,228,217,0.065); }
-        .btn:active { transform: translateY(1px); }
+        .btn:hover:not(:disabled) { border-color: rgba(232,228,217,0.24); background: rgba(232,228,217,0.065); }
+        .btn:active:not(:disabled) { transform: translateY(1px); }
+        .btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--ui-accent, #eb613f) 75%, transparent); outline-offset: 2px; }
+        .btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; transform: none; }
         .btn-p {
-          background: linear-gradient(180deg, #f07452, #eb613f);
-          border-color: rgba(235,97,63,0.68);
-          color: #fff; font-weight: 700;
-          box-shadow: 0 8px 20px rgba(0,0,0,0.22);
+          background: var(--ui-btn-primary-bg, #6c3326);
+          border-color: var(--ui-btn-primary-border, #9e5341);
+          color: var(--ui-btn-primary-ink, #f6f1e7); font-weight: 500;
+          box-shadow: var(--ui-btn-primary-shadow, 0 1px 2px rgba(0,0,0,0.36), inset 0 1px 0 rgba(255,255,255,0.11));
         }
-        .btn-p:hover { background: linear-gradient(180deg, #eb613f, #c9171e); border-color:#c9171e; }
+        .btn-p:hover:not(:disabled) {
+          background: var(--ui-btn-primary-bg-hover, #7f3b2c);
+          border-color: var(--ui-btn-primary-border-hover, #b8624d);
+          box-shadow: var(--ui-btn-primary-shadow-hover, 0 2px 6px rgba(0,0,0,0.44), inset 0 1px 0 rgba(255,255,255,0.15));
+        }
+        .btn-p:active:not(:disabled) {
+          background: var(--ui-btn-primary-bg-active, #5a2a1f);
+          box-shadow: var(--ui-btn-primary-shadow-active, inset 0 1px 2px rgba(0,0,0,0.38));
+        }
         @media (max-width: 480px) {
           .modal { width: 100%; }
           .title { padding: 20px 18px 12px; }

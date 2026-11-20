@@ -137,10 +137,16 @@ try {
 
   await page.evaluate(() => append(3, 'if-future'));
   const beforeDownload = await page.evaluate(() => ({ meta: stateManager.getSub('_meta'), marker: stateManager.snapshot().marker }));
-  await card().getByRole('button', { name: '下载到本地存档库', exact: true }).click(); await status('当前游戏进度没有改变');
+  // Closing an IDB connection explicitly does not dispatch a close event.
+  // Keep the cached reference to reproduce the browser error on cloud import.
+  await page.evaluate(async () => (await localSaveLibrary.open()).close());
+  await card().getByRole('button', { name: '下载到本地存档库', exact: true }).click();
+  await ready();
+  assert.match(await library.locator('#status').innerText(), /当前游戏进度没有改变/);
   assert.deepEqual(await page.evaluate(() => ({ meta: stateManager.getSub('_meta'), marker: stateManager.snapshot().marker })), beforeDownload);
   assert.equal(await library.locator('[data-cloud-id]').count(), 0);
   await library.getByRole('button', { name: '云端管理', exact: true }).click(); await ready();
+  await page.evaluate(async () => (await stateManager.initDB()).close());
   await card().getByRole('button', { name: '读取云档', exact: true }).click(); await library.waitFor({ state: 'detached' });
   assert.equal(await page.evaluate(() => stateManager.snapshot().marker), 'middle');
   assert.equal(await page.evaluate(async () => (await timelineSystem.getAllBranches()).length), 2);
@@ -161,6 +167,7 @@ try {
   await page.evaluate(() => app._openProfilePanel());
   assert.equal(await page.locator('#btn-cloud-download').count(), 0);
   await page.getByRole('button', { name: '管理云存档', exact: true }).click(); await ready();
+  await library.locator('[data-cloud-id]').nth(1).waitFor();
   assert.equal(await library.locator('[data-cloud-id]').count(), 2);
   await library.getByRole('button', { name: '关闭', exact: true }).click();
   ok('profile cloud management opens the same library instead of restoring or deleting the first slot');

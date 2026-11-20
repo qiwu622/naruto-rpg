@@ -1,6 +1,15 @@
-import { readDB } from './timeline-db.js';
-import { decompressTimelineNode, prepareSharedTimelineNode, estimateTimelineNodeBytes } from './timeline-node-codec.js';
-import { PAYLOAD_CHUNK_STORE, payloadChunkIds, putPayloadChunks } from './timeline-payload-chunks.js';
+import { readDB, SUMMARY_STORE, timelineRevision } from './timeline-db.js';
+import {
+  TIMELINE_HOT_WINDOW,
+  collectHotNodeIds,
+  decompressTimelineNode,
+  prepareSharedTimelineNode,
+  estimateTimelineNodeBytes,
+  isCompressedTimelineNode,
+  listingTimelineNode
+} from './timeline-node-codec.js';
+import { PAYLOAD_CHUNK_STORE, SHARED_PAYLOAD_ENCODING, payloadChunkIds, putPayloadChunks } from './timeline-payload-chunks.js';
+import { sanitizeTimelineNode } from './timeline-save-schema.js';
 import { checksumSaveJson } from './save-json-stream.js';
 
 const STORES = ['timeline_nodes', 'timeline_archives', 'timeline_archive_nodes', PAYLOAD_CHUNK_STORE];
@@ -197,4 +206,142 @@ export async function cleanTimelineStorage(db, { discardId = '' } = {}, { signal
     } else scan();
   }, signal);
   return { freedBytes, removedChunks };
+}
+
+function sameNodeVersion(left, right) {
+  if (!left || !right) return false;
+  const { payload: leftPayload, ...leftFields } = left;
+  const { payload: rightPayload, ...rightFields } = right;
+  if (JSON.stringify(leftFields) !== JSON.stringify(rightFields)) return false;
+  if (leftPayload == null || rightPayload == null) return leftPayload == null && rightPayload == null;
+  if (left.payload_encoding === SHARED_PAYLOAD_ENCODING) {
+    return JSON.stringify(leftPayload) === JSON.stringify(rightPayload);
+  }
+  const toBytes = value => value instanceof ArrayBuffer ? new Uint8Array(value)
+    : ArrayBuffer.isView(value) ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+    : Array.isArray(value) ? Uint8Array.from(value) : null;
+  const a = toBytes(leftPayload), b = toBytes(rightPayload);
+  return Boolean(a && b && a.length === b.length && a.every((value, index) => value === b[index]));
+}
+
+export async function compressColdNodesTask(db, { currentId = null, keep = TIMELINE_HOT_WINDOW } = {}, { signal, onProgress = () => {} } = {}) {
+  const summaries = await readDB(db, SUMMARY_STORE);
+  if (!summaries?.length) return { archived: 0, compressed: 0, expanded: 0, compressedIds: [], archivedIds: [], expandedIds: [] };
+  const meta = await readDB(db, 'timeline_meta', 'root');
+  const resolvedCurrentId = currentId || meta?.value?.current_id || null;
+  const hotIds = collectHotNodeIds(summaries, resolvedCurrentId, keep);
+  if (!hotIds.size) return { archived: 0, compressed: 0, expanded: 0, compressedIds: [], archivedIds: [], expandedIds: [] };
+
+  let archived = 0, compressed = 0, expanded = 0;
+  const compressedIds = [], archivedIds = [], expandedIds = [];
+
+  for (const listed of summaries) {
+    if (signal?.aborted) throw abortError();
+    if (!listed?.id) continue;
+    const shouldBeHot = hotIds.has(listed.id);
+    if (!shouldBeHot && listed.archived && listed.payload_encoding) continue;
+    if (shouldBeHot && !listed.archived && !listed.payload_encoding) continue;
+
+    const latest = await readDB(db, 'timeline_nodes', listed.id);
+    if (!latest) continue;
+
+    let proposed = null;
+    let payloadRecords = [];
+    let didCompress = false, didArchive = false, didExpand = false;
+    if (shouldBeHot) {
+      if (isCompressedTimelineNode(latest)) {
+        const logical = await decompressTimelineNode(latest, { db });
+        logical.archived = false;
+        logical.archived_at = null;
+        proposed = logical;
+        didExpand = true;
+      } else if (latest.archived) {
+        proposed = { ...latest, archived: false, archived_at: null };
+      }
+    } else {
+      let next = latest;
+      if (!isCompressedTimelineNode(latest)) {
+        const prepared = await prepareSharedTimelineNode(latest, { signal });
+        next = prepared.node;
+        payloadRecords = prepared.records;
+        if (isCompressedTimelineNode(next)) didCompress = true;
+      }
+      if (!next.archived) {
+        next = { ...next, archived: true, archived_at: next.archived_at || Date.now() };
+        didArchive = true;
+      }
+      if (next !== latest) proposed = next;
+    }
+    if (!proposed) continue;
+
+    const committed = await new Promise((resolve, reject) => {
+      const tx = db.transaction(['timeline_nodes', SUMMARY_STORE, 'timeline_meta', PAYLOAD_CHUNK_STORE], 'readwrite');
+      let wrote = false, failure;
+      const fail = error => { failure = error; try { tx.abort(); } catch {} };
+      tx.oncomplete = () => resolve(wrote);
+      tx.onabort = () => reject(failure || tx.error || new Error('冷节点压缩写入失败'));
+      tx.onerror = () => {};
+      const nodeStore = tx.objectStore('timeline_nodes');
+      const req = nodeStore.get(listed.id);
+      req.onsuccess = () => {
+        try {
+          const live = req.result;
+          if (!live || !sameNodeVersion(latest, live)) return;
+          const next = sanitizeTimelineNode({
+            ...proposed,
+            parent_id: live.parent_id ?? proposed.parent_id ?? null,
+            children_ids: Array.isArray(live.children_ids) ? [...live.children_ids] : proposed.children_ids,
+            branch_id: live.branch_id ?? proposed.branch_id
+          }, `timeline_node.${listed.id}`);
+          if (payloadRecords.length) putPayloadChunks(tx, payloadRecords, fail);
+          nodeStore.put(next);
+          tx.objectStore(SUMMARY_STORE).put(listingTimelineNode(next));
+          tx.objectStore('timeline_meta').put(timelineRevision());
+          wrote = true;
+        } catch (err) {
+          fail(err);
+        }
+      };
+    });
+
+    if (!committed) continue;
+    if (shouldBeHot) {
+      if (didExpand) { expanded++; expandedIds.push(listed.id); }
+    } else {
+      if (didCompress) { compressed++; compressedIds.push(listed.id); }
+      if (didArchive) { archived++; archivedIds.push(listed.id); }
+    }
+    if ((compressed + expanded) % 10 === 0 && compressed + expanded > 0) {
+      onProgress(`后台冷数据整理中：已处理 ${compressed + expanded} 个回合`);
+    }
+  }
+  return { archived, compressed, expanded, compressedIds, archivedIds, expandedIds };
+}
+
+export async function autoMaintainTimelineStorage(db, { keepAutoBackups = 5 } = {}, context = {}) {
+  const entries = await readDB(db, 'timeline_archives');
+  const activeCompactSources = new Set(
+    entries.filter(item => !item.complete && item.job?.type === 'compact' && item.job?.sourceId)
+      .map(item => item.job.sourceId)
+  );
+  const autoBackups = entries
+    .filter(item => item.complete && typeof item.reason === 'string' && item.reason.startsWith('before-') && !activeCompactSources.has(item.id))
+    .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+
+  const toPrune = autoBackups.slice(Math.max(1, keepAutoBackups));
+  let prunedArchives = 0;
+  for (const old of toPrune) {
+    if (context?.signal?.aborted) break;
+    await write(db, tx => {
+      tx.objectStore('timeline_archives').delete(old.id);
+      const req = tx.objectStore('timeline_archive_nodes').index('archiveId').openCursor(IDBKeyRange.only(old.id));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor) { cursor.delete(); cursor.continue(); }
+      };
+    }, context?.signal).catch(() => {});
+    prunedArchives++;
+  }
+  const swept = await cleanTimelineStorage(db, {}, context);
+  return { prunedArchives, ...swept };
 }

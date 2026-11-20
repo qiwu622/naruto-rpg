@@ -1,4 +1,4 @@
-import { isCompressedTimelineNode } from '../../timeline-node-codec.js';
+import { isCompressedTimelineNode, isCompressedTimelineSummary } from '../../timeline-node-codec.js';
 
 const DEFAULT_LIMIT = 12;
 const MAX_LIMIT = 40;
@@ -203,7 +203,7 @@ function nodeTimestamp(node = {}) {
 
 function publicTimelineNode(node = {}, currentNodeId = '') {
   if (!node || typeof node !== 'object' || Array.isArray(node)) node = {};
-  const compressed = isCompressedTimelineNode(node);
+  const compressed = isCompressedTimelineNode(node) || isCompressedTimelineSummary(node);
   return {
     id: cleanText(node.id, 200),
     parentId: cleanText(node.parent_id, 200) || null,
@@ -346,8 +346,11 @@ export class LingXiProjectStateAdapter {
       return { section: 'timeline', available: false, nodes: [], branches: [], notice: '时间线数据库尚未挂载。' };
     }
     try {
+      const readNodes = typeof this.stateManager.dbTimelineSummaries === 'function'
+        ? () => this.stateManager.dbTimelineSummaries()
+        : () => this.stateManager.dbGetAll('timeline_nodes');
       const [nodesRaw, branchesRaw, storageStats] = await Promise.all([
-        this.stateManager.dbGetAll('timeline_nodes'),
+        readNodes(),
         this.stateManager.dbGetAll('timeline_branches'),
         typeof this.timelineSystem?.getStorageStats === 'function'
           ? this.timelineSystem.getStorageStats()
@@ -360,7 +363,7 @@ export class LingXiProjectStateAdapter {
       const needle = cleanText(query, 160).toLocaleLowerCase('zh-CN');
       const allNodes = listValues(nodesRaw);
       const filtered = allNodes.filter(node => {
-        if (!includeArchived && node?.archived === true && !isCompressedTimelineNode(node)) return false;
+        if (!includeArchived && node?.archived === true && !isCompressedTimelineNode(node) && !isCompressedTimelineSummary(node)) return false;
         if (normalizedBranch && cleanText(node?.branch_id, 200) !== normalizedBranch) return false;
         if (!needle) return true;
         return `${node?.id || ''} ${node?.player_input || ''} ${node?.ai_response_summary || node?.summary || ''}`

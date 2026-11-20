@@ -240,20 +240,24 @@ class HelpGuide {
         width: 44px;
         height: 44px;
         border-radius: 50%;
-        background: rgba(235, 97, 63, 0.9);
-        color: #fff;
-        border: none;
-        font-size: 22px;
-        font-weight: 700;
+        background: var(--ui-btn-tonal-bg, #2e2426);
+        color: var(--ui-btn-tonal-ink, #f0ece2);
+        border: 1px solid var(--ui-btn-tonal-border, #7c3f34);
+        font-size: 18px;
+        font-weight: 500;
         cursor: pointer;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.08);
         z-index: 9998;
-        transition: all 0.2s;
+        transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
         font-family: -apple-system, "Segoe UI", sans-serif;
       }
       .help-guide-btn:hover {
-        transform: scale(1.1);
-        background: rgba(235, 97, 63, 1);
+        background: var(--ui-btn-tonal-bg-hover, #3d2c2e);
+        border-color: var(--ui-btn-tonal-border-hover, #a85442);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+      }
+      .help-guide-btn:active {
+        transform: translateY(1px);
       }
       body.settings-panel-open .help-guide-btn {
         display: none;
@@ -356,18 +360,27 @@ class HelpGuide {
         gap: 12px;
       }
       .help-modal-btn-primary {
-        background: #eb613f;
-        color: #fff;
-        border: none;
+        background: var(--ui-btn-primary-bg, #6c3326);
+        color: var(--ui-btn-primary-ink, #f6f1e7);
+        border: 1px solid var(--ui-btn-primary-border, #9e5341);
         padding: 8px 24px;
         border-radius: 6px;
         font-size: 14px;
-        font-weight: 600;
+        font-weight: 500;
+        letter-spacing: 0.02em;
         cursor: pointer;
-        transition: background 0.2s;
+        box-shadow: var(--ui-btn-primary-shadow, 0 1px 2px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.11));
+        transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
       }
-      .help-modal-btn-primary:hover {
-        background: #f47358;
+      .help-modal-btn-primary:hover:not(:disabled) {
+        background: var(--ui-btn-primary-bg-hover, #7f3b2c);
+        border-color: var(--ui-btn-primary-border-hover, #b8624d);
+        box-shadow: var(--ui-btn-primary-shadow-hover, 0 2px 6px rgba(0, 0, 0, 0.44), inset 0 1px 0 rgba(255, 255, 255, 0.15));
+      }
+      .help-modal-btn-primary:active:not(:disabled) {
+        background: var(--ui-btn-primary-bg-active, #5a2a1f);
+        box-shadow: var(--ui-btn-primary-shadow-active, inset 0 1px 2px rgba(0, 0, 0, 0.38));
+        transform: translateY(1px);
       }
       .help-tabs {
         display: flex;

@@ -195,6 +195,7 @@ class Installer:
   for directory in [self.backend/'server/data',self.backend/'server/db']:
    if not directory.is_dir(): continue
    for p in directory.rglob('*'):
+    if 'backups' in p.relative_to(directory).parts: continue
     if p.is_file() and (p.name in ('users.json','saves_index.json','favorites.json','login_log.json') or p.suffix in ('.sqlite','.db') or p.name.endswith(('-wal','-shm'))):
      relative = p.relative_to(self.backend); target = data_backup/relative
      target.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(p,target)

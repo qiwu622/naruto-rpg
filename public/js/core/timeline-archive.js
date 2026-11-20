@@ -1,9 +1,10 @@
 import { readDB, SUMMARY_STORE, timelineRevision } from './timeline-db.js';
-import { listingTimelineNode, decompressTimelineNode, compressTimelineNode, estimateTimelineNodeBytes, TIMELINE_HOT_WINDOW } from './timeline-node-codec.js';
+import { listingTimelineNode, decompressTimelineNode, compressTimelineNode, estimateTimelineNodeBytes, prepareSharedTimelineNode, isCompressedTimelineNode, TIMELINE_HOT_WINDOW } from './timeline-node-codec.js';
 import { sanitizeTimelineNode, sanitizeTimelinePersistenceValue } from './timeline-save-schema.js';
-import { cleanSaveData } from './save-library.js';
+import { cleanSaveData, SAVE_PACKAGE_SCHEMA, SAVE_PACKAGE_SCHEMA_V2 } from './save-library.js';
 import { createSaveJsonByteStream } from './save-json-stream.js';
 import { buildContinuationNode, buildContinuationHeader, DEFAULT_CONTINUATION_TURNS } from './continuation-save.js';
+import { PAYLOAD_CHUNK_STORE, payloadChunkIds, SHARED_PAYLOAD_ENCODING } from './timeline-payload-chunks.js';
 
 const stores = ['timeline_nodes', 'timeline_branches', 'timeline_meta', SUMMARY_STORE, 'timeline_archives', 'timeline_archive_nodes'];
 const archiveRange = id => IDBKeyRange.only(id);
@@ -127,6 +128,15 @@ async function logicalArchiveNode(db, id, nodeId) {
 // Immutable backups allow one small readonly transaction per record, avoiding
 // a long-lived transaction across asynchronous compression/stream backpressure.
 export async function* archiveNodes(db, entry, signal) {
+  if (!entry.live && Array.isArray(entry.nodeOrder) && entry.nodeOrder.length === entry.nodeCount) {
+    for (const nodeId of entry.nodeOrder) {
+      if (signal?.aborted) throw cancelled();
+      const record = await readDB(db, 'timeline_archive_nodes', [entry.id, nodeId]);
+      if (!record?.node) throw new Error('备份节点不完整，导出已停止，原档保留');
+      yield record.node;
+    }
+    return;
+  }
   let previous;
   let count = 0;
   while (true) {
@@ -156,7 +166,25 @@ function portableHeader(entry) {
   return cleanSaveData({ ...(multiplayer || {}), export_version: '2.0', include_archive: true, meta, branches: entry.branches });
 }
 
-export async function exportTimelineArchive(db, entry, { onProgress = () => {}, signal, payloadOnly = false, compression = 'auto' } = {}) {
+function encodeBytesBase64(bytes) {
+  let binary = '';
+  for (let start = 0; start < bytes.length; start += 8192) {
+    binary += String.fromCharCode(...bytes.subarray(start, start + 8192));
+  }
+  return btoa(binary);
+}
+
+export async function exportTimelineArchive(db, entry, {
+  onProgress = () => {},
+  signal,
+  payloadOnly = false,
+  compression = 'auto',
+  formatVersion = 1,
+  onStreamStart = null,
+  onStreamChunk = null,
+  onStreamEnd = null
+} = {}) {
+  const version = formatVersion === 2 ? 2 : 1;
   const encoder = new TextEncoder();
   const digest = globalThis.NarutoSaveCodec.sha256.create();
   async function* json(value) {
@@ -164,7 +192,7 @@ export async function exportTimelineArchive(db, entry, { onProgress = () => {}, 
     try { while (true) { const next = await reader.read(); if (next.done) return; yield next.value; } }
     finally { reader.releaseLock(); }
   }
-  async function* payload() {
+  async function* payloadV1() {
     const header = portableHeader(entry);
     yield encoder.encode('{');
     let comma = false;
@@ -182,8 +210,72 @@ export async function exportTimelineArchive(db, entry, { onProgress = () => {}, 
     }
     yield encoder.encode(']}');
   }
+  async function* payloadV2() {
+    const header = portableHeader(entry);
+    yield encoder.encode('{');
+    let comma = false;
+    for (const [key, value] of Object.entries(header)) {
+      yield encoder.encode(`${comma ? ',' : ''}${JSON.stringify(key)}:`); comma = true;
+      yield* json(value);
+    }
+    yield encoder.encode(`${comma ? ',' : ''}"chunks":{`);
+    const emittedChunks = new Set();
+    const hotPreparedById = new Map();
+    let chunkComma = false;
+    let scanCount = 0;
+    for await (const raw of archiveNodes(db, entry, signal)) {
+      scanCount++;
+      if (raw.payload_encoding === SHARED_PAYLOAD_ENCODING && Array.isArray(raw.payload?.chunks)) {
+        for (const chunkId of payloadChunkIds(raw)) {
+          if (emittedChunks.has(chunkId)) continue;
+          const record = await readDB(db, PAYLOAD_CHUNK_STORE, chunkId);
+          if (!record) throw new Error(`导出失败：缺少共享数据块 ${chunkId}`);
+          emittedChunks.add(chunkId);
+          const encoded = { encoding: record.encoding, rawBytes: record.rawBytes, data: encodeBytesBase64(record.bytes) };
+          yield encoder.encode(`${chunkComma ? ',' : ''}${JSON.stringify(chunkId)}:`);
+          chunkComma = true;
+          yield* json(encoded);
+        }
+      } else {
+        const logical = isCompressedTimelineNode(raw) ? await decompressTimelineNode(raw, { db }) : raw;
+        const cleanNode = cleanSaveData(sanitizeTimelinePersistenceValue(logical, 'timeline_export'));
+        if (cleanNode.state_snapshot || cleanNode.maintenance?.before_state_snapshot) {
+          const prepared = await prepareSharedTimelineNode(cleanNode, { signal });
+          hotPreparedById.set(cleanNode.id, prepared.node);
+          for (const record of prepared.records) {
+            if (emittedChunks.has(record.id)) continue;
+            emittedChunks.add(record.id);
+            const encoded = { encoding: record.encoding, rawBytes: record.rawBytes, data: encodeBytesBase64(record.bytes) };
+            yield encoder.encode(`${chunkComma ? ',' : ''}${JSON.stringify(record.id)}:`);
+            chunkComma = true;
+            yield* json(encoded);
+          }
+        } else {
+          hotPreparedById.set(cleanNode.id, cleanNode);
+        }
+      }
+      if (scanCount % 25 === 0) onProgress(`正在打包共享数据块：${scanCount} / ${entry.nodeCount}`);
+    }
+    yield encoder.encode('},"nodes":[');
+    let nodeCount = 0;
+    for await (const raw of archiveNodes(db, entry, signal)) {
+      if (nodeCount) yield encoder.encode(',');
+      const ready = hotPreparedById.get(raw.id) || (() => {
+        const { memory_snapshot, ...cleanMeta } = raw;
+        return cleanMeta;
+      })();
+      yield* json(cleanSaveData(ready));
+      nodeCount++; onProgress(`正在导出紧凑节点：${nodeCount} / ${entry.nodeCount}`);
+    }
+    yield encoder.encode(']}');
+  }
+  const schemaName = version === 2 ? SAVE_PACKAGE_SCHEMA_V2 : SAVE_PACKAGE_SCHEMA;
+  async function* payload() {
+    if (version === 2) yield* payloadV2();
+    else yield* payloadV1();
+  }
   async function* packaged() {
-    yield encoder.encode(`{"schema":"naruto.save-package/v1","kind":"personal_timeline","saved_at":${JSON.stringify(entry.snapshotAt)},"label":${JSON.stringify(entry.label)},"payload":`);
+    yield encoder.encode(`{"schema":${JSON.stringify(schemaName)},"kind":"personal_timeline","saved_at":${JSON.stringify(entry.snapshotAt)},"label":${JSON.stringify(entry.label)},"payload":`);
     for await (const chunk of payload()) { digest.update(chunk); yield chunk; }
     const checksum = Array.from(digest.digest(), byte => byte.toString(16).padStart(2, '0')).join('');
     yield encoder.encode(`,"checksum":{"algorithm":"SHA-256","value":"${checksum}"}}`);
@@ -196,8 +288,30 @@ export async function exportTimelineArchive(db, entry, { onProgress = () => {}, 
   });
   try {
     const gzip = compression !== 'json' && typeof CompressionStream === 'function';
-    const blob = await new Response(gzip ? stream.pipeThrough(new CompressionStream('gzip')) : stream).blob();
-    return { blob, extension: gzip ? '.json.gz' : '.json', format: gzip ? 'gzip' : 'json', mimeType: gzip ? 'application/gzip' : 'application/json' };
+    const extension = gzip ? '.json.gz' : '.json';
+    const format = gzip ? 'gzip' : 'json';
+    const mimeType = gzip ? 'application/gzip' : 'application/json';
+    const outStream = gzip ? stream.pipeThrough(new CompressionStream('gzip')) : stream;
+    if (typeof onStreamChunk === 'function') {
+      await onStreamStart?.({ extension, format, mimeType, formatVersion: version });
+      const reader = outStream.getReader();
+      let totalBytes = 0;
+      try {
+        while (true) {
+          signal?.throwIfAborted?.();
+          const { done, value } = await reader.read();
+          if (done) break;
+          totalBytes += value.byteLength;
+          await onStreamChunk(value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      await onStreamEnd?.({ totalBytes, extension, format, mimeType, formatVersion: version });
+      return { streamed: true, byteLength: totalBytes, extension, format, mimeType, formatVersion: version };
+    }
+    const blob = await new Response(outStream).blob();
+    return { blob, extension, format, mimeType, formatVersion: version };
   } catch (error) {
     // Chromium can turn a stream rejection into an opaque "Failed to fetch".
     // Keep the useful cause (changed timeline, damaged node, cancellation).
@@ -304,10 +418,10 @@ export async function createContinuationArchive(db, source, { keepTurns = DEFAUL
 }
 
 export async function runArchiveTask(db, action, options = {}, context = {}) {
-  if (['compact', 'resume-compaction', 'cleanup', 'discard-job', 'remove', 'create-continuation', 'rescue'].includes(action)) {
+  if (['compact', 'resume-compaction', 'cleanup', 'discard-job', 'remove', 'create-continuation', 'rescue', 'auto-maintain', 'import-stream'].includes(action)) {
     // Older WebViews can still use the existing archive operations. Only the
     // new resumable maintenance/GC features require cross-context locking.
-    if (!globalThis.navigator?.locks && ['remove', 'create-continuation', 'rescue'].includes(action)) {
+    if (!globalThis.navigator?.locks && ['remove', 'create-continuation', 'rescue', 'import-stream'].includes(action)) {
       return executeArchiveTask(db, action, options, context);
     }
     const { withStorageMaintenanceLock } = await import('./timeline-storage-maintenance.js');
@@ -317,11 +431,17 @@ export async function runArchiveTask(db, action, options = {}, context = {}) {
 }
 
 async function executeArchiveTask(db, action, options = {}, context = {}) {
-  if (['compact', 'resume-compaction', 'storage-stats', 'cleanup', 'discard-job'].includes(action)) {
+  if (['compact', 'resume-compaction', 'storage-stats', 'cleanup', 'discard-job', 'compress-cold', 'auto-maintain'].includes(action)) {
     const maintenance = await import('./timeline-storage-maintenance.js');
     if (action === 'storage-stats') return maintenance.inspectTimelineStorage(db, context);
     if (action === 'cleanup' || action === 'discard-job') return maintenance.cleanTimelineStorage(db, { discardId: action === 'discard-job' ? options.id : '' }, context);
+    if (action === 'compress-cold') return maintenance.compressColdNodesTask(db, options, context);
+    if (action === 'auto-maintain') return maintenance.autoMaintainTimelineStorage(db, options, context);
     return maintenance.compactTimelineArchive(db, { ...options, resume: action === 'resume-compaction' }, context);
+  }
+  if (action === 'import-stream') {
+    const { importTimelineArchiveStream } = await import('./timeline-stream-importer.js');
+    return importTimelineArchiveStream(db, options.file, { ...options, ...context });
   }
   if (action === 'capture') return captureTimelineArchive(db, options, context);
   if (action === 'list') return (await readDB(db, 'timeline_archives')).filter(entry => entry.complete);
@@ -340,7 +460,12 @@ async function executeArchiveTask(db, action, options = {}, context = {}) {
     });
     const live = { live: true, snapshotRevision: revision?.value, meta, branches, nodeCount: count,
       label: `冒险 · 第 ${current.turn_number} 回合`, snapshotAt: new Date().toISOString() };
-    const encoded = await exportTimelineArchive(db, live, { ...context, payloadOnly: options.payloadOnly === true, compression: options.compression });
+    const encoded = await exportTimelineArchive(db, live, {
+      ...context,
+      payloadOnly: options.payloadOnly === true,
+      compression: options.compression,
+      formatVersion: options.formatVersion
+    });
     return { ...encoded, meta, branches, current };
   }
   const entry = await archiveEntry(db, options.id);
@@ -356,7 +481,12 @@ async function executeArchiveTask(db, action, options = {}, context = {}) {
     }
     return recent;
   }
-  if (action === 'export') return exportTimelineArchive(db, entry, { ...context, payloadOnly: options.payloadOnly === true, compression: options.compression });
+  if (action === 'export') return exportTimelineArchive(db, entry, {
+    ...context,
+    payloadOnly: options.payloadOnly === true,
+    compression: options.compression,
+    formatVersion: options.formatVersion
+  });
   if (action === 'create-continuation') return createContinuationArchive(db, entry, options, context);
   if (action === 'rescue') {
     const saved = await createContinuationArchive(db, entry, { ...options, reason: 'rescue' }, context);

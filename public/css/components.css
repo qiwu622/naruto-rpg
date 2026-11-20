@@ -21,31 +21,49 @@
   background: rgba(var(--ink-rgb), 0.6);
 }
 
-/* ── Buttons (纯粹几何与微光) ──── */
+/* ── Buttons (墨印漆作 · 沉稳暗漆) ──── */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
   padding: 10px 20px; font-size: var(--text-sm); font-weight: var(--fw-medium);
-  font-family: var(--font-title); letter-spacing: 1px; border-radius: var(--r-md);
-  cursor: pointer; transition: all var(--dur-fast) var(--ease-out); position: relative;
-  overflow: hidden;
+  font-family: var(--font-title); letter-spacing: 0.04em; border-radius: 6px;
+  cursor: pointer; transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), transform 120ms ease;
+  position: relative; overflow: hidden;
 }
-.btn:active { transform: scale(0.97); }
-.btn:disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; filter: grayscale(1); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; filter: grayscale(1); box-shadow: none; transform: none; }
 
 .btn-primary {
-  background: var(--text-primary); color: var(--c-void); border: none;
-  font-weight: var(--fw-bold); box-shadow: 0 2px 8px rgba(255, 255, 255, 0.15);
+  background: var(--ui-btn-primary-bg, #6c3326);
+  color: var(--ui-btn-primary-ink, #f6f1e7);
+  border: 1px solid var(--ui-btn-primary-border, #9e5341);
+  font-weight: var(--fw-semibold);
+  box-shadow: var(--ui-btn-primary-shadow, 0 1px 2px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.11));
 }
-.btn-primary:hover {
-  background: #ffffff; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(255, 255, 255, 0.25);
+.btn-primary:hover:not(:disabled) {
+  background: var(--ui-btn-primary-bg-hover, #7f3b2c);
+  border-color: var(--ui-btn-primary-border-hover, #b8624d);
+  box-shadow: var(--ui-btn-primary-shadow-hover, 0 2px 6px rgba(0, 0, 0, 0.44), inset 0 1px 0 rgba(255, 255, 255, 0.15));
+}
+.btn-primary:active:not(:disabled) {
+  background: var(--ui-btn-primary-bg-active, #5a2a1f);
+  box-shadow: var(--ui-btn-primary-shadow-active, inset 0 1px 2px rgba(0, 0, 0, 0.38));
 }
 
 .btn-accent {
-  background: var(--c-shuiro); color: #fff; border: none;
-  font-weight: var(--fw-bold); box-shadow: 0 2px 8px rgba(235, 97, 63, 0.3);
+  background: var(--ui-btn-tonal-bg, #2e2426);
+  color: var(--ui-btn-tonal-ink, var(--ui-ink, #f0ece2));
+  border: 1px solid var(--ui-btn-tonal-border, #7c3f34);
+  font-weight: var(--fw-medium);
+  box-shadow: var(--ui-btn-tonal-shadow, 0 1px 2px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.06));
 }
-.btn-accent:hover {
-  background: #f07452; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(235, 97, 63, 0.5);
+.btn-accent:hover:not(:disabled) {
+  background: var(--ui-btn-tonal-bg-hover, #3d2c2e);
+  border-color: var(--ui-btn-tonal-border-hover, #a85442);
+  box-shadow: var(--ui-btn-tonal-shadow-hover, 0 2px 5px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.10));
+}
+.btn-accent:active:not(:disabled) {
+  background: var(--ui-btn-tonal-bg-active, #251d1f);
+  box-shadow: var(--ui-btn-primary-shadow-active, inset 0 1px 2px rgba(0, 0, 0, 0.34));
 }
 
 .btn-secondary {

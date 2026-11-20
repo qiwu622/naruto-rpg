@@ -4,6 +4,12 @@ import { createSaveJsonByteStream, parseSaveJsonByteStream } from './save-json-s
 
 export { TIMELINE_NODE_PAYLOAD_ENCODING };
 export const TIMELINE_HOT_WINDOW = 20;
+export const TIMELINE_MOBILE_CACHE_WINDOW = 5;
+export function getTimelineMemoryCacheLimit() {
+  const ua = typeof navigator !== 'undefined' ? String(navigator.userAgent || '') : '';
+  return /Android|iPhone|iPad|Mobile/i.test(ua) ? TIMELINE_MOBILE_CACHE_WINDOW : TIMELINE_HOT_WINDOW;
+}
+export const TIMELINE_MEMORY_CACHE_LIMIT = getTimelineMemoryCacheLimit();
 // Nodes written by older versions can legitimately exceed 32 MiB. Match the
 // local archive reader: stream valid data instead of imposing a new size cap.
 export const DEFAULT_MAX_NODE_PAYLOAD_BYTES = Infinity;
@@ -31,6 +37,11 @@ export function isCompressedTimelineNode(node) {
     && node.payload != null;
 }
 
+export function isCompressedTimelineSummary(node) {
+  return isRecord(node)
+    && [TIMELINE_NODE_PAYLOAD_ENCODING, SHARED_PAYLOAD_ENCODING].includes(node.payload_encoding);
+}
+
 export function listingTimelineNode(node) {
   if (!isRecord(node)) return node;
   const rest = {};
@@ -41,6 +52,9 @@ export function listingTimelineNode(node) {
     if (node[key] !== undefined) rest[key] = node[key];
   }
   rest.summary = String(node.summary || node.ai_response_summary || node.player_input || '').slice(0, 1000);
+  if (typeof node.player_input === 'string' && node.player_input) {
+    rest.player_input = node.player_input.slice(0, 200);
+  }
   rest.game_time = node.game_time || node.state_snapshot?.['世界·时间'] || '';
   rest.location = String(node.location || node.payload_location || snapshotLocation(node.state_snapshot)).slice(0, 120);
   const smallRecord = record => record && Object.fromEntries(['type', 'label', 'title', 'reason', 'created_at', 'createdAt', 'proposal_id', 'proposalId', 'previous_node_id']

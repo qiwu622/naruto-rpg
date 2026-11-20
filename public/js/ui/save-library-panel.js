@@ -3,7 +3,8 @@ import { icon } from '../utils/icons.js';
 import { eventBus } from '../core/event-bus.js';
 import { stateManager } from '../core/state-manager.js';
 import { timelineSystem } from '../systems/timeline-system.js';
-import { decodeTimelineSaveFile, TIMELINE_FILE_ACCEPT } from '../core/timeline-file-codec.js';
+import { TIMELINE_FILE_ACCEPT } from '../core/timeline-file-codec.js';
+import { inspectSaveHealth } from '../core/save-health.js';
 import { localSaveLibrary, PERSONAL_SAVE_KIND, ROOM_SAVE_KIND } from '../core/save-library.js';
 import { personalSaveLibrary } from '../core/personal-save-library.js';
 import { saveLibraryCloud } from '../core/save-library-cloud.js';
@@ -124,6 +125,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
           </div></section>
           <div id="current-sync" class="sync-section"><p class="sync-caption">当前个人档 <span>云同步</span></p><cloud-sync-status aria-label="当前个人档同步状态"></cloud-sync-status></div>
           <div class="toolbar"><label class="search">${glyph('search')}<input id="search" type="search" aria-label="搜索存档" placeholder="搜索名称、角色或地点…"></label><select id="sort" aria-label="排序"><option value="newest">最近更新</option><option value="oldest">最早创建</option><option value="turn">回合进度</option></select><button id="import" class="button quiet">${glyph('download')}导入到存档库</button><button id="cloud-manager" class="button quiet">${glyph('cloud')}<span>云端管理</span></button><button id="space-manager" class="button quiet">${glyph('database')}空间管理</button><button id="pause-maintenance" class="button quiet" hidden>暂停整理</button><button id="refresh" class="icon-button" aria-label="刷新" title="刷新">${glyph('refresh-cw')}</button><input id="file" type="file" accept="${TIMELINE_FILE_ACCEPT}" hidden></div>
+          <p id="health-banner" class="hint" hidden style="color:#f0c38e"></p>
           <p id="hint" class="hint"></p><a href="recovery.html" class="hint">大档卡顿或打不开？进入存档救援 →</a><p id="status" class="status" role="status" aria-live="polite"></p><div id="manual-sync" class="sync-section" hidden><p class="sync-caption">所选存档 <span id="manual-sync-label"></span></p><cloud-sync-status aria-label="所选存档上传状态"></cloud-sync-status></div><div id="list" class="list"></div>
           <section id="preview" class="preview" hidden><div class="preview-heading"><h3>本地快照 · 只读</h3><button id="close-preview" class="button quiet small">收起快照</button></div><pre id="snapshot-story"></pre><h4>当时的日报</h4><pre id="snapshot-daily"></pre><details><summary>查看存档中的变量</summary><pre id="snapshot-vars"></pre></details></section>
         </div>
@@ -170,12 +172,16 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     this.$('#file').onchange = () => this.run(async () => {
       const file = this.$('#file').files?.[0]; this.$('#file').value = '';
       if (!file) return;
-      this.status('正在读取并解压存档，大档可能需要稍等…');
-      const data = await decodeTimelineSaveFile(file);
+      this.status('正在流式读取并解压存档，大档可能需要稍等…');
+      const imported = await personalSaveLibrary.importFile(file, {
+        onProgress: text => this.status(text)
+      });
       this.status('正在校验并保存存档…');
-      if (this.kind === ROOM_SAVE_KIND) await localRoomHistory.importPackage(data);
-      else {
-        const imported = await personalSaveLibrary.importData(data);
+      if (imported?.isRoomPackage) {
+        if (this.kind !== ROOM_SAVE_KIND) throw new Error('这是联机房间档，请在联机房间分区导入');
+        await localRoomHistory.importPackage(imported.data);
+      } else {
+        if (this.kind === ROOM_SAVE_KIND) throw new Error('这是个人时间线存档，请在「个人存档」分区导入');
         saveLibraryCloud.forgetSource(imported.id);
         this.kind = PERSONAL_SAVE_KIND;
       }
@@ -219,6 +225,17 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
     ]);
     Object.assign(this, { personal, rooms, branches, nodes, current });
     this.meta = { ...(stateManager.getSub('_meta') || {}) };
+    const banner = this.$('#health-banner');
+    if (banner) {
+      const health = await inspectSaveHealth({ summaries: nodes }).catch(() => null);
+      if (health && health.level !== 'ok') {
+        banner.textContent = `${health.level === 'danger' ? '⚠ 存储预警：' : '提示：'}${health.reasons.join('；')}。${health.recommendation}`;
+        banner.style.color = health.level === 'danger' ? '#ffaaa0' : '#f0c38e';
+        banner.hidden = false;
+      } else {
+        banner.hidden = true;
+      }
+    }
     const lines = this.kind === IF_LINES_KIND;
     const inRoom = this.kind === ROOM_SAVE_KIND;
     const cloud = this.cloudView && this.kind === PERSONAL_SAVE_KIND;
@@ -333,7 +350,7 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
       ${!rooms && usesProjectServerFeatures() ? `<cloud-sync-status data-sync-save-id="${escAttr(entry.id)}" aria-label="此存档上传状态"></cloud-sync-status>` : ''}
       ${entry.continuation ? `<p class="save-scope">${continuationRange(entry.continuation)}<br>此前记忆保留；其他线路请读取原档。</p>` : ''}
       ${rooms ? '' : `<div class="entry-actions">${button('continuation', '生成轻量副本')}${entry.storage === 'timeline_archive' && !entry.compacted ? button('compact', '无损整理') : ''}</div>`}
-      <div class="entry-footer">${!rooms || isMultiplayerEntryVisible() ? button('load', rooms ? '重新进入' : '读取', { primary: true, image: rooms ? 'users' : 'archive' }) : ''}<div class="entry-ops">${entry.snapshotAt ? button('preview', '查看快照', { image: 'zen' }) : ''}${button('rename', '改名', { image: 'pencil' })}${entry.snapshotAt ? button('export', '导出', { image: 'export' }) : ''}${!rooms && usesProjectServerFeatures() ? button('cloud', '上传到云端', { image: 'cloud' }) : ''}${button('delete', '删除本地记录', { image: 'trash' })}</div></div>
+      <div class="entry-footer">${!rooms || isMultiplayerEntryVisible() ? button('load', rooms ? '重新进入' : '读取', { primary: true, image: rooms ? 'users' : 'archive' }) : ''}<div class="entry-ops">${entry.snapshotAt ? button('preview', '查看快照', { image: 'zen' }) : ''}${button('rename', '改名', { image: 'pencil' })}${entry.snapshotAt ? button('export', '导出', { image: 'export' }) : ''}${!rooms && entry.storage === 'timeline_archive' && entry.snapshotAt ? button('export-v2', '紧凑导出(v2)', { image: 'export' }) : ''}${!rooms && usesProjectServerFeatures() ? button('cloud', '上传到云端', { image: 'cloud' }) : ''}${button('delete', '删除本地记录', { image: 'trash' })}</div></div>
       <p class="entry-time">${escHtml(date(entry.snapshotAt || entry.updatedAt))} · ${size(entry.bytes)}${entry.compacted ? ' · 含共享数据的独立估算' : entry.sharedPayload ? ' · 回合记录，另有共享数据' : ''}</p></article>`;
   }
 
@@ -374,7 +391,20 @@ class SaveLibraryPanel extends (globalThis.HTMLElement ?? class {}) {
       const label = await this.editName(entry.label);
       if (label !== null) await localSaveLibrary.rename(id, this.kind, this.owner, label);
       await this.refresh();
-    } else if (action === 'export') { const result = await localSaveLibrary.export(id, this.kind, this.owner); this.status(result.cancelled ? '已取消导出，原存档仍保留。' : entry.continuation ? `轻量副本已导出。${continuationRange(entry.continuation)}；此前记忆保留。` : '已导出完整存档文件。'); }
+    } else if (action === 'export' || action === 'export-v2') {
+      const formatVersion = action === 'export-v2' ? 2 : 1;
+      const result = await localSaveLibrary.export(id, this.kind, this.owner, {
+        formatVersion,
+        onProgress: msg => this.status(msg)
+      });
+      this.status(result.cancelled
+        ? '已取消导出，原存档仍保留。'
+        : entry.continuation
+          ? `轻量副本已导出。${continuationRange(entry.continuation)}；此前记忆保留。`
+          : formatVersion === 2
+            ? '已导出去重紧凑存档（v2）。'
+            : '已导出完整存档文件。');
+    }
     else if (action === 'delete') {
       const confirmed = await customElements.get('game-modal').confirm({ title: '删除本地存档', message: `删除「${entry.label}」？这不会删除服务器房间、当前游戏进度或其他存档。`, okLabel: '删除', cancelLabel: '取消' });
       if (confirmed) { await localSaveLibrary.remove(id, this.kind, this.owner); await this.refresh(); }

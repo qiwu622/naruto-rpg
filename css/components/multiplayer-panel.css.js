@@ -54,12 +54,14 @@ export const multiplayerPanelStyles = `
   input::file-selector-button { border:0; border-radius:5px; padding:6px 8px; margin-right:8px; background:var(--mp-raised); color:var(--mp-secondary); }
   textarea { min-height:84px; resize:vertical; }
   select { padding-right:30px; cursor:pointer; text-overflow:ellipsis; }
-  button,.btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:40px; max-width:100%; padding:9px 14px; color:var(--mp-text); border:1px solid var(--mp-border); border-radius:8px; background:var(--mp-raised); font:550 13px/1.5 var(--mp-font); transition:background .18s,border-color .18s,color .18s; overflow-wrap:anywhere; }
-  button:hover { background:#293039; border-color:var(--mp-border-strong); }
-  button:disabled { opacity:.45; cursor:not-allowed; }
+  button,.btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:40px; max-width:100%; padding:9px 14px; color:var(--mp-text); border:1px solid var(--mp-border); border-radius:7px; background:var(--mp-raised); font:500 13px/1.5 var(--mp-font); letter-spacing:0.02em; cursor:pointer; box-shadow:inset 0 1px 0 rgba(255,255,255,.04); transition:background .16s ease,border-color .16s ease,box-shadow .16s ease,color .16s ease,transform .12s ease; overflow-wrap:anywhere; }
+  button:hover:not(:disabled),.btn:hover:not(:disabled) { background:#293039; border-color:var(--mp-border-strong); }
+  button:active:not(:disabled),.btn:active:not(:disabled) { transform:translateY(1px); }
+  button:disabled,.btn:disabled { opacity:.45; cursor:not-allowed; box-shadow:none; transform:none; }
   button:focus-visible,summary:focus-visible { outline:2px solid var(--mp-gold); outline-offset:3px; }
-  .btn-primary { background:var(--mp-accent); border-color:var(--mp-accent); color:#150b07; font-weight:700; }
-  .btn-primary:hover { background:#f17c60; border-color:#f17c60; }
+  .btn-primary { background:var(--ui-btn-primary-bg, #6c3326); border-color:var(--ui-btn-primary-border, #9e5341); color:var(--ui-btn-primary-ink, #f6f1e7); font-weight:500; box-shadow:var(--ui-btn-primary-shadow, 0 1px 2px rgba(0,0,0,.36), inset 0 1px 0 rgba(255,255,255,.11)); }
+  .btn-primary:hover:not(:disabled) { background:var(--ui-btn-primary-bg-hover, #7f3b2c); border-color:var(--ui-btn-primary-border-hover, #b8624d); box-shadow:var(--ui-btn-primary-shadow-hover, 0 2px 6px rgba(0,0,0,.44), inset 0 1px 0 rgba(255,255,255,.15)); }
+  .btn-primary:active:not(:disabled) { background:var(--ui-btn-primary-bg-active, #5a2a1f); box-shadow:var(--ui-btn-primary-shadow-active, inset 0 1px 2px rgba(0,0,0,.38)); }
   .btn-danger { background:transparent; color:var(--mp-danger); border-color:rgba(247,154,151,.26); }
   .btn-danger:hover { background:rgba(247,154,151,.1); border-color:rgba(247,154,151,.45); }
   .btn-sm { min-height:34px; padding:6px 11px; font-size:12px; }

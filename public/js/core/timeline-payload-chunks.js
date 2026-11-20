@@ -76,7 +76,10 @@ export function payloadChunkIds(node) {
 export function putPayloadChunks(tx, records = [], onError = () => tx.abort()) {
   if (!records.length) return;
   const store = tx.objectStore(PAYLOAD_CHUNK_STORE);
+  const seen = new Set();
   for (const record of records) {
+    if (!record?.id || seen.has(record.id)) continue;
+    seen.add(record.id);
     const request = store.getKey(record.id);
     request.onsuccess = () => {
       try { if (request.result === undefined) store.add(record); } catch (error) { onError(error); }

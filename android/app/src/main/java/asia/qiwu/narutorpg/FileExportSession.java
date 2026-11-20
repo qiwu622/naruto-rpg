@@ -6,10 +6,11 @@ import java.io.IOException;
 
 /** Ordered, bounded staging of an export; no public file is touched yet. */
 final class FileExportSession {
-    static final long MAX_BYTES = 256L * 1024 * 1024;
+    static final long MAX_BYTES = 2L * 1024 * 1024 * 1024;
     static final int CHUNK_BYTES = 256 * 1024;
     final File file;
     final long size;
+    final boolean streaming;
     final String fileName;
     final String mimeType;
     private FileOutputStream output;
@@ -24,16 +25,34 @@ final class FileExportSession {
         return ((Number) value).longValue();
     }
 
+    static FileExportSession openStreaming(File directory, String name, String mime) throws IOException {
+        return new FileExportSession(directory, name, mime);
+    }
+
+    private FileExportSession(File directory, String name, String mime) throws IOException {
+        fileName = name;
+        mimeType = mime;
+        size = -1L;
+        streaming = true;
+        file = File.createTempFile("naruto-export-", ".tmp", directory);
+        output = new FileOutputStream(file);
+    }
+
     FileExportSession(File directory, String name, String mime, long expectedSize) throws IOException {
-        if (expectedSize < 0 || expectedSize > MAX_BYTES) throw new IOException("导出文件超过 256 MB 限制");
+        if (expectedSize < 0 || expectedSize > MAX_BYTES) throw new IOException("导出文件超过 2 GB 限制");
         fileName = name;
         mimeType = mime;
         size = expectedSize;
+        streaming = false;
         file = File.createTempFile("naruto-export-", ".tmp", directory);
         output = new FileOutputStream(file);
     }
 
     void append(long offset, byte[] bytes) throws IOException {
+        if (streaming) {
+            appendNext(bytes);
+            return;
+        }
         if (output == null || offset != written || bytes.length > CHUNK_BYTES || written + bytes.length > size) {
             throw new IOException("导出分片顺序或长度无效");
         }
@@ -41,8 +60,20 @@ final class FileExportSession {
         written += bytes.length;
     }
 
+    void appendNext(byte[] bytes) throws IOException {
+        if (output == null || bytes.length > CHUNK_BYTES || written + bytes.length > MAX_BYTES) {
+            throw new IOException("导出分片长度或总大小超过限制");
+        }
+        output.write(bytes);
+        written += bytes.length;
+    }
+
+    long getWrittenBytes() {
+        return written;
+    }
+
     void finish() throws IOException {
-        if (output == null || written != size) throw new IOException("导出文件尚未完整传输");
+        if (output == null || (!streaming && written != size)) throw new IOException("导出文件尚未完整传输");
         output.close();
         output = null;
     }

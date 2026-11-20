@@ -52,14 +52,14 @@ export function showStaleBuildNotice(result, {
   const notice = documentRef.createElement('aside');
   notice.id = 'runtime-build-stale-notice';
   notice.setAttribute('role', 'alert');
-  notice.style.cssText = 'position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 12px);transform:translateX(-50%);z-index:2147483647;width:min(440px,calc(100vw - 24px));box-sizing:border-box;padding:10px 12px;border:1px solid #eb613f;border-radius:10px;background:rgba(20,16,14,.97);color:#f4eee5;box-shadow:0 8px 30px rgba(0,0,0,.45);font:13px/1.4 system-ui,sans-serif;display:flex;align-items:center;gap:10px;';
+  notice.style.cssText = 'position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 12px);transform:translateX(-50%);z-index:2147483647;width:min(440px,calc(100vw - 24px));box-sizing:border-box;padding:10px 12px;border:1px solid var(--ui-btn-tonal-border,rgba(235,97,63,.45));border-radius:10px;background:rgba(20,16,14,.97);color:#f4eee5;box-shadow:0 8px 30px rgba(0,0,0,.45);font:13px/1.4 system-ui,sans-serif;display:flex;align-items:center;gap:10px;';
   const message = documentRef.createElement('span');
   message.textContent = '有新版本可用';
   message.style.cssText = 'flex:1;min-width:0;overflow-wrap:anywhere;';
   const refresh = documentRef.createElement('button');
   refresh.type = 'button';
   refresh.textContent = '立即刷新';
-  refresh.style.cssText = 'flex:none;min-height:36px;border:1px solid #eb613f;border-radius:7px;background:#eb613f;color:white;padding:6px 10px;font:inherit;white-space:nowrap;cursor:pointer;';
+  refresh.style.cssText = 'flex:none;min-height:34px;border:1px solid var(--ui-btn-primary-border,#9e5341);border-radius:6px;background:var(--ui-btn-primary-bg,#6c3326);color:var(--ui-btn-primary-ink,#f6f1e7);box-shadow:var(--ui-btn-primary-shadow,0 1px 2px rgba(0,0,0,.36),inset 0 1px 0 rgba(255,255,255,.11));padding:6px 12px;font:500 13px/1.2 inherit;white-space:nowrap;cursor:pointer;';
   refresh.addEventListener('click', () => {
     if (locationRef?.href && typeof locationRef.replace === 'function') {
       const url = new URL(locationRef.href);

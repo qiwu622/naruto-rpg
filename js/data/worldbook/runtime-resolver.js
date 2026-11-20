@@ -5,7 +5,13 @@ import {
   toRuntimeWorldbookEntry
 } from './v2.js';
 import { normalizeNpcIdentity } from '../npc-identity.js';
-import { matchesWorldbookActivation, normalizeCustomWorldbookEntry } from './activation.js';
+import { isWorldbookEntryEnabled, matchesWorldbookActivation, normalizeCustomWorldbookEntry } from './activation.js';
+import {
+  applyBuiltinWorldbookOverrideV2,
+  getBuiltinWorldbookKey,
+  loadBuiltinWorldbookOverrides,
+  normalizeBuiltinOverridesStore
+} from './builtin-overrides.js';
 import { KNOWLEDGE_BASE } from '../knowledge-base.js';
 
 const DEFAULT_CUSTOM_STORAGE_KEY = 'naruto_worldbook_custom';
@@ -120,10 +126,10 @@ function eraStateIsActive(state, currentDate) {
   return true;
 }
 
-function projectCharacterRuntime(entry, currentDate) {
+function projectCharacterRuntime(entry, currentDate, { preserveContent = false } = {}) {
   // Imported/player-authored entries already contain the intended prompt text.
   // Do not replace their body with an inferred subset of profile sections.
-  if (entry?.source?.kind === 'custom') return entry;
+  if (entry?.source?.kind === 'custom' || preserveContent) return entry;
   const profile = entry?.character_profile;
   if (!profile) return entry;
   const activeEraStates = (profile.era_states || [])
@@ -182,10 +188,12 @@ export class WorldbookV2Resolver {
   constructor({
     builtinEntries = WORLD_BOOK_V2_ENTRIES,
     customLoader = null,
-    customStorageKey = DEFAULT_CUSTOM_STORAGE_KEY
+    customStorageKey = DEFAULT_CUSTOM_STORAGE_KEY,
+    builtinOverridesLoader = null
   } = {}) {
     this.builtinEntries = Array.isArray(builtinEntries) ? builtinEntries : [];
     this.customLoader = customLoader || (() => defaultCustomLoader(customStorageKey));
+    this.builtinOverridesLoader = builtinOverridesLoader || (() => loadBuiltinWorldbookOverrides());
   }
 
   _customEntries() {
@@ -207,6 +215,7 @@ export class WorldbookV2Resolver {
     const terms = tokenize(directText);
     const customIds = new Set();
     const candidates = [];
+    const builtinOverrides = normalizeBuiltinOverridesStore(this.builtinOverridesLoader?.() || {}).entries;
 
     for (const entry of this._customEntries()) {
       if (!currentDate && (entry.validity?.from || entry.validity?.until)) continue;
@@ -216,15 +225,31 @@ export class WorldbookV2Resolver {
       customIds.add(runtime.id);
       candidates.push({ entry: runtime, score: 2_000_000 + Number(runtime.priority || 0), required: runtime.activation.mode === 'always', budgetExempt: false });
     }
-    for (const entry of this.builtinEntries) {
+    for (const rawEntry of this.builtinEntries) {
+      const overrideKey = getBuiltinWorldbookKey(rawEntry.title);
+      const override = builtinOverrides[overrideKey] || null;
+      const { entry, overrideMeta } = applyBuiltinWorldbookOverrideV2(rawEntry, override);
+      if (!isWorldbookEntryEnabled(entry)) continue;
       if (!currentDate && (entry.validity?.from || entry.validity?.until)) continue;
-      if (!currentDate && entry.character_profile) continue;
+      if (!currentDate && entry.character_profile && !overrideMeta?.hasContentOverride) continue;
       const baseRuntime = toRuntimeWorldbookEntry(entry, { audience, date: currentDate });
-      const runtime = baseRuntime ? projectCharacterRuntime(baseRuntime, currentDate) : null;
+      const runtime = baseRuntime
+        ? projectCharacterRuntime(baseRuntime, currentDate, { preserveContent: Boolean(overrideMeta?.hasContentOverride) })
+        : null;
       if (!runtime || runtime.activation?.mode === 'manual' || customIds.has(runtime.id)) continue;
-      const score = scoreEntry(runtime, terms, directText);
+      const activationMatched = overrideMeta?.hasActivationOverride && runtime.activation?.mode === 'keyword'
+        ? matchesWorldbookActivation(runtime, triggerText)
+        : true;
+      if (!activationMatched) continue;
+      let score = scoreEntry(runtime, terms, directText);
+      if (overrideMeta?.hasActivationOverride && runtime.activation?.mode === 'keyword') {
+        score = Math.max(score, 20);
+      }
       const required = runtime.activation?.mode === 'always';
-      if (required || score > 5) candidates.push({ entry: runtime, score, required, budgetExempt: required });
+      const budgetExempt = required
+        && (!overrideMeta?.hasActivationOverride || overrideMeta.originalAlwaysOn)
+        && !overrideMeta?.hasContentOverride;
+      if (required || score > 5) candidates.push({ entry: runtime, score, required, budgetExempt });
     }
 
     candidates.sort((left, right) => Number(right.required) - Number(left.required)

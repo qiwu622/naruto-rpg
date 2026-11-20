@@ -1,9 +1,12 @@
+import { withTimelineTransaction } from './idb-transaction.js';
 import { decodeTimelineSaveFile, encodeTimelineSave } from './timeline-file-codec.js';
-import { exportFile } from './file-export.js';
+import { exportFile, canStreamExportDirect, exportStreamFromWorker } from './file-export.js';
 import { checksumSaveJson } from './save-json-stream.js';
 import { timelineStorageTask } from './timeline-storage-client.js';
 
 export const SAVE_PACKAGE_SCHEMA = 'naruto.save-package/v1';
+export const SAVE_PACKAGE_SCHEMA_V2 = 'naruto.save-package/v2';
+const SUPPORTED_PACKAGE_SCHEMAS = new Set([SAVE_PACKAGE_SCHEMA, SAVE_PACKAGE_SCHEMA_V2]);
 export const PERSONAL_SAVE_KIND = 'personal_timeline';
 export const ROOM_SAVE_KIND = 'multiplayer_room';
 const KINDS = new Set([PERSONAL_SAVE_KIND, ROOM_SAVE_KIND]);
@@ -60,7 +63,7 @@ export async function createSavePackage(kind, payload, label = '') {
 }
 
 export async function validateSavePackage(value) {
-  if (value?.schema !== SAVE_PACKAGE_SCHEMA || !KINDS.has(value?.kind)) {
+  if (!SUPPORTED_PACKAGE_SCHEMAS.has(value?.schema) || !KINDS.has(value?.kind)) {
     throw new Error('不支持的存档类型或版本，请使用兼容版本导出的存档');
   }
   if (!value.payload || typeof value.payload !== 'object' || Array.isArray(value.payload)
@@ -88,6 +91,7 @@ export class LocalSaveLibrary {
     this.indexedDB = indexedDB;
     this.name = name;
     this._opening = null;
+    this._db = null;
     this.archiveTask = archiveTask;
   }
 
@@ -96,6 +100,7 @@ export class LocalSaveLibrary {
       this._opening = new Promise((resolve, reject) => {
         if (!this.indexedDB) return reject(new Error('此浏览器不支持本地存档库'));
         const request = this.indexedDB.open(this.name, 1);
+        let blocked = false;
         request.onupgradeneeded = () => {
           const db = request.result;
           db.createObjectStore('entries', { keyPath: 'id' });
@@ -103,20 +108,34 @@ export class LocalSaveLibrary {
         };
         request.onsuccess = () => {
           const db = request.result;
-          db.onversionchange = () => { db.close(); this._opening = null; };
+          if (blocked) { db.close(); return; }
+          this._db = db;
+          db.onclose = () => this._forgetConnection(db);
+          db.onversionchange = () => { db.close(); this._forgetConnection(db); };
           resolve(db);
         };
         request.onerror = () => reject(storageError(request.error));
-        request.onblocked = () => reject(new Error('请关闭其他游戏标签页后重试存档操作'));
+        request.onblocked = () => {
+          blocked = true;
+          reject(new Error('请关闭其他游戏标签页后重试存档操作'));
+        };
       }).catch(error => { this._opening = null; throw error; });
     }
     return this._opening;
   }
 
+  _forgetConnection(db) {
+    if (this._db !== db) return;
+    this._db = null;
+    this._opening = null;
+  }
+
+  _transaction(stores, mode, run) {
+    return withTimelineTransaction(() => this.open(), db => this._forgetConnection(db), stores, mode, run);
+  }
+
   async _read(store, key) {
-    const db = await this.open();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(store, 'readonly');
+    return this._transaction(store, 'readonly', (tx, resolve, reject) => {
       const request = key === undefined ? tx.objectStore(store).getAll() : tx.objectStore(store).get(key);
       tx.oncomplete = () => resolve(request.result);
       tx.onabort = () => reject(storageError(tx.error));
@@ -156,9 +175,7 @@ export class LocalSaveLibrary {
       if (pack.kind !== entry.kind) throw new Error('不能将联机档写入个人存档分区');
     }
     const encoded = pack ? await encodeTimelineSave(pack) : null;
-    const db = await this.open();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(['entries', 'files'], 'readwrite');
+    return this._transaction(['entries', 'files'], 'readwrite', (tx, resolve, reject) => {
       const entries = tx.objectStore('entries');
       const lookup = entries.get(entry.id);
       let result;
@@ -194,9 +211,7 @@ export class LocalSaveLibrary {
   async remove(id, kind, owner = 'device') {
     const entry = await this.get(id, kind, owner);
     if (entry.storage === 'timeline_archive') return this.archiveTask('remove', { id });
-    const db = await this.open();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(['entries', 'files'], 'readwrite');
+    return this._transaction(['entries', 'files'], 'readwrite', (tx, resolve, reject) => {
       tx.objectStore('entries').delete(id);
       tx.objectStore('files').delete(id);
       tx.oncomplete = () => resolve();
@@ -205,11 +220,19 @@ export class LocalSaveLibrary {
     });
   }
 
-  async export(id, kind, owner = 'device') {
+  async export(id, kind, owner = 'device', { formatVersion = 1, onProgress = () => {} } = {}) {
     const entry = await this.get(id, kind, owner);
     if (entry.storage === 'timeline_archive') {
-      const encoded = await this.archiveTask('export', { id });
-      const name = `个人存档-${entry.label}`.replace(/[\\/:*?"<>|]/g, '_');
+      const name = `个人存档-${entry.label}${formatVersion === 2 ? '.v2' : ''}`.replace(/[\\/:*?"<>|]/g, '_');
+      if (this.archiveTask === timelineStorageTask && canStreamExportDirect()) {
+        return exportStreamFromWorker({
+          action: 'export',
+          options: { id, formatVersion },
+          fileName: name,
+          onProgress
+        });
+      }
+      const encoded = await this.archiveTask('export', { id, formatVersion }, { onProgress });
       const download = await downloadSaveFile(encoded.blob, `${name}${encoded.extension}`);
       return { ...encoded, cancelled: download.cancelled === true };
     }

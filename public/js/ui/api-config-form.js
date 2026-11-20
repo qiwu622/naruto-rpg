@@ -39,7 +39,13 @@ export class ApiConfigForm extends HTMLElement {
     this._offUsage = eventBus.on('ai:usage', () => this._updateUsage());
   }
 
-  disconnectedCallback() { this._offUsage?.(); this._offUsage = null; }
+  disconnectedCallback() {
+    this._offUsage?.(); this._offUsage = null;
+    if (this._onOutsideModelClick) {
+      document.removeEventListener('click', this._onOutsideModelClick);
+      this._onOutsideModelClick = null;
+    }
+  }
 
   _updateUsage() {
     const node = this.shadowRoot.querySelector('#settings-api-usage');
@@ -65,59 +71,120 @@ export class ApiConfigForm extends HTMLElement {
     
     this.shadowRoot.innerHTML = `
       <style>
-        :host { display: block; width: 100%; }
-        .settings-form { display: grid; gap: 20px; text-align: left; }
+        :host {
+          display: block; width: 100%;
+          color: var(--ui-ink, #f0ece2);
+          color-scheme: var(--ui-color-scheme, dark);
+        }
+        *, *::before, *::after { box-sizing: border-box; }
+        .settings-form { display: grid; gap: 18px; text-align: left; }
         [hidden] { display: none !important; }
         .ns-select-wrapper:has(select:disabled) { opacity: .45; pointer-events: none; }
-        .usage-report { overflow-wrap: anywhere; }
-        .settings-row { display: grid; gap: 8px; }
-        .settings-row label { color: #c69c6d; font-size: 12px; letter-spacing: .08em; font-weight: 500; text-transform: uppercase; }
+        .usage-report {
+          overflow-wrap: anywhere;
+          padding: 10px 12px; border-radius: 8px;
+          background: var(--ui-surface-1, #12161d);
+          border: 1px solid var(--ui-border, rgba(244,241,234,0.09));
+          color: var(--ui-ink-muted, #aba69b) !important;
+          font-family: var(--font-mono, 'JetBrains Mono', monospace);
+          font-size: 11px !important; line-height: 1.6 !important;
+        }
+        .settings-row { display: grid; gap: 7px; }
+        .settings-row label {
+          color: var(--ui-gold, #c69c6d); font-size: 12px; font-weight: 600;
+        }
         .settings-input, .settings-select {
-          width: 100%; box-sizing: border-box; padding: 8px 4px;
-          border: none; border-bottom: 1px solid rgba(255,255,255,0.1); border-radius: 0; background: transparent;
-          color: #e8e4d9; font: 14px/1.4 'Noto Sans SC','Microsoft YaHei UI','PingFang SC', system-ui, sans-serif;
-          outline: none; transition: all .3s ease;
+          width: 100%; min-height: 38px; box-sizing: border-box; padding: 8px 12px;
+          border: 1px solid var(--ui-border, rgba(244,241,234,0.12));
+          border-radius: 8px;
+          background: var(--ui-surface-2, #181d26);
+          color: var(--ui-ink, #f0ece2);
+          font: 13px/1.4 var(--font-body, 'Noto Sans SC','Microsoft YaHei UI','PingFang SC', system-ui, sans-serif);
+          outline: none; transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
         }
-        .settings-input:focus, .settings-select:focus { 
-          border-bottom-color: rgba(198,156,109,0.8); 
-          box-shadow: 0 1px 0 0 rgba(198,156,109,0.3);
-          background: rgba(255,255,255,0.02);
+        .settings-input:focus, .settings-select:focus {
+          border-color: var(--ui-accent, #eb613f);
+          box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent, #eb613f) 16%, transparent);
+          background: var(--ui-surface-elevated, #1e2430);
         }
-        .settings-input::placeholder { color: rgba(232,228,217,0.2); }
-        .settings-hint { color: rgba(232,228,217,0.4); font-size: 12px; line-height: 1.6; }
-        .settings-model-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; }
-        .settings-check { display: flex; gap: 8px; align-items: center; color: #e8e4d9; font-size: 13px; }
-        .settings-check input { accent-color: #c69c6d; cursor: pointer; }
-        .settings-subcard { border: 1px solid rgba(255,255,255,0.05); background: rgba(0,0,0,0.15); padding: 18px; display: grid; gap: 16px; border-radius: 8px; }
-        .scheme-row { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; align-items: end; }
-        .scheme-row label { margin-bottom: 0; align-self: center; }
-        .scheme-save-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: end; }
-        .scheme-panel .settings-hint { margin-top: -6px; }
+        .settings-input::placeholder { color: var(--ui-ink-faint, #757168); }
+        .settings-hint { color: var(--ui-ink-faint, #757168); font-size: 12px; line-height: 1.6; }
+        .settings-model-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+        .settings-check { display: flex; gap: 10px; align-items: center; color: var(--ui-ink, #f0ece2); font-size: 13px; cursor: pointer; }
+        .settings-check input {
+          appearance: none; -webkit-appearance: none; width: 40px; height: 22px; flex-shrink: 0;
+          border-radius: 999px; position: relative; cursor: pointer; margin: 0;
+          background: var(--ui-surface-elevated, #1e2430);
+          border: 1px solid var(--ui-border-strong, rgba(244,241,234,0.18));
+          transition: background .18s ease, border-color .18s ease;
+        }
+        .settings-check input::after {
+          content: ''; position: absolute; width: 16px; height: 16px; border-radius: 50%;
+          top: 2px; left: 2px; background: var(--ui-ink-muted, #aba69b);
+          transition: transform .18s ease, background .18s ease;
+        }
+        .settings-check input:checked { background: var(--ui-accent, #eb613f); border-color: var(--ui-accent, #eb613f); }
+        .settings-check input:checked::after { transform: translateX(18px); background: var(--ui-accent-ink, #fff); }
+        .settings-subcard {
+          border: 1px solid var(--ui-border, rgba(244,241,234,0.10));
+          background: var(--ui-surface-1, #12161d);
+          padding: 16px 18px; display: grid; gap: 14px; border-radius: 12px;
+        }
+        .scheme-row { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; align-items: center; }
+        .scheme-row label { margin-bottom: 0; color: var(--ui-gold, #c69c6d); font-size: 12px; font-weight: 600; }
+        .scheme-save-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: center; }
+        .scheme-panel .settings-hint { margin-top: -4px; }
         .settings-fetch {
-          padding: 8px 16px; border: 1px solid rgba(198,156,109,0.3); border-radius: 4px;
-          background: rgba(198,156,109,0.05); color: #c69c6d; font: 13px/1.4 'Noto Sans SC', system-ui, sans-serif;
-          cursor: pointer; white-space: nowrap; transition: all 0.2s ease;
+          min-height: 38px; padding: 7px 14px; border-radius: 8px;
+          border: 1px solid color-mix(in srgb, var(--ui-gold, #c69c6d) 36%, transparent);
+          background: color-mix(in srgb, var(--ui-gold, #c69c6d) 10%, var(--ui-surface-2, #181d26));
+          color: var(--ui-ink, #f0ece2);
+          font: 500 12px/1.2 var(--font-body, 'Noto Sans SC', system-ui, sans-serif);
+          cursor: pointer; white-space: nowrap; transition: background .16s ease, border-color .16s ease;
         }
-        .settings-fetch:hover { border-color: rgba(198,156,109,0.8); background: rgba(198,156,109,0.15); box-shadow: 0 0 10px rgba(198,156,109,0.1); }
-        .settings-fetch:disabled { opacity: .45; cursor: wait; }
+        .settings-fetch:hover:not(:disabled) {
+          border-color: var(--ui-gold, #c69c6d);
+          background: color-mix(in srgb, var(--ui-gold, #c69c6d) 18%, var(--ui-surface-2, #181d26));
+        }
+        .settings-fetch:disabled { opacity: .42; cursor: not-allowed; }
 
         .model-list-wrap {
-          display: none; max-height: 200px; overflow-y: auto; overflow-x: hidden;
-          margin-top: 4px; border: 1px solid rgba(198,156,109,0.2); border-radius: 6px;
-          background: rgba(7,10,14,0.95); backdrop-filter: blur(12px);
+          display: none; max-height: 230px; overflow-y: auto; overflow-x: hidden;
+          margin-top: 6px; border: 1px solid var(--ui-border-strong, rgba(244,241,234,0.20));
+          border-radius: 10px;
+          background: var(--ui-surface-elevated, #1e2430);
+          box-shadow: var(--ui-shadow, 0 12px 32px rgba(0,0,0,0.45));
         }
         .model-list-wrap.open { display: block; }
-        .model-item {
-          padding: 8px 12px; cursor: pointer; font-size: 13px; color: #a39f98;
-          border-bottom: 1px solid rgba(255,255,255,0.04); transition: all 0.15s;
-          font-family: 'Noto Sans SC', system-ui, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        .model-filter-bar {
+          position: sticky; top: 0; z-index: 2; padding: 8px;
+          background: var(--ui-surface-elevated, #1e2430);
+          border-bottom: 1px solid var(--ui-border, rgba(244,241,234,0.10));
         }
-        .model-item:hover { background: rgba(198,156,109,0.1); color: #e8e4d9; }
-        .model-item.selected { background: rgba(235,97,63,0.12); color: #ff8a65; border-left: 3px solid #eb613f; }
-        .model-count { font-size: 11px; color: rgba(198,156,109,0.6); margin-top: 4px; }
-        
+        .model-filter-input {
+          width: 100%; padding: 6px 10px; border-radius: 6px; font-size: 12px; outline: none;
+          background: var(--ui-surface-2, #181d26);
+          border: 1px solid var(--ui-border, rgba(244,241,234,0.12));
+          color: var(--ui-ink, #f0ece2);
+        }
+        .model-filter-input:focus { border-color: var(--ui-accent, #eb613f); }
+        .model-item {
+          padding: 8px 12px; cursor: pointer; font-size: 13px; color: var(--ui-ink-muted, #aba69b);
+          border-bottom: 1px solid var(--ui-border, rgba(244,241,234,0.05));
+          transition: background .14s ease, color .14s ease;
+          font-family: var(--font-body, 'Noto Sans SC', system-ui, sans-serif);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .model-item:hover { background: var(--ui-surface-2, #181d26); color: var(--ui-ink, #f0ece2); }
+        .model-item.selected {
+          background: color-mix(in srgb, var(--ui-accent, #eb613f) 14%, transparent);
+          color: var(--ui-accent, #eb613f); font-weight: 600;
+          border-left: 3px solid var(--ui-accent, #eb613f);
+        }
+        .model-count { font-size: 11px; color: var(--ui-gold, #c69c6d); margin-top: 4px; }
+
         /* 简易模式下的额外样式 */
-        .simple-mode .settings-input, .simple-mode .settings-select { font-size: 15px; }
+        .simple-mode .settings-input, .simple-mode .settings-select { font-size: 14px; }
         .simple-mode .settings-row label { font-size: 13px; }
       </style>
       <div class="settings-form ${this._showAdvanced ? '' : 'simple-mode'}" id="settings-form">
@@ -224,18 +291,29 @@ export class ApiConfigForm extends HTMLElement {
     // ── Helper: populate a model-list div with fetched models ──
     const populateList = (listEl, models, inputEl, statusEl) => {
       if (!listEl) return;
-      listEl.innerHTML = models.map(id =>
-        `<div class="model-item" data-model="${this._escAttr(id)}">${this._escAttr(id)}</div>`
+      const filterBar = models.length > 8
+        ? '<div class="model-filter-bar"><input class="model-filter-input" type="search" placeholder="筛选模型名称..." aria-label="筛选模型名称"></div>'
+        : '';
+      const itemsHtml = models.map(id =>
+        `<div class="model-item${inputEl?.value === id ? ' selected' : ''}" data-model="${this._escAttr(id)}">${this._escAttr(id)}</div>`
       ).join('');
+      listEl.innerHTML = filterBar + itemsHtml;
       listEl.classList.add('open');
-      // Click handler on list
+
+      const filterInput = listEl.querySelector('.model-filter-input');
+      filterInput?.addEventListener('input', () => {
+        const q = filterInput.value.trim().toLowerCase();
+        listEl.querySelectorAll('.model-item').forEach(item => {
+          item.hidden = Boolean(q && !item.dataset.model.toLowerCase().includes(q));
+        });
+      });
+
       listEl.querySelectorAll('.model-item').forEach(item => {
         item.addEventListener('click', () => {
           if (inputEl) {
             inputEl.value = item.dataset.model;
             inputEl.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
           }
-          // Highlight selected
           listEl.querySelectorAll('.model-item').forEach(i => i.classList.remove('selected'));
           item.classList.add('selected');
         });
@@ -285,9 +363,15 @@ export class ApiConfigForm extends HTMLElement {
     const mainList = this.shadowRoot.querySelector('#settings-model-list');
     const mainStatus = this.shadowRoot.querySelector('#settings-model-status');
     mainFetch?.addEventListener('click', () => doFetch(mainFetch, mainList, mainInput, mainStatus));
-    // Toggle list on input focus
-    mainInput?.addEventListener('focus', () => { if (mainList?.children.length) mainList.classList.add('open'); });
-    mainInput?.addEventListener('blur', () => setTimeout(() => mainList?.classList.remove('open'), 200));
+    mainInput?.addEventListener('focus', () => { if (mainList?.querySelector('.model-item')) mainList.classList.add('open'); });
+    this._onOutsideModelClick = (event) => {
+      if (!mainList?.classList.contains('open')) return;
+      const path = event.composedPath ? event.composedPath() : [event.target];
+      if (!path.includes(mainList) && !path.includes(mainInput) && !path.includes(mainFetch)) {
+        mainList.classList.remove('open');
+      }
+    };
+    document.addEventListener('click', this._onOutsideModelClick);
 
     // ── API 方案管理 ──
     if (this._showSchemes) {

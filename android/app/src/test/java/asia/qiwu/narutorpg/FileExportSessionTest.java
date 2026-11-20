@@ -46,4 +46,27 @@ public class FileExportSessionTest {
             assertArrayEquals(new byte[] {1, 2, 3}, Files.readAllBytes(session.file.toPath()));
         } finally { session.discard(); directory.delete(); }
     }
+
+    @Test
+    public void streamingExportAllowsVariableLengthWithoutFixedSizeHeader() throws Exception {
+        File directory = Files.createTempDirectory("naruto-stream-export-test-").toFile();
+        FileExportSession session = FileExportSession.openStreaming(directory, "大档.json.gz", "application/gzip");
+        try {
+            assertTrue(session.streaming);
+            assertEquals(-1L, session.size);
+            session.appendNext(new byte[] {1, 2, 3, 4});
+            session.appendNext(new byte[] {5, 6});
+            assertEquals(6L, session.getWrittenBytes());
+            session.finish();
+            assertArrayEquals(new byte[] {1, 2, 3, 4, 5, 6}, Files.readAllBytes(session.file.toPath()));
+            try {
+                session.appendNext(new byte[] {7});
+                fail("finished streaming export must reject additional writes");
+            } catch (IOException expected) { }
+        } finally {
+            session.discard();
+            assertFalse(session.file.exists());
+            directory.delete();
+        }
+    }
 }
